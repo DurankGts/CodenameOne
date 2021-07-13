@@ -33,7 +33,6 @@ import com.codename1.ui.Font;
 import com.codename1.ui.Image;
 import com.codename1.ui.animations.AnimationAccessor;
 import com.codename1.ui.plaf.Accessor;
-import com.codename1.ui.plaf.Border;
 import com.codename1.ui.plaf.CSSBorder;
 import com.codename1.ui.plaf.RoundBorder;
 import com.codename1.ui.plaf.RoundRectBorder;
@@ -807,14 +806,12 @@ public class CSSTheme {
         }
         
         File getFontFile() {
-            
             if (fontFile == null) {
                 try {
                     URL url = getURL();
                     if (url == null) {
                         return null;
                     }
-                    //File cssFile = new File(url.toURI());
                     File parentDir = cssFile.getParentFile();
                     if (url.getProtocol().startsWith("http")) {
                         // If it is remote, check so see if we've already downloaded
@@ -1491,9 +1488,7 @@ public class CSSTheme {
         return out;
     }
     
-    private static String str(LexicalUnit lu) {
-        return str(lu, null);
-    }
+
     
     private static String str(LexicalUnit lu, String defaultVal) {
         if (lu == null) {
@@ -1505,28 +1500,32 @@ public class CSSTheme {
         if (Math.ceil(numVal) == Math.floor(numVal)) {
             num = ((int)numVal)+"";
         }
+        String unitText = "";
+        try {
+            unitText = lu.getDimensionUnitText();
+        } catch (Exception ex){} // This might throw an exception if there was no unit given, but we don't care.
         switch (lu.getLexicalUnitType()) {
-                case LexicalUnit.SAC_MILLIMETER:
-                    return num+"mm";
+            case LexicalUnit.SAC_MILLIMETER:
+                return num+"mm";
 
-                case LexicalUnit.SAC_INTEGER:
-                case LexicalUnit.SAC_REAL:
-                    return num+"";
-                case LexicalUnit.SAC_POINT:
-                    return num+"pt";
+            case LexicalUnit.SAC_INTEGER:
+            case LexicalUnit.SAC_REAL:
+                return num+"";
+            case LexicalUnit.SAC_POINT:
+                return num+"pt";
 
-                case LexicalUnit.SAC_PIXEL:
-                    return ((int)Math.round(su.getNumericValue()))+"px";
-
-
-                case LexicalUnit.SAC_INCH:
-                    return num+"in";
-                case LexicalUnit.SAC_EM:
-                    return num+"em";
+            case LexicalUnit.SAC_PIXEL:
+                return ((int)Math.round(su.getNumericValue()))+"px";
 
 
-            }
-        return "0";
+            case LexicalUnit.SAC_INCH:
+                return num+"in";
+            case LexicalUnit.SAC_EM:
+                return num+"em";
+
+
+        }
+        return num+unitText;
     }
     
     public Map<String, CacheStatus> calculateSelectorCacheStatus(File cachedFile) throws IOException {
@@ -1764,11 +1763,10 @@ public class CSSTheme {
             }
             
         }
-        
+
         for (String constantKey : constants.keySet()) {
             try {
                 LexicalUnit lu = constants.get(constantKey);
-
                 if (lu.getLexicalUnitType() == LexicalUnit.SAC_STRING_VALUE || lu.getLexicalUnitType() == LexicalUnit.SAC_IDENT) {
                     if (constantKey.endsWith("Image")) {
                         // We have an image
@@ -2345,7 +2343,12 @@ public class CSSTheme {
             if (res == null) {
                 res = new EditableResourcesForCSS(resourceFile);
             }
-            res.openFile(new FileInputStream(resourceFile));
+            try {
+                res.openFile(new FileInputStream(resourceFile));
+            } catch (IOException ex) {
+                System.err.println("Failed to load resource file from "+resourceFile);
+                throw ex;
+            }
             imagesMetadata.load(res);
         }
     }
@@ -4104,6 +4107,11 @@ public class CSSTheme {
         private static final int TTF_SIZE_TYPE_MEDIUM=1;
         private static final int TTF_SIZE_TYPE_LARGE=2;
         private static final int TTF_SIZE_TYPE_MM=3;
+        private static final int TTF_SIZE_TYPE_REM=5;
+        private static final int TTF_SIZE_TYPE_VW=6;
+        private static final int TTF_SIZE_TYPE_VH=7;
+        private static final int TTF_SIZE_TYPE_VMIN=8;
+        private static final int TTF_SIZE_TYPE_VMAX=9;
         
         public com.codename1.ui.Font getThemeFont(Map<String,LexicalUnit> styles) {
             LexicalUnit fontFamily = styles.get("font-family");
@@ -4129,7 +4137,6 @@ public class CSSTheme {
             int iFontSizeType = Font.SIZE_MEDIUM;
             
             EditorTTFFont ttfFont = null;
-            
             
             loop : while (fontSize != null) {
                 outer: switch (fontSize.getLexicalUnitType()) {
@@ -4195,6 +4202,37 @@ public class CSSTheme {
                             ttfSize = 4f * (float)fontSize.getNumericValue() / 100f;
                         }
                         break;
+                    default:
+                        String unitText = null;
+                        try {
+                            unitText = fontSize.getDimensionUnitText();
+
+                        } catch (Exception ex) {
+                            System.err.println("Warning: No dimension unit supplied for fontSize "+fontSize);
+                            ex.printStackTrace();
+                        }
+                        if (unitText != null) {
+                            if ("rem".equals(unitText)) {
+                                ttfSizeType = TTF_SIZE_TYPE_REM;
+                                ttfSize = (float) fontSize.getNumericValue();
+                            } else if ("vw".equals(unitText)) {
+                                ttfSizeType = TTF_SIZE_TYPE_VW;
+                                ttfSize = (float) fontSize.getNumericValue();
+
+                            } else if ("vh".equals(unitText)) {
+                                ttfSizeType = TTF_SIZE_TYPE_VH;
+                                ttfSize = (float) fontSize.getNumericValue();
+
+                            } else if ("vmin".equals(unitText)) {
+                                ttfSizeType = TTF_SIZE_TYPE_VMIN;
+                                ttfSize = (float) fontSize.getNumericValue();
+
+                            } else if ("vmax".equals(unitText)) {
+                                ttfSizeType = TTF_SIZE_TYPE_VMAX;
+                                ttfSize = (float) fontSize.getNumericValue();
+
+                            }
+                        }
                         
                         
                 }
@@ -4252,69 +4290,16 @@ public class CSSTheme {
                             iFontFace = Font.FACE_MONOSPACE;
                             break loop;
                         default : {
-                            /*
-                            int ttfFontSize = 1; // medium
-                            float actualSize = 14f;
-                            switch (iFontSizeType) {
-                                case Font.SIZE_SMALL:
-                                    ttfFontSize = 0;
-                                    actualSize = 11f;
-                                    break;
-                                case Font.SIZE_LARGE:
-                                    ttfFontSize = 2;
-                                    actualSize = 20f;
-                                    break;
-                            }
-                            // Check for a more specific font size
-                            if (fontSize != null) {
-                                switch (fontSize.getLexicalUnitType()) {
-                                    case LexicalUnit.SAC_MILLIMETER:
-                                        ttfFontSize = 3;
-                                        actualSize = fontSize.getFloatValue();
-                                        break;
-                                    case LexicalUnit.SAC_PIXEL:
-                                    case LexicalUnit.SAC_POINT:
-                                        ttfFontSize = 4;
-                                        actualSize = fontSize.getFloatValue();
-                                        break;
-
-                                    case LexicalUnit.SAC_CENTIMETER:
-                                        ttfFontSize = 3;
-                                        actualSize = fontSize.getFloatValue()*10f;
-                                        break;
-                                    case LexicalUnit.SAC_INCH:
-                                        ttfFontSize = 3;
-                                        actualSize = fontSize.getFloatValue()*25f;
-                                        break;
-                                    case LexicalUnit.SAC_EM:
-                                        ttfFontSize = 4;
-                                        actualSize = fontSize.getFloatValue()* 14f;
-                                        break;
-                                    case LexicalUnit.SAC_PERCENTAGE:
-                                        ttfFontSize = 4;
-                                        actualSize = fontSize.getFloatValue() /100f * 14f;
-                                        break;
-
-                                }
-                            }*/
+                            
                             FontFace face = findFontFace(fontFamily.getStringValue());
                             if (face != null) {
                                 ttfFontFile = face.getFontFile();
-                                /*
-                                if (fontFile != null) {
-                                    Font sys = Font.createSystemFont(iFontFace,iFontStyle, iFontSizeType);
-                                    
-                                    ttfFont = new EditorTTFFont(fontFile, ttfFontSize, actualSize, sys);
-                                    break loop;
-                                }
-                                */
+                                
                             } else {
                                 
                                 if(fontFamily.getStringValue().startsWith("native:")) {
                                     ttfFontName = fontFamily.getStringValue();
-                                    //Font sys = Font.createSystemFont(iFontFace,iFontStyle, iFontSizeType);
-                                    //ttfFont = new EditorTTFFont(fontFamily.getStringValue(), ttfFontSize, actualSize, sys);
-                                    //break loop;
+                                    
                                 }
                             }
                         }   
@@ -4332,12 +4317,7 @@ public class CSSTheme {
                     return new EditorTTFFont(ttfFontName, ttfSizeType, ttfSize, Font.createSystemFont(sysFace, sysStyle, sysSize));
                 }
             }
-            /*
-            if (ttfFont != null) {
-                return ttfFont;
-            } else {
-                return Font.createSystemFont(iFontFace,iFontStyle, iFontSizeType);
-            }*/
+            
             
         }
         
@@ -6276,40 +6256,7 @@ public class CSSTheme {
         byte unit;
     }
     
-    private IntValue getIntValue(LexicalUnit value) {
-        
-        IntValue out = new IntValue();
-        
-        if (value == null) {
-            return out;
-        }
-        
-        int pixelValue = 0;
-        byte unit = 0;
-        switch (value.getLexicalUnitType()) {
-            case LexicalUnit.SAC_PIXEL :
-            case LexicalUnit.SAC_POINT :
-            case LexicalUnit.SAC_INTEGER:
-                unit = (byte)0;
-                pixelValue = Math.round(value.getFloatValue());
-                break;
-            case LexicalUnit.SAC_MILLIMETER :
-                unit = (byte)2;
-                pixelValue = Math.round(value.getFloatValue());
-                break;
-            case LexicalUnit.SAC_CENTIMETER :
-                unit = (byte) 2;
-                pixelValue = Math.round(value.getFloatValue() * 10);
-                break;
-            default :
-                throw new RuntimeException("Unsupported unit for inset "+value.getDimensionUnitText());
-        }
-        
-        out.value = pixelValue;
-        out.unit = unit;
-        return out;
-            
-    }
+
     private FloatValue getFloatValue(LexicalUnit value) {
         
         FloatValue out = new FloatValue();
@@ -6336,7 +6283,35 @@ public class CSSTheme {
                 fvalue = value.getFloatValue() * 10;
                 break;
             default :
-                throw new RuntimeException("Unsupported unit for inset "+value.getDimensionUnitText());
+                String unitText = null;
+                try {
+                    unitText = value.getDimensionUnitText();
+
+                } catch (Exception ex) {
+
+                    ex.printStackTrace();
+                    throw new RuntimeException("No unit provided for "+value+" when parsing inset.", ex);
+                }
+
+                if ("rem".equals(unitText)) {
+                    unit = (byte) Style.UNIT_TYPE_REM;
+                    fvalue = value.getFloatValue();
+                } else if ("vw".equals(unitText)) {
+                    unit = Style.UNIT_TYPE_VW;
+                    fvalue = value.getFloatValue();
+                } else if ("vh".equals(unitText)) {
+                    unit = Style.UNIT_TYPE_VH;
+                    fvalue = value.getFloatValue();
+                } else if ("vmin".equals(unitText)) {
+                    unit = Style.UNIT_TYPE_VMIN;
+                    fvalue = value.getFloatValue();
+                } else if ("vmax".equals(unitText)) {
+                    unit = Style.UNIT_TYPE_VMAX;
+                    fvalue = value.getFloatValue();
+                } else {
+                    throw new RuntimeException("Unsupported unit for inset " + unitText);
+                }
+
         }
         
         out.value = fvalue;
@@ -6366,75 +6341,8 @@ public class CSSTheme {
             
     }
     
-    private Insets getInsets(LexicalUnit value) {
-        Insets i = new Insets();
-        int index = Insets.TOP;
-        while (value != null) {
-            int pixelValue = 0;
-            byte unit = 0;
-            switch (value.getLexicalUnitType()) {
-                case LexicalUnit.SAC_PIXEL :
-                case LexicalUnit.SAC_POINT :
-                    unit = (byte)0;
-                    pixelValue = Math.round(value.getFloatValue());
-                    break;
-                case LexicalUnit.SAC_MILLIMETER :
-                    unit = (byte)2;
-                    pixelValue = Math.round(value.getFloatValue());
-                    break;
-                case LexicalUnit.SAC_CENTIMETER :
-                    unit = (byte) 2;
-                    pixelValue = Math.round(value.getFloatValue() * 10);
-                    break;
-                default :
-                    throw new RuntimeException("Unsupported unit for inset "+value.getDimensionUnitText());
-            }
-            
-            switch (index) {
-                case Insets.TOP :
-                    i.set(Insets.TOP, pixelValue, unit);
-                    i.set(Insets.RIGHT, pixelValue, unit);
-                    i.set(Insets.BOTTOM, pixelValue, unit);
-                    i.set(Insets.LEFT, pixelValue, unit);
-                    break;
-                    
-                case Insets.RIGHT :
-                    i.set(Insets.LEFT, pixelValue, unit);
-                    i.set(Insets.RIGHT, pixelValue, unit);
-                    break;
-                case Insets.BOTTOM :
-                    i.set(Insets.BOTTOM, pixelValue, unit);
-                    break;
-                case Insets.LEFT :
-                    i.set(Insets.LEFT, pixelValue, unit);
-                    
-            }
-            
-            index++;
-            value = value.getNextLexicalUnit();
-        }
-        return i;
-    }
-    
-    /*
-    Border getBorder(LexicalUnit lu) {
-        int width = 1;
-        
-        while (lu != null) {
-            switch (lu.getLexicalUnitType()) {
-                case LexicalUnit.SAC_PIXEL :
-                    
-            }
-        }
-    }
-    */
-    
-    Color getColor(LexicalUnit color) {
-        String str =getColorString(color);
-        return Color.web("#"+str);
-        
-    }
-    
+
+
     static int getColorInt(LexicalUnit color) {
         String str = getColorString(color);
         return Integer.valueOf(str, 16);

@@ -285,9 +285,6 @@ public class SimpleDateFormat extends DateFormat {
     
     @Override
     String format(Date source, StringBuilder toAppendTo) {
-        if(source == null) {
-            source = new Date();
-        }
         if (pattern == null) {
             return super.format(source, toAppendTo);
         }
@@ -933,6 +930,9 @@ public class SimpleDateFormat extends DateFormat {
      * @throws ParseException if the source could not be parsed.
      */
     int parseMonth(String month, int offset) throws ParseException {
+        if (month == null) {
+            throwInvalid("month", offset);
+        }
         if (month.length() < 3) {
             return (parseNumber(month, offset, "month", 1, 12) - 1) + Calendar.JANUARY;
         }

@@ -62,6 +62,7 @@ public class Label extends Component implements IconHolder, TextHolder {
         }
         
     };
+    private boolean iconChangeListenerInstalled;
     
     /**
      * Fallback to the old default look and feel renderer for cases where compatibility is essential
@@ -345,6 +346,28 @@ public class Label extends Component implements IconHolder, TextHolder {
         this.font = font;
         fontIcon = c;
     }
+
+    /**
+     * Sets an icon font using either the same icon font that was used to set the icon font last, or using the font
+     * from the icon UIID.
+     *
+     * @param c The character to render in the font.
+     * @since 8.0
+     */
+    public void setFontIcon(char c) {
+        Component iconStyle = getIconStyleComponent();
+        if (this.font == null) {
+            if (iconStyle == null) {
+                throw new IllegalStateException("Cannot set FontIcon without an IconStyleComponent set first.");
+            }
+            Font font = iconStyle.getStyle().getFont();
+            if (font == null) {
+                throw new IllegalStateException("Cannot set FontIcon without an IconStyleComponent with a fond set first.");
+            }
+            this.font = font;
+        }
+        setFontIcon(this.font, c);
+    }
     
     /**
      * This method is shorthand for {@link com.codename1.ui.FontImage#setMaterialIcon(com.codename1.ui.Label, char, float)}
@@ -504,9 +527,15 @@ public class Label extends Component implements IconHolder, TextHolder {
             setMask(UIManager.getInstance().getThemeMaskConstant(maskName));
         }
         if(getIcon() != null) {
+            if (!iconChangeListenerInstalled) {
+                getIcon().addActionListener(iconChangeListener);
+                iconChangeListenerInstalled = true;
+            }
             getIcon().lock();
         }
     }
+
+
 
     /**
      * {@inheritDoc}
@@ -517,7 +546,9 @@ public class Label extends Component implements IconHolder, TextHolder {
         if(f != null) {
             f.deregisterAnimated(this);
         }
+
         if(getIcon() != null) {
+            getIcon().removeActionListener(iconChangeListener);
             getIcon().unlock();
         }
     }
@@ -544,6 +575,7 @@ public class Label extends Component implements IconHolder, TextHolder {
         }
         if (this.icon != null) {
             this.icon.removeActionListener(iconChangeListener);
+            iconChangeListenerInstalled = false;
         }
         widthAtLastCheck = -1;
         if(icon != null) {
@@ -557,7 +589,10 @@ public class Label extends Component implements IconHolder, TextHolder {
         }
         this.icon = icon;
         if (this.icon != null) {
-            this.icon.addActionListener(iconChangeListener);
+            if (isInitialized()) {
+                this.icon.addActionListener(iconChangeListener);
+                iconChangeListenerInstalled = true;
+            }
         }
         setShouldCalcPreferredSize(true);
         checkAnimation();

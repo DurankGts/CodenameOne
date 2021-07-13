@@ -2209,7 +2209,7 @@ public class Component implements Animation, StyleListener, Editable {
             } else {
                 Image i = (Image)d.extractHardRef(paintLockImage);
                 if(i == null) {
-                    i = Image.createImage(getWidth(), getHeight());
+                    i = ImageFactory.createImage(this, getWidth(), getHeight(), 0);
                     int x = getX();
                     int y = getY();
                     setX(0);
@@ -2555,7 +2555,7 @@ public class Component implements Animation, StyleListener, Editable {
             int absX = getAbsoluteX() + getScrollX();
             int absY = getAbsoluteY() + getScrollY();
             if(i == null || i.getWidth() != getWidth() || i.getHeight() != getHeight()) {
-                i = Image.createImage(getWidth(), getHeight());
+                i = ImageFactory.createImage(this, getWidth(), getHeight(), 0);
                 Graphics tg = i.getGraphics();
                 //tg.translate(g.getTranslateX(), g.getTranslateY());
                 drawPaintersImpl(tg, par, c, x, y, w, h);
@@ -3669,7 +3669,7 @@ public class Component implements Animation, StyleListener, Editable {
         
         if(sourceStyle.getFont().getHeight() != destStyle.getFont().getHeight() && sourceStyle.getFont().isTTFNativeFont()) {
             // allows for fractional font sizes
-            m = Motion.createLinearMotion(sourceStyle.getFont().getHeight() * 100, destStyle.getFont().getHeight() * 100, duration);
+            m = Motion.createLinearMotion(Math.round(sourceStyle.getFont().getPixelSize() * 100), Math.round(destStyle.getFont().getPixelSize() * 100), duration);
         }
 
         final Motion fontMotion = m;
@@ -3887,41 +3887,62 @@ public class Component implements Animation, StyleListener, Editable {
                         setUIID(destUIID);
                     }
                 } else {
+                    boolean requiresRevalidate = false;
                     if (opacityMotion != null) {
                         sourceStyle.setOpacity(opacityMotion.getValue());
                     }
-                    if(fgColorMotion != null) {
+                    if (fgColorMotion != null) {
                         sourceStyle.setFgColor(fgColorMotion.getValue());
                     }
                     ap.alpha = bgMotion.getValue();
-                    if(fontMotion != null) {
+                    if (fontMotion != null) {
                         Font fnt = sourceStyle.getFont();
-                        fnt = fnt.derive(((float)fontMotion.getValue()) / 100.0f, fnt.getStyle());
+                        fnt = fnt.derive(((float) fontMotion.getValue()) / 100.0f, fnt.getStyle());
+                        requiresRevalidate = true;
                         sourceStyle.setFont(fnt);
                     }
-                    if(paddingTop != null) {
+                    if (paddingTop != null) {
                         sourceStyle.setPadding(TOP, paddingTop.getValue());
+                        requiresRevalidate = true;
                     }
-                    if(paddingBottom != null) {
+                    if (paddingBottom != null) {
                         sourceStyle.setPadding(BOTTOM, paddingBottom.getValue());
+                        requiresRevalidate = true;
                     }
-                    if(paddingLeft != null) {
+                    if (paddingLeft != null) {
                         sourceStyle.setPadding(LEFT, paddingLeft.getValue());
+                        requiresRevalidate = true;
                     }
-                    if(paddingRight != null) {
+                    if (paddingRight != null) {
                         sourceStyle.setPadding(RIGHT, paddingRight.getValue());
+                        requiresRevalidate = true;
                     }
-                    if(marginTop != null) {
+                    if (marginTop != null) {
                         sourceStyle.setMargin(TOP, marginTop.getValue());
+                        requiresRevalidate = true;
                     }
-                    if(marginBottom != null) {
+                    if (marginBottom != null) {
                         sourceStyle.setMargin(BOTTOM, marginBottom.getValue());
+                        requiresRevalidate = true;
                     }
-                    if(marginLeft != null) {
+                    if (marginLeft != null) {
                         sourceStyle.setMargin(LEFT, marginLeft.getValue());
+                        requiresRevalidate = true;
                     }
-                    if(marginRight != null) {
+                    if (marginRight != null) {
                         sourceStyle.setMargin(RIGHT, marginRight.getValue());
+                        requiresRevalidate = true;
+                    }
+                    if (!Component.revalidateOnStyleChange) {
+                        // If revalidation on stylechange is not enabled, then the style animation
+                        // won't work. We need to explicitly revalidate or repaint here.
+                        if (requiresRevalidate) {
+                            Container parent = getParent();
+                            if (parent != null) parent.revalidate();
+                            else repaint();
+                        } else {
+                            repaint();
+                        }
                     }
                 }
             }
@@ -4147,7 +4168,7 @@ public class Component implements Animation, StyleListener, Editable {
      * @return an image
      */
     protected Image getDragImage() {
-        Image draggedImage = Image.createImage(getWidth(), getHeight(),0x00ff7777);
+        Image draggedImage = ImageFactory.createImage(this, getWidth(), getHeight(),0x00ff7777);
         Graphics g = draggedImage.getGraphics();
 
         g.translate(-getX(), -getY());
@@ -4171,7 +4192,7 @@ public class Component implements Animation, StyleListener, Editable {
         if (getWidth() <= 0 || getHeight() <= 0) {
             return null;
         }
-        Image image = Image.createImage(getWidth(), getHeight(),0x0);
+        Image image = ImageFactory.createImage(this, getWidth(), getHeight(),0x0);
         Graphics g = image.getGraphics();
 
         g.translate(-getX(), -getY());
@@ -5631,7 +5652,14 @@ public class Component implements Animation, StyleListener, Editable {
         } 
     }
 
+    /**
+     * A flag that tracks whether the component is current registered as an animated with {@link Form#registerAnimatedInternal(Animation)}.
+     * Using this flag allows for a small efficiency improvement.  The flag is set in {@link Form#registerAnimatedInternal(Animation)} and
+     * unset in {@link Form#deregisterAnimatedInternal()}.
+     */
+    boolean internalRegisteredAnimated;
     void deregisterAnimatedInternal() {
+        if (!internalRegisteredAnimated) return;
         Form f = getComponentForm();
         if (f != null) {
             f.deregisterAnimatedInternal(this);
@@ -6111,6 +6139,7 @@ public class Component implements Animation, StyleListener, Editable {
             if (stateChangeListeners != null) {
                 stateChangeListeners.fireActionEvent(new ComponentStateChangeEvent(this, false));
             }
+            deregisterAnimatedInternal();
             deinitialize();
             if(refreshTaskDragListener != null) {
                 Form f = getComponentForm();
@@ -6582,7 +6611,7 @@ public class Component implements Animation, StyleListener, Editable {
             return null;
         }
         if(paintLockImage == null) {
-            paintLockImage = Image.createImage(getWidth(), getHeight());
+            paintLockImage = ImageFactory.createImage(this, getWidth(), getHeight(), 0);
             int x = getX();
             int y = getY();
             setX(0);
@@ -6747,6 +6776,8 @@ public class Component implements Animation, StyleListener, Editable {
     /**
      * Sets the hint text and Icon, the hint text and icon are
      * displayed on the component when it is empty
+     *
+     * <p>The default UIID for the text hint is "TextHint"</p>
      *
      * @param hint the hint text to display
      * @param icon the hint icon to display
