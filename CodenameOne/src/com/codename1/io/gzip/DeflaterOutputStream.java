@@ -84,13 +84,13 @@ public class DeflaterOutputStream extends FilterOutputStream {
     public void write(byte[] b, int off, int len) throws IOException {
         if (deflater.finished()) {
             throw new IOException("finished");
-        } else if (off < 0 | len < 0 | off + len > b.length) {
+        } else if (off < 0 || len < 0 || off + len > b.length) {
             throw new IndexOutOfBoundsException();
         } else if (len == 0) {
         } else {
             int flush = syncFlush ? JZlib.Z_SYNC_FLUSH : JZlib.Z_NO_FLUSH;
             deflater.setInput(b, off, len, true);
-            while (deflater.avail_in > 0) {
+            while (deflater.availIn > 0) {
                 int err = deflate(flush);
                 if (err == JZlib.Z_STREAM_END)
                     break;
@@ -124,14 +124,14 @@ public class DeflaterOutputStream extends FilterOutputStream {
             case JZlib.Z_STREAM_END:
                 break;
             case JZlib.Z_BUF_ERROR:
-                if (deflater.avail_in <= 0 && flush != JZlib.Z_FINISH) {
+                if (deflater.availIn <= 0 && flush != JZlib.Z_FINISH) {
                     // flush() without any data
                     break;
                 }
             default:
                 throw new IOException("failed to deflate");
         }
-        int len = deflater.next_out_index;
+        int len = deflater.nextOutIndex;
         if (len > 0) {
             out.write(buffer, 0, len);
         }
@@ -142,7 +142,7 @@ public class DeflaterOutputStream extends FilterOutputStream {
         if (syncFlush && !deflater.finished()) {
             while (true) {
                 int err = deflate(JZlib.Z_SYNC_FLUSH);
-                if (deflater.next_out_index < buffer.length)
+                if (deflater.nextOutIndex < buffer.length)
                     break;
                 if (err == JZlib.Z_STREAM_END)
                     break;

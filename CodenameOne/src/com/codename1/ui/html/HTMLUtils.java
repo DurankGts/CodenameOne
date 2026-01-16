@@ -31,7 +31,7 @@ import java.util.Hashtable;
  * @author Ofir Leitner
  * @deprecated the HTML package is no longer used or maintained and may be removed in a future revision
  */
-public class HTMLUtils {
+public final class HTMLUtils {
 
     /**
      * The char entities strings supported in XML. When a char entity is found these will be compared against first.
@@ -187,7 +187,7 @@ public class HTMLUtils {
                             ((c >= '0') && (c <= '9')) ||
                             (c == '-') || (c == '.') || (c == '_') || (c == '~')) {
                 encodedStr += c;
-            } else if ((c >= 0x80) && (c <= 0xffff)) { // UTF encoding - See http://en.wikipedia.org/wiki/UTF-8
+            } else if (c >= 0x80) { // UTF encoding - See http://en.wikipedia.org/wiki/UTF-8
                 int firstLiteral = c / 256;
                 int secLiteral = c % 256;
                 if (c <= 0x07ff) { // 2 literals unicode

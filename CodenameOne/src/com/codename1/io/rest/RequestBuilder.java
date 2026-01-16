@@ -23,6 +23,7 @@
  */
 package com.codename1.io.rest;
 
+import com.codename1.compat.java.util.Objects;
 import com.codename1.io.ConnectionRequest;
 import com.codename1.io.Data;
 import com.codename1.io.JSONParser;
@@ -249,8 +250,8 @@ public class RequestBuilder {
      */
     public RequestBuilder header(String key, String value) {
         checkFetched();
-        // .toString() is used to trigger an NPE early for null headers
-        headers.put(key.toString(), value.toString());
+        headers.put(Objects.requireNonNull(key, "Header key cannot be null"),
+                Objects.requireNonNull(value, "Header value cannot be null"));
         return this;
     }
 

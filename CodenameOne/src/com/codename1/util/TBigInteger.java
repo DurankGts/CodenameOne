@@ -924,7 +924,7 @@ class TBigInteger {
             return hashCode;
         }
         for (int i = 0; i < digits.length; i++) {
-            hashCode = (hashCode * 33 + (digits[i] & 0xffffffff));
+            hashCode = (hashCode * 33 + digits[i]);
         }
         hashCode = hashCode * sign;
         return hashCode;
@@ -1240,7 +1240,7 @@ class TBigInteger {
         }
         TBigInteger base = this;
 
-        if (m.isOne() | (exponent.sign > 0 & base.sign == 0)) {
+        if (m.isOne() || (exponent.sign > 0 && base.sign == 0)) {
             return TBigInteger.ZERO;
         }
         if (exponent.sign == 0) {

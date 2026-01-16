@@ -763,6 +763,7 @@ def main() -> None:
     if spotbugs:
         forbidden_rules = {
             "NP_ALWAYS_NULL",
+            "NP_NULL_PARAM_DEREF",
             "RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE",
             "RCN_REDUNDANT_NULLCHECK_OF_NULL_VALUE",
             "UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR",
@@ -772,10 +773,12 @@ def main() -> None:
             "IA_AMBIGUOUS_INVOCATION_OF_INHERITED_OR_OUTER_METHOD",
             "LI_LAZY_INIT_STATIC",
             "RpC_REPEATED_CONDITIONAL_TEST",
+            "NS_NON_SHORT_CIRCUIT",
             "ES_COMPARING_PARAMETER_STRING_WITH_EQ",
             "FE_FLOATING_POINT_EQUALITY",
             "FE_TEST_IF_EQUAL_TO_NOT_A_NUMBER",
             "ICAST_IDIV_CAST_TO_DOUBLE",
+            "ICAST_QUESTIONABLE_UNSIGNED_RIGHT_SHIFT",
             "SA_FIELD_SELF_ASSIGNMENT",
             "UC_USELESS_CONDITION",
             "UC_USELESS_OBJECT",
@@ -787,7 +790,9 @@ def main() -> None:
             "EQ_DOESNT_OVERRIDE_EQUALS",
             "CO_COMPARETO_INCORRECT_FLOATING",
             "DL_SYNCHRONIZATION_ON_SHARED_CONSTANT",
+            "SSD_DO_NOT_USE_INSTANCE_LOCK_ON_SHARED_STATIC_DATA",
             "DLS_DEAD_LOCAL_STORE",
+            "DLS_DEAD_LOCAL_STORE_OF_NULL",
             "DM_NUMBER_CTOR",
             "DMI_INVOKING_TOSTRING_ON_ARRAY",
             "EC_NULL_ARG",
@@ -815,16 +820,32 @@ def main() -> None:
             "NM_CONFUSING",
             "NM_FIELD_NAMING_CONVENTION",
             "NM_METHOD_NAMING_CONVENTION",
+            "NN_NAKED_NOTIFY",
             "NO_NOTIFY_NOT_NOTIFYALL",
             "NP_LOAD_OF_KNOWN_NULL_VALUE",
             "NP_BOOLEAN_RETURN_NULL",
+            "RC_REF_COMPARISON_BAD_PRACTICE_BOOLEAN",
+            "OS_OPEN_STREAM",
             "REFLC_REFLECTION_MAY_INCREASE_ACCESSIBILITY_OF_CLASS",
             "REC_CATCH_EXCEPTION",
             "RCN_REDUNDANT_NULLCHECK_WOULD_HAVE_BEEN_A_NPE",
             "RV_RETURN_VALUE_IGNORED_NO_SIDE_EFFECT",
+            "INT_VACUOUS_COMPARISON",
+            "DM_STRING_TOSTRING",
+            "HE_HASHCODE_USE_OBJECT_EQUALS",
+            "IM_BAD_CHECK_FOR_ODD",
+            "IM_AVERAGE_COMPUTATION_COULD_OVERFLOW",
+            "INT_VACUOUS_BIT_OPERATION",
+            "ICAST_INT_2_LONG_AS_INSTANT",
+            "ICAST_INT_CAST_TO_FLOAT_PASSED_TO_ROUND",
+            "IT_NO_SUCH_ELEMENT",
+            "FL_FLOATS_AS_LOOP_COUNTERS",
             "UI_INHERITANCE_UNSAFE_GETRESOURCE",
+            "IS2_INCONSISTENT_SYNC",
+            "RR_NOT_CHECKED",
             "URF_UNREAD_FIELD",
             "URF_UNREAD_PUBLIC_OR_PROTECTED_FIELD",
+            "UR_UNINIT_READ",
             "UUF_UNUSED_FIELD",
             "UWF_NULL_FIELD",
             "UW_UNCOND_WAIT",
@@ -832,9 +853,15 @@ def main() -> None:
             "SIC_INNER_SHOULD_BE_STATIC_ANON",
             "SS_SHOULD_BE_STATIC",
             "UPM_UNCALLED_PRIVATE_METHOD",
+            "RV_RETURN_VALUE_IGNORED_INFERRED",
             "RV_CHECK_FOR_POSITIVE_INDEXOF",
             "SF_SWITCH_FALLTHROUGH",
-            "SIC_INNER_SHOULD_BE_STATIC_NEEDS_THIS"
+            "SIC_INNER_SHOULD_BE_STATIC_NEEDS_THIS",
+            "SA_FIELD_DOUBLE_ASSIGNMENT",
+            "SA_FIELD_SELF_COMPARISON",
+            "SR_NOT_CHECKED",
+            "SWL_SLEEP_WITH_LOCK_HELD",
+            "UC_USELESS_CONDITION_TYPE"
         }
 
         def _is_exempt(f: Finding) -> bool:
@@ -851,6 +878,10 @@ def main() -> None:
                 return True
             if f.rule == "URF_UNREAD_FIELD" and "GridBagLayoutInfo" in loc:
                 return True
+            if f.rule == "NN_NAKED_NOTIFY" and "Display.java" in loc:
+                return True
+            if f.rule == "ICAST_QUESTIONABLE_UNSIGNED_RIGHT_SHIFT" and "Deflate.java" in loc:
+                return True
             return False
 
 
@@ -860,6 +891,18 @@ def main() -> None:
         ]
         if violations:
             print("\n❌ Build failed due to forbidden SpotBugs violations:")
+            for v in violations:
+                print(f"  - {v.rule}: {v.location} - {v.message}")
+            exit(1)
+
+    pmd = parse_pmd()
+    if pmd:
+        forbidden_pmd_rules = {
+            "ClassWithOnlyPrivateConstructorsShouldBeFinal",
+        }
+        violations = [f for f in pmd.findings if f.rule in forbidden_pmd_rules]
+        if violations:
+            print("\n❌ Build failed due to forbidden PMD violations:")
             for v in violations:
                 print(f"  - {v.rule}: {v.location} - {v.message}")
             exit(1)

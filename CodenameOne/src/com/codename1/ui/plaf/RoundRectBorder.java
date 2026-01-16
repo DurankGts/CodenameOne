@@ -48,7 +48,7 @@ import com.codename1.ui.geom.Rectangle;
  *
  * @author Shai Almog
  */
-public class RoundRectBorder extends Border {
+public final class RoundRectBorder extends Border {
     private static final String CACHE_KEY = "cn1$$-rrbcache";
     // these allow us to have more than one border per component in cache which is important for selected/unselected/pressed values
     private static int instanceCounter;
@@ -886,7 +886,7 @@ public class RoundRectBorder extends Border {
             x += strokePx / 2f;
             y += strokePx / 2f;
 
-            if (strokePx % 2 == 1) {
+            if ((strokePx & 1) != 0) {
                 x += 0.5f;
                 y += 0.5f;
             }

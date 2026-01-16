@@ -247,7 +247,7 @@ public class Capture {
 
     static class CallBack implements ActionListener<ActionEvent>, Runnable {
         String url;
-        private boolean completed;
+        private volatile boolean completed;
         private int targetWidth = -1;
         private int targetHeight = -1;
 
@@ -257,8 +257,8 @@ public class Capture {
             } else {
                 url = (String) evt.getSource();
             }
-            completed = true;
             synchronized (this) {
+                completed = true;
                 this.notifyAll();
             }
         }

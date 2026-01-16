@@ -44,6 +44,13 @@
     </Match>
 
     <!--
+    Some API interfaces are intentionally redundant for compatibility.
+    -->
+    <Match>
+        <Bug pattern="RI_REDUNDANT_INTERFACES"/>
+    </Match>
+
+    <!--
     This fails on writing to a static field from a non-static method.
     This is a bad practice in general because it could indicate a state
     that changes across threads. However, in our case, we have many such
@@ -80,6 +87,21 @@
     </Match>
     <Match>
         <Bug pattern="EI_EXPOSE_STATIC_REP2"/>
+    </Match>
+
+    <!--
+    Some APIs rely on volatile array references for performance/compatibility.
+    -->
+    <Match>
+        <Bug pattern="VO_VOLATILE_REFERENCE_TO_ARRAY"/>
+    </Match>
+
+    <!--
+    FilterProxyListModel intentionally negates compareTo for descending order.
+    -->
+    <Match>
+        <Class name="com.codename1.ui.list.FilterProxyListModel" />
+        <Bug pattern="RV_NEGATING_RESULT_OF_COMPARETO" />
     </Match>
 
     <!--
@@ -150,6 +172,56 @@
     <Match>
         <Class name="~com\.codename1\.io\.gzip\.Inflate.*" />
         <Bug pattern="SF_SWITCH_FALLTHROUGH" />
+    </Match>
+    <Match>
+        <Class name="~com\.codename1\.io\.gzip\.Deflate.*" />
+        <Bug pattern="ICAST_QUESTIONABLE_UNSIGNED_RIGHT_SHIFT" />
+    </Match>
+
+    <!--
+    There are two failures for this specific bug:
+    com.codename1.ui.Container.setLightweightMode(boolean)
+    com.codename1.impl.CodenameOneImplementation.playBuiltinSound(String)
+
+    Lightweight mode is useful in peer components, which is only
+    visible in the native layer (invisible to spotbugs).
+    playBuiltinSound seems unused, but we probably would want to fix
+    that at some point.
+    -->
+    <Match>
+        <Bug pattern="UC_USELESS_VOID_METHOD" />
+    </Match>
+
+    <!--
+    These are actual bugs we're ignoring specifically:
+    components isn't initialized in com.codename1.ui.Container.initLaf(UIManager) when invoked from constructor for superclass
+    fontIconSize isn't initialized in com.codename1.ui.Label.initLaf(UIManager) when invoked from constructor for superclass
+    materialIconSize isn't initialized in com.codename1.ui.Label.initLaf(UIManager) when invoked from constructor for superclass
+
+    Unfortunately, we can't fix them without breaking Codename One.
+    initLaf is deeply embedded in the code and the constructor chain,
+    and we just can't fix it properly.
+    -->
+    <Match>
+        <Bug pattern="UR_UNINIT_READ_CALLED_FROM_SUPER_CONSTRUCTOR" />
+    </Match>
+
+    <!--
+    This fires for timed waits which shouldn't be in a loop.
+    It's a bad check. In one particular case, it also misses a loop
+    in the parent (EDT main loop).
+    -->
+    <Match>
+        <Bug pattern="WA_NOT_IN_LOOP" />
+    </Match>
+
+    <!--
+    This rule is a bit broad for the complex threading logic in Display.
+    Ideally, this code should be rewritten, but it's battle tested and deep.
+    -->
+    <Match>
+        <Class name="~com\.codename1\.ui\.Display.*" />
+        <Bug pattern="NN_NAKED_NOTIFY" />
     </Match>
 
     <!-- Excluding since the class explicitly compares interned strings -->
