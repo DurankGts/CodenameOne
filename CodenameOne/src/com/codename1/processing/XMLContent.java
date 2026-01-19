@@ -90,6 +90,7 @@ class XMLContent implements StructuredContent {
      *
      * @return the object as a string
      */
+    @Override
     public String toString() {
         if ("ROOT".equals(root.getTagName())) {
             return root.getChildAt(0).toString();
@@ -103,7 +104,7 @@ class XMLContent implements StructuredContent {
      * @param array
      * @return
      */
-    private List _asStructuredContentArray(List array) {
+    private List asStructuredContentArray(List array) {
         List children;
         if (array instanceof Vector) {
             children = new Vector();
@@ -119,13 +120,15 @@ class XMLContent implements StructuredContent {
     /* (non-Javadoc)
      * @see com.codename1.processing.StructuredContent#getChildren(java.lang.String)
      */
+    @Override
     public List getChildren(String name) {
-        return _asStructuredContentArray(root.getChildrenByTagName(name));
+        return asStructuredContentArray(root.getChildrenByTagName(name));
     }
 
     /* (non-Javadoc)
      * @see com.codename1.processing.StructuredContent#getChild(int)
      */
+    @Override
     public StructuredContent getChild(int index) {
         return new XMLContent(root.getChildAt(index));
     }
@@ -134,13 +137,15 @@ class XMLContent implements StructuredContent {
     /* (non-Javadoc)
      * @see com.codename1.processing.StructuredContent#getDescendants(java.lang.String)
      */
+    @Override
     public List getDescendants(String name) {
-        return _asStructuredContentArray(root.getDescendantsByTagName(name));
+        return asStructuredContentArray(root.getDescendantsByTagName(name));
     }
 
     /* (non-Javadoc)
      * @see com.codename1.processing.StructuredContent#getAttribute(java.lang.String)
      */
+    @Override
     public String getAttribute(String name) {
         return root.getAttribute(name);
     }
@@ -148,6 +153,7 @@ class XMLContent implements StructuredContent {
     /* (non-Javadoc)
      * @see com.codename1.processing.StructuredContent#getAttributes()
      */
+    @Override
     public Map getAttributes() {
         return root.getAttributes();
     }
@@ -155,6 +161,7 @@ class XMLContent implements StructuredContent {
     /* (non-Javadoc)
      * @see com.codename1.processing.StructuredContent#getParent()
      */
+    @Override
     public StructuredContent getParent() {
         Element parent = root.getParent();
         if (parent == null) {
@@ -166,6 +173,7 @@ class XMLContent implements StructuredContent {
     /* (non-Javadoc)
      * @see com.codename1.processing.StructuredContent#getText()
      */
+    @Override
     public String getText() {
         if (root.isTextElement()) {
             return root.getText();
@@ -178,6 +186,7 @@ class XMLContent implements StructuredContent {
         }
     }
 
+    @Override
     public Object getNativeRoot() {
         return root;
     }

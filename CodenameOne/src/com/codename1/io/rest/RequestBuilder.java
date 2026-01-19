@@ -781,7 +781,7 @@ public class RequestBuilder {
         req.setUrl(url);
         req.setHttpMethod(method);
         if (postParameters == null) {
-            req.setPost(method.equalsIgnoreCase("POST") || method.equalsIgnoreCase("PUT") || method.equalsIgnoreCase("PATCH"));
+            req.setPost("POST".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method));
         } else {
             req.setPost(postParameters);
         }
@@ -887,6 +887,7 @@ public class RequestBuilder {
             this.f = f;
         }
 
+        @Override
         public void actionPerformed(NetworkEvent evt) {
             evt.consume();
             f.onError(null, evt.getError(), evt.getResponseCode(), evt.getMessage());
@@ -900,6 +901,7 @@ public class RequestBuilder {
             this.f = f;
         }
 
+        @Override
         public void actionPerformed(NetworkEvent evt) {
             evt.consume();
             f.onError(null, evt.getError(), evt.getResponseCode(), evt.getMessage());
@@ -1075,6 +1077,7 @@ public class RequestBuilder {
         /**
          * {@inheritDoc}
          */
+        @Override
         public boolean equals(Object o) {
             if (this == o) {
                 return true;
@@ -1098,6 +1101,7 @@ public class RequestBuilder {
         /**
          * {@inheritDoc}
          */
+        @Override
         public int hashCode() {
             int result = super.hashCode();
             result = 31 * result + (parseJSON ? 1 : 0);

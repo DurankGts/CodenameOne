@@ -81,21 +81,22 @@ public class InnerActive extends AdsService { // PMD Fix: UnusedPrivateField rem
     /**
      * initialize the ads service
      */
+    @Override
     public void initService(Ads ads) {
         this.os = Display.getInstance().getPlatformName();
-        if (os.equals("and")) {
+        if ("and".equals(os)) {
             if (banner) {
                 po = 559;
             } else {
                 po = 600;
             }
-        } else if (os.equals("rim")) {
+        } else if ("rim".equals(os)) {
             if (banner) {
                 po = 635;
             } else {
                 po = 634;
             }
-        } else if (os.equals("ios")) {
+        } else if ("ios".equals(os)) {
             if (banner) {
                 if (Display.getInstance().isTablet()) {
                     po = 947;
@@ -109,7 +110,7 @@ public class InnerActive extends AdsService { // PMD Fix: UnusedPrivateField rem
                     po = 632;
                 }
             }
-        } else if (os.equals("me")) {
+        } else if ("me".equals(os)) {
             if (banner) {
                 po = 551;
             } else {
@@ -125,7 +126,7 @@ public class InnerActive extends AdsService { // PMD Fix: UnusedPrivateField rem
         //protocol version
         String version = protocolVersion;
         addParam(this, "v", version);
-        if (os.equals("ios")) {
+        if ("ios".equals(os)) {
             hid = Display.getInstance().getProperty("UDID", null);
         } else {
             hid = Display.getInstance().getProperty("IMEI", null);
@@ -159,6 +160,7 @@ public class InnerActive extends AdsService { // PMD Fix: UnusedPrivateField rem
     /**
      * {@inheritDoc}
      */
+    @Override
     public boolean equals(Object o) {
         if (this == o) {
             return true;
@@ -191,6 +193,7 @@ public class InnerActive extends AdsService { // PMD Fix: UnusedPrivateField rem
     /**
      * {@inheritDoc}
      */
+    @Override
     public int hashCode() {
         int result = super.hashCode();
         result = 31 * result + po;
@@ -203,6 +206,7 @@ public class InnerActive extends AdsService { // PMD Fix: UnusedPrivateField rem
     /**
      * {@inheritDoc}
      */
+    @Override
     protected void readResponse(InputStream input) throws IOException {
         StringBuffer buf = new StringBuffer();
         byte[] buffer = new byte[256];

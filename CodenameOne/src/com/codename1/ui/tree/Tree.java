@@ -193,6 +193,7 @@ public class Tree extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String[] getPropertyNames() {
         return new String[]{"data"};
     }
@@ -200,6 +201,7 @@ public class Tree extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Class[] getPropertyTypes() {
         return new Class[]{com.codename1.impl.CodenameOneImplementation.getStringArray2DClass()};
     }
@@ -207,6 +209,7 @@ public class Tree extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String[] getPropertyTypeNames() {
         return new String[]{"String[][]"};
     }
@@ -214,8 +217,9 @@ public class Tree extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Object getPropertyValue(String name) {
-        if (name.equals("data")) {
+        if ("data".equals(name)) {
             return ((StringArrayTreeModel) model).arr;
         }
         return null;
@@ -224,8 +228,9 @@ public class Tree extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String setPropertyValue(String name, Object value) {
-        if (name.equals("data")) {
+        if ("data".equals(name)) {
             setModel(new StringArrayTreeModel((String[][]) value));
             return null;
         }
@@ -305,7 +310,7 @@ public class Tree extends Container {
      */
     protected boolean isExpanded(Component node) {
         Object e = node.getClientProperty(KEY_EXPANDED);
-        return e != null && e.equals("true");
+        return e != null && "true".equals(e);
     }
 
     private Container expandPathNode(boolean animate, Container parent, Object node) {
@@ -716,6 +721,7 @@ public class Tree extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     protected Dimension calcPreferredSize() {
         Dimension d = super.calcPreferredSize();
 
@@ -750,6 +756,7 @@ public class Tree extends Container {
             expandedSet.clear();
             ComponentSelector.select("*", tree).each(new ComponentSelector.ComponentClosure() {
 
+                @Override
                 public void call(Component c) {
                     if (tree.isExpanded(c)) {
                         Object o = c.getClientProperty(KEY_OBJECT);
@@ -769,6 +776,7 @@ public class Tree extends Container {
         private void applyStateTo(final Tree tree, Container parent) {
             ComponentSelector.select("*", parent).each(new ComponentSelector.ComponentClosure() {
 
+                @Override
                 public void call(Component cmp) {
                     Object o = cmp.getClientProperty(KEY_OBJECT);
 
@@ -801,6 +809,7 @@ public class Tree extends Container {
             this.arr = arr;
         }
 
+        @Override
         public Vector getChildren(Object parent) {
             if (parent == null) {
                 Vector v = new Vector();
@@ -826,6 +835,7 @@ public class Tree extends Container {
             return v;
         }
 
+        @Override
         public boolean isLeaf(Object node) {
             Vector v = getChildren(node);
             return v.size() == 0;
@@ -845,6 +855,7 @@ public class Tree extends Container {
             this.current = current;
         }
 
+        @Override
         public void actionPerformed(ActionEvent evt) {
             if (current != null) {
                 leafListener.fireActionEvent(new ActionEvent(current, ActionEvent.Type.Other));
@@ -856,7 +867,7 @@ public class Tree extends Container {
                 c = lead;
             }
             Object e = c.getClientProperty(KEY_EXPANDED);
-            if (e != null && e.equals("true")) {
+            if (e != null && "true".equals(e)) {
                 collapseNode(c);
             } else {
                 expandNode(isInitialized(), c);

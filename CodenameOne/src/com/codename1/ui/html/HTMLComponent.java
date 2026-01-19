@@ -828,6 +828,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
         final InputStreamReader isReader = isr;
 
         Display.getInstance().startThread(new Runnable() {
+            @Override
             public void run() {
                 HTMLElement doc = parser.parseHTML(isReader);
                 documentReady(null, doc);
@@ -1031,6 +1032,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
         } else {
             Display.getInstance().startThread(new Runnable() {
 
+                @Override
                 public void run() {
                     setPageStatus(HTMLCallback.STATUS_REQUESTED);
                     InputStream is = handler.resourceRequested(docInfo);
@@ -1046,6 +1048,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
      * @param is      The InputStream of the document
      * @param docInfo The document info
      */
+    @Override
     public void streamReady(InputStream is, DocumentInfo docInfo) {
         InputStreamReader isr = null;
         try {
@@ -1195,6 +1198,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
         if ((!cancelled) || (cancelledCaught)) {
             Display.getInstance().callSerially(new Runnable() {
 
+                @Override
                 public void run() {
 
                     if (threadQueue.getCSSCount() == -1) {
@@ -1231,6 +1235,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
     void cssCompleted() {
         Display.getInstance().callSerially(new Runnable() {
 
+            @Override
             public void run() {
                 displayPage();
             }
@@ -1318,6 +1323,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
         }
     }
 
+    @Override
     public boolean animate() {
         boolean result = super.animate();
         if (marqueeMotion == null) {
@@ -1376,6 +1382,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
                     htmlCallback.pageStatusChanged(this, status, pageURL);
                 } else {
                     Display.getInstance().callSerially(new Runnable() {
+                        @Override
                         public void run() {
                             htmlCallback.pageStatusChanged(HTMLComponent.this, status, pageURL);
                         }
@@ -1397,9 +1404,9 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
      * @return the closest font the HTMLComponent could find or null if none found.
      */
     HTMLFont getClosestHTMLFont(String family, int size, int style, int weight) {
-        final int FACTOR_FONT_FAMILY = 30;
-        final int FACTOR_FONT_SIZE = 5;
-        final int FACTOR_FONT_STYLE = 10;
+        final int factorFontFamily = 30;
+        final int factorFontSize = 5;
+        final int factorFontStyle = 10;
         HTMLFont bestFit = null;
         int bestFitDistance = 10000;
         Enumeration e = fonts.elements();
@@ -1414,21 +1421,21 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
                     if (MATCH_SAME_FONT_FAMILY_ONLY) {
                         continue;
                     }
-                    curFontDistance += FACTOR_FONT_FAMILY;
+                    curFontDistance += factorFontFamily;
                 }
             }
             if (size > 0) {
-                curFontDistance += Math.abs(size - hFont.getSizeInPixels()) * FACTOR_FONT_SIZE;
+                curFontDistance += Math.abs(size - hFont.getSizeInPixels()) * factorFontSize;
             }
 
             if (weight >= 0) {
                 if ((weight & Font.STYLE_BOLD) != (hFont.getStyle() & Font.STYLE_BOLD)) {
-                    curFontDistance += FACTOR_FONT_STYLE;
+                    curFontDistance += factorFontStyle;
                 }
             }
             if (style >= 0) {
                 if ((style & Font.STYLE_ITALIC) != (hFont.getStyle() & Font.STYLE_ITALIC)) {
-                    curFontDistance += FACTOR_FONT_STYLE;
+                    curFontDistance += factorFontStyle;
                 }
             }
             if (curFontDistance < bestFitDistance) {
@@ -1680,7 +1687,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
         String media = linkTag.getAttributeById(HTMLElement.ATTR_MEDIA);
         String href = linkTag.getAttributeById(HTMLElement.ATTR_HREF);
         String charset = linkTag.getAttributeById(HTMLElement.ATTR_CHARSET);
-        if ((linkType != null) && (linkType.equalsIgnoreCase("text/css")) && (href != null) && (CSSParser.getInstance().mediaTypeMatches(media))) {
+        if ((linkType != null) && ("text/css".equalsIgnoreCase(linkType)) && (href != null) && (CSSParser.getInstance().mediaTypeMatches(media))) {
             if (docInfo != null) {
                 threadQueue.addCSS(docInfo.convertURL(href), charset);
             } else {
@@ -1778,6 +1785,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
 
         if (htmlCallback != null) {
             Display.getInstance().callSerially(new Runnable() {
+                @Override
                 public void run() {
                     htmlCallback.titleUpdated(HTMLComponent.this, title);
                 }
@@ -1802,7 +1810,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
             processTag(body, Component.LEFT);
             newLineIfNotEmpty(Component.LEFT);
             //newLine(Component.LEFT); //flush buffer
-            mainContainer.applyRTL((dir != null) && (dir.equalsIgnoreCase("rtl")));
+            mainContainer.applyRTL((dir != null) && ("rtl".equalsIgnoreCase(dir)));
 
             if (loadCSS) {
                 body.setAssociatedComponents(mainContainer);
@@ -1851,7 +1859,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
             HTMLElement meta = head.getFirstChildByTagId(HTMLElement.TAG_META);
             if (meta != null) {
                 String httpequiv = meta.getAttributeById(HTMLElement.ATTR_HTTPEQUIV);
-                if ((httpequiv != null) && (httpequiv.equalsIgnoreCase("refresh"))) {
+                if ((httpequiv != null) && ("refresh".equalsIgnoreCase(httpequiv))) {
                     String content = meta.getAttributeById(HTMLElement.ATTR_CONTENT);
                     if (content != null) {
                         int seperator = content.indexOf(';');
@@ -1986,7 +1994,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
      */
     Vector showPreTagText(String text, int align) {
         Vector comps = new Vector();
-        if ((text == null) || (text.equals(""))) {
+        if ((text == null) || ("".equals(text))) {
             return comps; //no text to show
         }
 
@@ -2236,6 +2244,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
      * Overrides initComponent to add the key listeners to the access keys when the component is first added to the form/displayed
      * This is useful when the component is added only after the page was read
      */
+    @Override
     protected void initComponent() {
         super.initComponent();
         for (Enumeration e = accessKeys.keys(); e.hasMoreElements(); ) {
@@ -2247,6 +2256,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
     /**
      * If the component is taken off for any reason, makes sure access keys are not active
      */
+    @Override
     protected void deinitialize() {
         super.deinitialize();
         for (Enumeration e = accessKeys.keys(); e.hasMoreElements(); ) {
@@ -2304,7 +2314,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
 
             } else if (cmd != null) { //Special case of an image submit button
                 imgLabel = new Button(cmd);
-                if ((altText != null) && (!altText.equals(""))) {
+                if ((altText != null) && (!"".equals(altText))) {
                     imgLabel.setText(altText);
                 }
                 if (firstFocusable == null) {
@@ -2336,7 +2346,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
                 iHeight += imgLabel.getStyle().getPadding(Component.TOP) + imgLabel.getStyle().getPadding(Component.BOTTOM);
                 imgLabel.setPreferredSize(new Dimension(iWidth, iHeight));
             } else { // If no space is reserved, make a minimal text, otherwise Codename One won't calculate the size right after the image loads
-                if ((imgLabel.getText() == null) || (imgLabel.getText().equals(""))) {
+                if ((imgLabel.getText() == null) || ("".equals(imgLabel.getText()))) {
                     imgLabel.setText(" ");
                 }
             }
@@ -2408,10 +2418,10 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
             boolean supportedShape = false;
             if (shape != null) {
                 String hrefStr = areaTag.getAttributeById(HTMLElement.ATTR_HREF);
-                if (shape.equalsIgnoreCase("default")) {
+                if ("default".equalsIgnoreCase(shape)) {
                     supportedShape = true;
                     curImageMap.setDefaultLink(hrefStr);
-                } else if ((shape.equalsIgnoreCase("rect")) || (shape.equalsIgnoreCase("circle"))) {
+                } else if (("rect".equalsIgnoreCase(shape)) || ("circle".equalsIgnoreCase(shape))) {
                     supportedShape = true;
                     String coordsStr = areaTag.getAttributeById(HTMLElement.ATTR_COORDS);
                     if ((coordsStr != null) && (hrefStr != null)) {
@@ -2434,7 +2444,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
                                 coords[curCoord] = Integer.parseInt(curValStr.toString());
                                 curCoord++;
                             }
-                            if (shape.equalsIgnoreCase("rect")) {
+                            if ("rect".equalsIgnoreCase(shape)) {
                                 if (curCoord == 4) {
                                     curImageMap.addRectArea(new Rectangle(coords[0], coords[1], coords[2] - coords[0], coords[3] - coords[1]), hrefStr);
                                     error = false;
@@ -2544,9 +2554,9 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
                     }
                     String emptyOk = element.getAttributeById(HTMLElement.ATTR_EMPTYOK);
                     if ((emptyOk != null) && (curForm != null)) {
-                        if (emptyOk.equalsIgnoreCase("true")) {
+                        if ("true".equalsIgnoreCase(emptyOk)) {
                             curForm.setEmptyOK(tf, true);
-                        } else if (emptyOk.equalsIgnoreCase("false")) {
+                        } else if ("false".equalsIgnoreCase(emptyOk)) {
                             curForm.setEmptyOK(tf, false);
                         }
                     }
@@ -2609,7 +2619,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
                     submitCmd = curForm.createSubmitCommand(name, value);
                 }
                 if (submitCmd == null) {
-                    submitCmd = new Command(value.equals("") ? value = getUIManager().localize("html.submit", HTMLForm.DEFAULT_SUBMIT_TEXT) : value); //dummy command - no form so it won't do anything
+                    submitCmd = new Command("".equals(value) ? value = getUIManager().localize("html.submit", HTMLForm.DEFAULT_SUBMIT_TEXT) : value); //dummy command - no form so it won't do anything
                 }
                 Button submitButton = new Button(submitCmd);
                 cmp = submitButton;
@@ -3749,13 +3759,13 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
      */
     private int getHorizAlign(String alignment, int defaultAlign, boolean allowJustify) {
         if (alignment != null) {
-            if (alignment.equals("left")) {
+            if ("left".equals(alignment)) {
                 return Component.LEFT;
-            } else if (alignment.equals("right")) {
+            } else if ("right".equals(alignment)) {
                 return Component.RIGHT;
-            } else if ((alignment.equals("center")) || (alignment.equals("middle"))) {
+            } else if (("center".equals(alignment)) || ("middle".equals(alignment))) {
                 return Component.CENTER;
-            } else if (alignment.equals("justify")) {
+            } else if ("justify".equals(alignment)) {
                 return Component.CENTER;
             }
         }
@@ -3773,11 +3783,11 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
      */
     private int getVertAlign(String alignment, int defaultAlign) {
         if (alignment != null) {
-            if (alignment.equals("top")) {
+            if ("top".equals(alignment)) {
                 return Component.TOP;
-            } else if (alignment.equals("bottom")) {
+            } else if ("bottom".equals(alignment)) {
                 return Component.BOTTOM;
-            } else if ((alignment.equals("center")) || (alignment.equals("middle"))) {
+            } else if (("center".equals(alignment)) || ("middle".equals(alignment))) {
                 return Component.CENTER;
             }
         }
@@ -3860,6 +3870,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
     /**
      * {{@inheritDoc}}
      */
+    @Override
     public void layoutContainer() {
         if ((FIXED_WIDTH) && (displayWidth != 0) && (Display.getInstance().getDisplayWidth() != displayWidth)) {
             Display.getInstance().startThread(new Runnable() {
@@ -3875,6 +3886,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
     /**
      * {{@inheritDoc}}
      */
+    @Override
     public void actionPerformed(ActionEvent evt) {
         if (getComponentForm().getFocused() instanceof TextField) {
             return;
@@ -3905,6 +3917,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
     /**
      * {@inheritDoc}
      */
+    @Override
     public String[] getPropertyNames() {
         return new String[]{"url", "body", "pageUIID"};
     }
@@ -3912,6 +3925,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
     /**
      * {@inheritDoc}
      */
+    @Override
     public Class[] getPropertyTypes() {
         return new Class[]{String.class, String.class, String.class};
     }
@@ -3919,14 +3933,15 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
     /**
      * {@inheritDoc}
      */
+    @Override
     public Object getPropertyValue(String name) {
-        if (name.equals("url")) {
+        if ("url".equals(name)) {
             return pageURL;
         }
-        if (name.equals("body")) {
+        if ("body".equals(name)) {
             return htmlBody;
         }
-        if (name.equals("pageUIID")) {
+        if ("pageUIID".equals(name)) {
             return pageUIID;
         }
         return null;
@@ -3939,19 +3954,20 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
     /**
      * {@inheritDoc}
      */
+    @Override
     public String setPropertyValue(String name, Object value) {
-        if (name.equals("url")) {
+        if ("url".equals(name)) {
             setPage((String) value);
             return null;
         }
-        if (name.equals("body")) {
+        if ("body".equals(name)) {
             htmlBody = (String) value;
             if (htmlBody != null && htmlBody.length() > 0) {
                 setHTML(htmlBody, "UTF-8", null, true);
             }
             return null;
         }
-        if (name.equals("pageUIID")) {
+        if ("pageUIID".equals(name)) {
             pageUIID = (String) value;
             if ((mainContainer != null) && (pageUIID != null)) {
                 mainContainer.setUIID(pageUIID);
@@ -4045,6 +4061,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
             this.htmlC = htmlC;
         }
 
+        @Override
         public void run() {
             try {
                 Thread.sleep(seconds * 1000L);
@@ -4088,6 +4105,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
         /**
          * {{@inheritDoc}}
          */
+        @Override
         public void pointerReleased(int x, int y) {
             triggerAction();
             super.pointerReleased(x, y);
@@ -4190,6 +4208,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
             return ROMAN_NUMERALS_TENS[index / 10] + ROMAN_NUMERALS_ONES[index % 10] + ". ";
         }
 
+        @Override
         public void setStyleType(int type) {
             if (type != -1) {
                 listType = type - 4;
@@ -4201,6 +4220,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
             }
         }
 
+        @Override
         public void setImage(String imageUrl) {
             // do nothing, has no meaning for ordered lists
         }
@@ -4251,6 +4271,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
             setFocusable(false);
         }
 
+        @Override
         public void setStyleType(int type) {
             if (type != -1) {
                 level = type;
@@ -4259,6 +4280,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
             }
         }
 
+        @Override
         public void setImage(String imageUrl) {
             if (imageUrl != null) {
                 //setText(" "); // Due to a Codename One bug Labels with an icon only and no text can be cut
@@ -4269,6 +4291,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
         /**
          * {{@inheritDoc}}
          */
+        @Override
         public void paint(Graphics g) {
             if (getIcon() != null) {
                 super.paint(g);
@@ -4289,6 +4312,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
         /**
          * {{@inheritDoc}}
          */
+        @Override
         protected Dimension calcPreferredSize() {
             if (getIcon() != null) {
                 return super.calcPreferredSize();
@@ -4313,6 +4337,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
         /**
          * {{@inheritDoc}}
          */
+        @Override
         protected List createPopupList() {
             List l = new MultiComboBox(getModel(), false);
             l.setSmoothScrolling(isSmoothScrolling());
@@ -4333,6 +4358,7 @@ public class HTMLComponent extends Container implements ActionListener, IOCallba
             this.newInputField = newInputField;
         }
 
+        @Override
         public void run() {
             inputField.getParent().replace(inputField, newInputField, null); // Applying the constraints may return a new instance that has to be replaced in the form
         }

@@ -87,6 +87,7 @@ public class TimeSpinner extends BaseSpinner {
     /**
      * Default constructor
      */
+    @Override
     void initSpinner() {
         if (hour == null) {
             hour = Spinner.create(startHour, endHour, currentHour, 1);
@@ -158,6 +159,7 @@ public class TimeSpinner extends BaseSpinner {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String[] getPropertyNames() {
         return new String[]{"currentHour", "currentMinute", "minuteStep", "currentMeridiem", "showMeridiem", "durationMode"};
     }
@@ -165,6 +167,7 @@ public class TimeSpinner extends BaseSpinner {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Class[] getPropertyTypes() {
         return new Class[]{Integer.class, Integer.class, Integer.class, Boolean.class, Boolean.class, Boolean.class};
     }
@@ -172,29 +175,30 @@ public class TimeSpinner extends BaseSpinner {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Object getPropertyValue(String name) {
-        if (name.equals("durationMode")) {
+        if ("durationMode".equals(name)) {
             if (durationMode) {
                 return Boolean.TRUE;
             }
             return Boolean.FALSE;
         }
-        if (name.equals("currentHour")) {
+        if ("currentHour".equals(name)) {
             return Integer.valueOf(currentHour);
         }
-        if (name.equals("currentMinute")) {
+        if ("currentMinute".equals(name)) {
             return Integer.valueOf(currentMinute);
         }
-        if (name.equals("minuteStep")) {
+        if ("minuteStep".equals(name)) {
             return Integer.valueOf(minuteStep);
         }
-        if (name.equals("currentMeridiem")) {
+        if ("currentMeridiem".equals(name)) {
             if (currentMeridiem) {
                 return Boolean.TRUE;
             }
             return Boolean.FALSE;
         }
-        if (name.equals("showMeridiem")) {
+        if ("showMeridiem".equals(name)) {
             if (showMeridiem) {
                 return Boolean.TRUE;
             }
@@ -206,28 +210,29 @@ public class TimeSpinner extends BaseSpinner {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String setPropertyValue(String name, Object value) {
-        if (name.equals("currentHour")) {
+        if ("currentHour".equals(name)) {
             setCurrentHour(Integer.parseInt(value.toString()));
             return null;
         }
-        if (name.equals("currentMinute")) {
+        if ("currentMinute".equals(name)) {
             setCurrentMinute(Integer.parseInt(value.toString()));
             return null;
         }
-        if (name.equals("minuteStep")) {
+        if ("minuteStep".equals(name)) {
             setMinuteStep(Integer.parseInt(value.toString()));
             return null;
         }
-        if (name.equals("currentMeridiem")) {
+        if ("currentMeridiem".equals(name)) {
             setCurrentMeridiem(((Boolean) value).booleanValue());
             return null;
         }
-        if (name.equals("showMeridiem")) {
+        if ("showMeridiem".equals(name)) {
             setShowMeridiem(((Boolean) value).booleanValue());
             return null;
         }
-        if (name.equals("durationMode")) {
+        if ("durationMode".equals(name)) {
             setDurationMode(((Boolean) value).booleanValue());
             return null;
         }
@@ -427,6 +432,7 @@ public class TimeSpinner extends BaseSpinner {
     }
 
     private static class TimeSpinnerRenderer extends SpinnerRenderer<Object> {
+        @Override
         public Component getListCellRendererComponent(List list, Object value, int index, boolean isSelected) {
             if (value != null && value instanceof Integer) {
                 int d = ((Integer) value).intValue();
@@ -441,6 +447,7 @@ public class TimeSpinner extends BaseSpinner {
     }
 
     private static class TwoDigitSpinnerRenderer extends SpinnerRenderer<Object> {
+        @Override
         public Component getListCellRendererComponent(List list, Object value, int index, boolean isSelected) {
             if (value != null && value instanceof Integer) {
                 int i = ((Integer) value).intValue();

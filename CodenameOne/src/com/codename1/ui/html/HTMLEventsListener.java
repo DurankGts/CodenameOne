@@ -49,6 +49,7 @@ class HTMLEventsListener implements ActionListener, FocusListener {
             final List list = (List) cmp;
             list.addActionListener(this);
             SelectionListener sl = new SelectionListener() { // We create a listener and not listen ourself since the listener's method does not pass the event origin, so we need to make one listener per component
+                @Override
                 public void selectionChanged(int oldSelected, int newSelected) {
                     if (htmlC.getHTMLCallback() != null) {
                         htmlC.getHTMLCallback().selectionChanged(oldSelected, newSelected, htmlC, list, element);
@@ -63,6 +64,7 @@ class HTMLEventsListener implements ActionListener, FocusListener {
             if (cmp instanceof TextField) {
                 final TextField tf = (TextField) cmp;
                 DataChangedListener dcl = new DataChangedListener() { // We create a listener and not listen ourself since the listener's method does not pass the event origin, so we need to make one listener per component
+                    @Override
                     public void dataChanged(int type, int index) {
                         element.setAttributeById(HTMLElement.ATTR_VALUE, tf.getText());
                         if (htmlC.getHTMLCallback() != null) {
@@ -110,6 +112,7 @@ class HTMLEventsListener implements ActionListener, FocusListener {
     /**
      * {{@inheritDoc}}
      */
+    @Override
     public void actionPerformed(ActionEvent evt) {
         Object src = evt.getSource();
         HTMLElement element = (HTMLElement) comps.get(evt.getSource());
@@ -117,7 +120,7 @@ class HTMLEventsListener implements ActionListener, FocusListener {
             toggleChecked(element, ((CheckBox) src).isSelected());
         } else if (src instanceof RadioButton) {
             String curDomState = element.getAttributeById(HTMLElement.ATTR_CHECKED);
-            if ((curDomState == null) || (!curDomState.equals("checked"))) {
+            if ((curDomState == null) || (!"checked".equals(curDomState))) {
                 String name = element.getAttributeById(HTMLElement.ATTR_NAME);
                 if (name != null) { // If this is named radiobutton, we need to set the status of the others accordingly
                     for (Enumeration e = comps.keys(); e.hasMoreElements(); ) {
@@ -176,6 +179,7 @@ class HTMLEventsListener implements ActionListener, FocusListener {
     /**
      * {{@inheritDoc}}
      */
+    @Override
     public void focusGained(Component cmp) {
         if (htmlC.getHTMLCallback() != null) {
             htmlC.getHTMLCallback().focusGained(cmp, htmlC, (HTMLElement) comps.get(cmp));
@@ -185,6 +189,7 @@ class HTMLEventsListener implements ActionListener, FocusListener {
     /**
      * {{@inheritDoc}}
      */
+    @Override
     public void focusLost(Component cmp) {
         if (htmlC.getHTMLCallback() != null) {
             htmlC.getHTMLCallback().focusLost(cmp, htmlC, (HTMLElement) comps.get(cmp));

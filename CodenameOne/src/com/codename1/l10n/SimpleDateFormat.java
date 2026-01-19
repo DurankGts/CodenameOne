@@ -295,6 +295,7 @@ public class SimpleDateFormat extends DateFormat {
     /**
      * {@inheritDoc}
      */
+    @Override
     public boolean equals(Object o) {
         if (this == o) {
             return true;
@@ -318,6 +319,7 @@ public class SimpleDateFormat extends DateFormat {
     /**
      * {@inheritDoc}
      */
+    @Override
     public int hashCode() {
         int result = super.hashCode();
         result = 31 * result + (pattern != null ? pattern.hashCode() : 0);
@@ -1101,7 +1103,7 @@ public class SimpleDateFormat extends DateFormat {
         }
         // handle zulu
         if (len == 1) {
-            if (fragment.equalsIgnoreCase("z")) {
+            if ("z".equalsIgnoreCase(fragment)) {
                 return readSubstring(source, ofs, ofs + 1);
             }
             return null;

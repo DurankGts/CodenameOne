@@ -72,8 +72,20 @@ public class Album extends FBObject {
      * Gets the cover photos url of this album
      *
      * @return cover_photo
+     * @deprecated Use {@link #getCoverPhoto()}.
      */
+    @Deprecated
+    @SuppressWarnings("PMD.MethodNamingConventions")
     public String getCover_photo() {
+        return getCoverPhoto();
+    }
+
+    /**
+     * Gets the cover photo URL of this album.
+     *
+     * @return cover photo URL
+     */
+    public String getCoverPhoto() {
         return cover_photo;
     }
 
@@ -81,8 +93,20 @@ public class Album extends FBObject {
      * Gets created_time
      *
      * @return created_time
+     * @deprecated Use {@link #getCreatedTime()}.
      */
+    @Deprecated
+    @SuppressWarnings("PMD.MethodNamingConventions")
     public String getCreated_time() {
+        return getCreatedTime();
+    }
+
+    /**
+     * Gets created time.
+     *
+     * @return created time
+     */
+    public String getCreatedTime() {
         return created_time;
     }
 
@@ -144,8 +168,20 @@ public class Album extends FBObject {
      * Gets the updated_time
      *
      * @return updated_time
+     * @deprecated Use {@link #getUpdatedTime()}.
      */
+    @Deprecated
+    @SuppressWarnings("PMD.MethodNamingConventions")
     public String getUpdated_time() {
+        return getUpdatedTime();
+    }
+
+    /**
+     * Gets updated time.
+     *
+     * @return updated time
+     */
+    public String getUpdatedTime() {
         return updated_time;
     }
 
@@ -154,6 +190,7 @@ public class Album extends FBObject {
      *
      * @param props an hashtable to copy from
      */
+    @Override
     public void copy(Hashtable props) {
         super.copy(props);
         init(props);
@@ -182,6 +219,7 @@ public class Album extends FBObject {
     /**
      * {@inheritDoc}
      */
+    @Override
     public boolean equals(Object o) {
         if (this == o) {
             return true;
@@ -195,6 +233,7 @@ public class Album extends FBObject {
     /**
      * {@inheritDoc}
      */
+    @Override
     public int hashCode() {
         return super.hashCode();
     }

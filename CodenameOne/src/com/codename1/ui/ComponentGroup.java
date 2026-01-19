@@ -95,6 +95,7 @@ public class ComponentGroup extends Container {
         }
     }
 
+    @Override
     void insertComponentAt(int index, Object con, Component cmp) {
         super.insertComponentAt(index, con, cmp);
         updateUIIDs();
@@ -103,6 +104,7 @@ public class ComponentGroup extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public void refreshTheme(boolean merge) {
         super.refreshTheme(merge);
         boolean ignoreGroup = getUIManager().isThemeConstant(groupFlag, false);
@@ -119,6 +121,7 @@ public class ComponentGroup extends Container {
         }
     }
 
+    @Override
     void removeComponentImpl(Component cmp) {
         super.removeComponentImpl(cmp);
 
@@ -239,6 +242,7 @@ public class ComponentGroup extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String[] getPropertyNames() {
         return new String[]{"elementUIID", "displayName", "horizontal", "groupFlag", "forceGroup"};
     }
@@ -246,6 +250,7 @@ public class ComponentGroup extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Class[] getPropertyTypes() {
         return new Class[]{String.class, String.class, Boolean.class, String.class, Boolean.class};
     }
@@ -253,20 +258,21 @@ public class ComponentGroup extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Object getPropertyValue(String name) {
-        if (name.equals("elementUIID")) {
+        if ("elementUIID".equals(name)) {
             return getElementUIID();
         }
-        if (name.equals("horizontal")) {
+        if ("horizontal".equals(name)) {
             if (isHorizontal()) {
                 return Boolean.TRUE;
             }
             return Boolean.FALSE;
         }
-        if (name.equals("groupFlag")) {
+        if ("groupFlag".equals(name)) {
             return groupFlag;
         }
-        if (name.equals("forceGroup")) {
+        if ("forceGroup".equals(name)) {
             return forceGroup ? Boolean.TRUE : Boolean.FALSE;
         }
         return null;
@@ -275,20 +281,21 @@ public class ComponentGroup extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String setPropertyValue(String name, Object value) {
-        if (name.equals("elementUIID")) {
+        if ("elementUIID".equals(name)) {
             setElementUIID((String) value);
             return null;
         }
-        if (name.equals("horizontal")) {
+        if ("horizontal".equals(name)) {
             setHorizontal(((Boolean) value).booleanValue());
             return null;
         }
-        if (name.equals("groupFlag")) {
+        if ("groupFlag".equals(name)) {
             setGroupFlag(groupFlag);
             return null;
         }
-        if (name.equals("forceGroup")) {
+        if ("forceGroup".equals(name)) {
             forceGroup = ((Boolean) value).booleanValue();
             return null;
         }

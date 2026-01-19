@@ -77,6 +77,7 @@ public class MultiList extends List {
     /**
      * {@inheritDoc}
      */
+    @Override
     protected void initComponent() {
         super.initComponent();
         GenericListCellRenderer gn = new GenericListCellRenderer(sel, unsel);
@@ -113,6 +114,7 @@ public class MultiList extends List {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String[] getPropertyNames() {
         return new String[]{
                 "name1", "name2", "name3", "name4",
@@ -126,6 +128,7 @@ public class MultiList extends List {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Class[] getPropertyTypes() {
         return new Class[]{
                 String.class,// name1
@@ -154,8 +157,9 @@ public class MultiList extends List {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Object getPropertyValue(String name) {
-        if (name.equals("placeholder")) {
+        if ("placeholder".equals(name)) {
             return placeholder;
         }
         return unsel.getPropertyValue(name);
@@ -164,8 +168,9 @@ public class MultiList extends List {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String setPropertyValue(String name, Object value) {
-        if (name.equals("placeholder")) {
+        if ("placeholder".equals(name)) {
             this.placeholder = (Image) value;
             if (unsel != null) {
                 unsel.setIcon(placeholder);

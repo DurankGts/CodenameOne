@@ -2427,7 +2427,7 @@ public class Component implements Animation, StyleListener, Editable {
      * styled to have elevation.
      */
     Container findSurface() {
-        return _findSurface();
+        return findSurfaceInternal();
     }
 
     /**
@@ -2598,6 +2598,7 @@ public class Component implements Animation, StyleListener, Editable {
         paintinShadowInBackground_ = true;
 
         Runnable createImageTask = new Runnable() {
+            @Override
             public void run() {
                 // We paint shadow in a background thread to avoid jank on the EDT.  It is possible that this
                 // will cause problems on some platforms.  If that is the case, we can hedge and move it onto
@@ -2692,6 +2693,7 @@ public class Component implements Animation, StyleListener, Editable {
                     }
 
                     CN.callSerially(new Runnable() {
+                        @Override
                         public void run() {
                             Container surface = findSurface();
                             if (surface != null) {
@@ -2935,13 +2937,14 @@ public class Component implements Animation, StyleListener, Editable {
     private void paintPullToRefresh(Graphics g) {
         if (!dragActivated && scrollY == -getUIManager().getLookAndFeel().getPullToRefreshHeight()
                 && getClientProperty("$pullToRelease") != null
-                && getClientProperty("$pullToRelease").equals("update")) {
+                && "update".equals(getClientProperty("$pullToRelease"))) {
 
             putClientProperty("$pullToRelease", "updating");
             draggedMotionY = null;
             //execute the task
             Display.getInstance().callSerially(new Runnable() {
 
+                @Override
                 public void run() {
                     refreshTask.run();
                     //once the task has finished scroll to 0
@@ -2951,7 +2954,7 @@ public class Component implements Animation, StyleListener, Editable {
             });
         }
         boolean updating = getClientProperty("$pullToRelease") != null
-                && getClientProperty("$pullToRelease").equals("updating");
+                && "updating".equals(getClientProperty("$pullToRelease"));
         getUIManager().getLookAndFeel().drawPullToRefresh(g, this, updating);
     }
 
@@ -3308,6 +3311,7 @@ public class Component implements Animation, StyleListener, Editable {
      *
      * @param g the component graphics
      */
+    @Override
     public void paint(Graphics g) {
     }
 
@@ -3975,13 +3979,13 @@ public class Component implements Animation, StyleListener, Editable {
         repaint(this);
     }
 
-    private Container _findSurface() {
+    private Container findSurfaceInternal() {
         Container parent = getParent();
         if (parent == null) return null;
         if (parent.isSurface()) {
             return parent;
         }
-        return ((Component) parent)._findSurface();
+        return ((Component) parent).findSurfaceInternal();
     }
 
     /**
@@ -4646,7 +4650,7 @@ public class Component implements Animation, StyleListener, Editable {
             parent.clearDrag();
         }
         if (getClientProperty("$pullToRelease") != null
-                && !getClientProperty("$pullToRelease").equals("updating")) {
+                && !"updating".equals(getClientProperty("$pullToRelease"))) {
             putClientProperty("$pullToRelease", null);
         }
     }
@@ -5027,6 +5031,7 @@ public class Component implements Animation, StyleListener, Editable {
                     refreshLabel.putClientProperty("cn1$rotationMotion", rotationMotion);
                     c.add(refreshLabel);
                     p.addPointerReleasedListener(new ActionListener<ActionEvent>() {
+                        @Override
                         public void actionPerformed(ActionEvent evt) {
                             pointerReleaseMaterialPullToRefresh();
                             p.removePointerReleasedListener(this);
@@ -5107,6 +5112,7 @@ public class Component implements Animation, StyleListener, Editable {
             if (dragCallbacks < 2) {
                 dragCallbacks++;
                 Display.getInstance().callSerially(new Runnable() {
+                    @Override
                     public void run() {
                         if (dragActivated) {
                             lead.pointerDragged(oldx, oldy, currentPointerPress);
@@ -5851,7 +5857,7 @@ public class Component implements Animation, StyleListener, Editable {
             }
             if (!shouldScrollX) {
                 if (speed < 0) {
-                    if (UIManager.getInstance().getThemeConstant("ScrollMotion", "DECAY").equals("DECAY")) {
+                    if ("DECAY".equals(UIManager.getInstance().getThemeConstant("ScrollMotion", "DECAY"))) {
                         int timeConstant = UIManager.getInstance().getThemeConstant("ScrollMotionTimeConstantInt", 500);
 
                         draggedMotionY = Motion.createExponentialDecayMotion(scroll, -tl / 2, speed, timeConstant);
@@ -5859,7 +5865,7 @@ public class Component implements Animation, StyleListener, Editable {
                         draggedMotionY = Motion.createFrictionMotion(scroll, -tl / 2, speed, 0.0007f);
                     }
                 } else {
-                    if (UIManager.getInstance().getThemeConstant("ScrollMotion", "DECAY").equals("DECAY")) {
+                    if ("DECAY".equals(UIManager.getInstance().getThemeConstant("ScrollMotion", "DECAY"))) {
                         int timeConstant = UIManager.getInstance().getThemeConstant("ScrollMotionTimeConstantInt", 500);
                         draggedMotionY = Motion.createExponentialDecayMotion(scroll, getScrollDimension().getHeight() -
                                 getHeight() + getInvisibleAreaUnderVKB() + tl / 2, speed, timeConstant);
@@ -6237,6 +6243,7 @@ public class Component implements Animation, StyleListener, Editable {
      *
      * @return a string representation of this component
      */
+    @Override
     public String toString() {
         String className = getClass().getName();
         className = className.substring(className.lastIndexOf('.') + 1);
@@ -6411,6 +6418,7 @@ public class Component implements Animation, StyleListener, Editable {
     /**
      * {@inheritDoc}
      */
+    @Override
     public boolean animate() {
         if (!visible) {
             return false;
@@ -6946,6 +6954,7 @@ public class Component implements Animation, StyleListener, Editable {
      * @see #getEditingDelegate()
      * @see #setEditingDelegate(com.codename1.ui.Editable)
      */
+    @Override
     public void startEditingAsync() {
         // Empty implementation overridden by subclass
         if (editingDelegate != null) {
@@ -6963,6 +6972,7 @@ public class Component implements Animation, StyleListener, Editable {
      * @see #getEditingDelegate()
      * @see #setEditingDelegate(com.codename1.ui.Editable)
      */
+    @Override
     public void stopEditing(Runnable onFinish) {
         if (editingDelegate != null) {
             editingDelegate.stopEditing(onFinish);
@@ -6979,6 +6989,7 @@ public class Component implements Animation, StyleListener, Editable {
      * @see #getEditingDelegate()
      * @see #setEditingDelegate(com.codename1.ui.Editable)
      */
+    @Override
     public boolean isEditing() {
         if (editingDelegate != null) {
             return editingDelegate.isEditing();
@@ -6997,6 +7008,7 @@ public class Component implements Animation, StyleListener, Editable {
      * @see #startEditingAsync()
      * @see #stopEditing(java.lang.Runnable)
      */
+    @Override
     public boolean isEditable() {
         if (editingDelegate != null) {
             return editingDelegate.isEditable();
@@ -7083,14 +7095,15 @@ public class Component implements Animation, StyleListener, Editable {
      * @param propertyName the property name that was changed
      * @param source       The changed Style object
      */
+    @Override
     public void styleChanged(String propertyName, Style source) {
         //changing the Font, Padding, Margin may casue the size of the Component to Change
         //therefore we turn on the shouldCalcPreferredSize flag
         if ((!shouldCalcPreferredSize &&
                 source == getStyle()) &&
-                (propertyName.equals(Style.FONT) ||
-                        propertyName.equals(Style.MARGIN) ||
-                        propertyName.equals(Style.PADDING))) {
+                (Style.FONT.equals(propertyName) ||
+                        Style.MARGIN.equals(propertyName) ||
+                        Style.PADDING.equals(propertyName))) {
             setShouldCalcPreferredSize(true);
             Container parent = getParent();
             if (parent != null && parent.getComponentForm() != null) {
@@ -7098,12 +7111,12 @@ public class Component implements Animation, StyleListener, Editable {
                     parent.revalidateLater();
                 }
             }
-        } else if (propertyName.equals(Style.ELEVATION) && source.getElevation() > 0) {
+        } else if (Style.ELEVATION.equals(propertyName) && source.getElevation() > 0) {
             Container surface = findSurface();
             if (surface != null) {
                 surface.addElevatedComponent(this);
             }
-        } else if (propertyName.equals(Style.SURFACE)) {
+        } else if (Style.SURFACE.equals(propertyName)) {
             setSurface(source.isSurface());
         }
     }
@@ -7398,7 +7411,7 @@ public class Component implements Animation, StyleListener, Editable {
     public Image paintLock(boolean hardLock) {
         if (!paintLockEnableChecked) {
             paintLockEnableChecked = true;
-            paintLockEnabled = Display.getInstance().getProperty("paintLockEnabled", "true").equals("true");
+            paintLockEnabled = "true".equals(Display.getInstance().getProperty("paintLockEnabled", "true"));
         }
         if (!paintLockEnabled || !Display.getInstance().areMutableImagesFast()) {
             return null;
@@ -8041,6 +8054,7 @@ public class Component implements Animation, StyleListener, Editable {
         Painter original;
         Painter dest;
 
+        @Override
         public void paint(Graphics g, Rectangle rect) {
             int oAlpha = g.getAlpha();
             if (alpha == 0) {
@@ -8114,6 +8128,7 @@ public class Component implements Animation, StyleListener, Editable {
             previousTint = previous;
         }
 
+        @Override
         public void paint(Graphics g, Rectangle rect) {
             if (painter != null) {
                 if (previousTint != null) {
@@ -8276,6 +8291,7 @@ public class Component implements Animation, StyleListener, Editable {
             }
         }
 
+        @Override
         public boolean animate() {
             if (wMotion.isFinished() && hMotion.isFinished()) {
                 getComponentForm().deregisterAnimated(this);
@@ -8288,6 +8304,7 @@ public class Component implements Animation, StyleListener, Editable {
             return false;
         }
 
+        @Override
         public void paint(Graphics g) {
         }
     }

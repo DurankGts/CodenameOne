@@ -713,7 +713,11 @@ public class ByteCodeClass {
                     b.append(clsName);
                     b.append("_");
                     b.append(bf.getFieldName());
-                    b.append(" = 0;\n");
+                    if (bf.isVolatile()) {
+                        b.append(" = ATOMIC_VAR_INIT(0);\n");
+                    } else {
+                        b.append(" = 0;\n");
+                    }
 
                     // static getter
                     b.append(bf.getCDefinition());
@@ -724,11 +728,11 @@ public class ByteCodeClass {
                     b.append("(CODENAME_ONE_THREAD_STATE) {\n    __STATIC_INITIALIZER_");
                     b.append(bf.getClsName());
                     if (bf.isVolatile()) {
-                        b.append("(threadStateData);\n     return atomic_load(&STATIC_FIELD_");
+                        b.append("(threadStateData);\n     return atomic_load_explicit(&STATIC_FIELD_");
                         b.append(bf.getClsName());
                         b.append("_");
                         b.append(bf.getFieldName());
-                        b.append(");\n}\n\n");
+                        b.append(", memory_order_acquire);\n}\n\n");
                     } else {
                         b.append("(threadStateData);\n     return STATIC_FIELD_");
                         b.append(bf.getClsName());
@@ -747,11 +751,11 @@ public class ByteCodeClass {
                     b.append(" __cn1StaticVal) {\n    __STATIC_INITIALIZER_");
                     b.append(bf.getClsName());
                     if (bf.isVolatile()) {
-                        b.append("(threadStateData);\n    atomic_store(&STATIC_FIELD_");
+                        b.append("(threadStateData);\n    atomic_store_explicit(&STATIC_FIELD_");
                         b.append(bf.getClsName());
                         b.append("_");
                         b.append(bf.getFieldName());
-                        b.append(", __cn1StaticVal);");
+                        b.append(", __cn1StaticVal, memory_order_release);");
                     } else {
                         b.append("(threadStateData);\n    STATIC_FIELD_");
                         b.append(bf.getClsName());
@@ -793,13 +797,13 @@ public class ByteCodeClass {
             b.append(fld.getFieldName());
             b.append("(JAVA_OBJECT __cn1T) {\n ").append(nullCheck).append("    ");
             if (fld.isVolatile()) {
-                b.append("return atomic_load(&((struct obj__");
+                b.append("return atomic_load_explicit(&((struct obj__");
                 b.append(clsName);
                 b.append("*)__cn1T)->");
                 b.append(fld.getClsName());
                 b.append("_");
                 b.append(fld.getFieldName());
-                b.append(");\n}\n\n");
+                b.append(", memory_order_acquire);\n}\n\n");
             } else {
                 b.append("return ((struct obj__");
                 b.append(clsName);
@@ -822,13 +826,13 @@ public class ByteCodeClass {
                 b.append(" __cn1Val, JAVA_OBJECT __cn1T) {\n  ").append(nullCheck).append("  ");
             }
             if (fld.isVolatile()) {
-                b.append("atomic_store(&((struct obj__");
+                b.append("atomic_store_explicit(&((struct obj__");
                 b.append(clsName);
                 b.append("*)__cn1T)->");
                 b.append(fld.getClsName());
                 b.append("_");
                 b.append(fld.getFieldName());
-                b.append(", __cn1Val);\n}\n\n");
+                b.append(", __cn1Val, memory_order_release);\n}\n\n");
             } else {
                 b.append("((struct obj__");
                 b.append(clsName);
@@ -871,11 +875,11 @@ public class ByteCodeClass {
             if(!fld.isStaticField() && fld.isObjectType() && fld.getClsName().equals(clsName)) {
                 b.append("    gcMarkObject(threadStateData, ");
                 if (fld.isVolatile()) {
-                    b.append("atomic_load(&objInstance->");
+                    b.append("atomic_load_explicit(&objInstance->");
                     b.append(fld.getClsName());
                     b.append("_");
                     b.append(fld.getFieldName());
-                    b.append(")");
+                    b.append(", memory_order_acquire)");
                 } else {
                     b.append("objInstance->");
                     b.append(fld.getClsName());
@@ -963,6 +967,8 @@ public class ByteCodeClass {
                     m.appendMethodC(b);
                 }
             }
+            List<BytecodeMethod> bm = new ArrayList<BytecodeMethod>(methods);
+            appendInheritedInterfaceMethods(b, bm);
         } else {
             for(BytecodeMethod m : methods) {
                 m.appendMethodC(b);
@@ -977,9 +983,12 @@ public class ByteCodeClass {
                 }
             }
         }
-        if(baseClassObject != null) {
+        if(!isInterface) {
             List<BytecodeMethod> bm = new ArrayList<BytecodeMethod>(methods);
-            appendSuperStub(b, bm, baseClassObject);
+            if(baseClassObject != null) {
+                appendSuperStub(b, bm, baseClassObject);
+            }
+            appendDefaultInterfaceStubs(b, bm);
         }
         int offset = 0;
         if(clsName.equals("java_lang_Class")) {
@@ -1198,6 +1207,50 @@ public class ByteCodeClass {
         }
         BytecodeMethod.setAcceptStaticOnEquals(false);
     }
+
+    private boolean hasMethodInBaseClass(BytecodeMethod method) {
+        if(baseClassObject == null) {
+            return false;
+        }
+        if(baseClassObject.methods.contains(method)) {
+            return true;
+        }
+        return baseClassObject.hasMethodInBaseClass(method);
+    }
+
+    private void appendDefaultInterfaceStubs(StringBuilder b, List<BytecodeMethod> bm) {
+        if(baseInterfacesObject == null) {
+            return;
+        }
+        BytecodeMethod.setAcceptStaticOnEquals(true);
+        for(ByteCodeClass baseInterface : baseInterfacesObject) {
+            appendDefaultInterfaceStubs(b, bm, baseInterface);
+        }
+        BytecodeMethod.setAcceptStaticOnEquals(false);
+    }
+
+    private void appendDefaultInterfaceStubs(StringBuilder b, List<BytecodeMethod> bm, ByteCodeClass baseInterface) {
+        if(baseInterface == null) {
+            return;
+        }
+        if(baseClassObject != null && baseClassObject.doesImplement(baseInterface)) {
+            return;
+        }
+        for(BytecodeMethod m : baseInterface.methods) {
+            if(m.isAbstract() || m.isStatic() || m.isPrivate()) {
+                continue;
+            }
+            if(!bm.contains(m) && !hasMethodInBaseClass(m)) {
+                m.appendSuperCall(b, clsName);
+                bm.add(m);
+            }
+        }
+        if(baseInterface.baseInterfacesObject != null) {
+            for(ByteCodeClass parentInterface : baseInterface.baseInterfacesObject) {
+                appendDefaultInterfaceStubs(b, bm, parentInterface);
+            }
+        }
+    }
     
     private void appendSuperStubHeader(StringBuilder b, List<BytecodeMethod> bm, ByteCodeClass base) {
         BytecodeMethod.setAcceptStaticOnEquals(true);
@@ -1212,6 +1265,40 @@ public class ByteCodeClass {
             appendSuperStubHeader(b, bm, base.baseClassObject);
         }
         BytecodeMethod.setAcceptStaticOnEquals(false);
+    }
+
+    private void appendDefaultInterfaceStubHeaders(StringBuilder b, List<BytecodeMethod> bm) {
+        if(baseInterfacesObject == null) {
+            return;
+        }
+        BytecodeMethod.setAcceptStaticOnEquals(true);
+        for(ByteCodeClass baseInterface : baseInterfacesObject) {
+            appendDefaultInterfaceStubHeaders(b, bm, baseInterface);
+        }
+        BytecodeMethod.setAcceptStaticOnEquals(false);
+    }
+
+    private void appendDefaultInterfaceStubHeaders(StringBuilder b, List<BytecodeMethod> bm, ByteCodeClass baseInterface) {
+        if(baseInterface == null) {
+            return;
+        }
+        if(baseClassObject != null && baseClassObject.doesImplement(baseInterface)) {
+            return;
+        }
+        for(BytecodeMethod m : baseInterface.methods) {
+            if(m.isAbstract() || m.isStatic() || m.isPrivate()) {
+                continue;
+            }
+            if(!bm.contains(m) && !hasMethodInBaseClass(m)) {
+                m.appendMethodHeader(b, clsName);
+                bm.add(m);
+            }
+        }
+        if(baseInterface.baseInterfacesObject != null) {
+            for(ByteCodeClass parentInterface : baseInterface.baseInterfacesObject) {
+                appendDefaultInterfaceStubHeaders(b, bm, parentInterface);
+            }
+        }
     }
     
     private void buildInstanceFieldList(List<ByteCodeField> fieldList) {
@@ -1362,11 +1449,18 @@ public class ByteCodeClass {
         }
         
         appendMethodsToHeader(b);
+        if(isInterface) {
+            List<BytecodeMethod> bm = new ArrayList<BytecodeMethod>(methods);
+            appendInheritedInterfaceMethodHeaders(b, bm);
+        }
         
-        if(baseClassObject != null) {
+        if(!isInterface) {
             // append super stub
             List<BytecodeMethod> bm = new ArrayList<BytecodeMethod>(methods);
-            appendSuperStubHeader(b, bm, baseClassObject);
+            if(baseClassObject != null) {
+                appendSuperStubHeader(b, bm, baseClassObject);
+            }
+            appendDefaultInterfaceStubHeaders(b, bm);
         }
         
         for(BytecodeMethod m : virtualMethodList) {
@@ -1535,6 +1629,64 @@ public class ByteCodeClass {
         }
     }*/
 
+    private void appendInheritedInterfaceMethods(StringBuilder b, List<BytecodeMethod> bm) {
+        if(baseInterfacesObject == null) {
+            return;
+        }
+        for(ByteCodeClass baseInterface : baseInterfacesObject) {
+            appendInheritedInterfaceMethods(b, bm, baseInterface);
+        }
+    }
+
+    private void appendInheritedInterfaceMethods(StringBuilder b, List<BytecodeMethod> bm, ByteCodeClass baseInterface) {
+        if(baseInterface == null) {
+            return;
+        }
+        for(BytecodeMethod m : baseInterface.methods) {
+            if(m.isStatic() || m.isPrivate()) {
+                continue;
+            }
+            if(!bm.contains(m)) {
+                m.appendInterfaceMethodC(b, clsName);
+                bm.add(m);
+            }
+        }
+        if(baseInterface.baseInterfacesObject != null) {
+            for(ByteCodeClass parentInterface : baseInterface.baseInterfacesObject) {
+                appendInheritedInterfaceMethods(b, bm, parentInterface);
+            }
+        }
+    }
+
+    private void appendInheritedInterfaceMethodHeaders(StringBuilder b, List<BytecodeMethod> bm) {
+        if(baseInterfacesObject == null) {
+            return;
+        }
+        for(ByteCodeClass baseInterface : baseInterfacesObject) {
+            appendInheritedInterfaceMethodHeaders(b, bm, baseInterface);
+        }
+    }
+
+    private void appendInheritedInterfaceMethodHeaders(StringBuilder b, List<BytecodeMethod> bm, ByteCodeClass baseInterface) {
+        if(baseInterface == null) {
+            return;
+        }
+        for(BytecodeMethod m : baseInterface.methods) {
+            if(m.isStatic() || m.isPrivate()) {
+                continue;
+            }
+            if(!bm.contains(m)) {
+                m.appendMethodHeader(b, clsName);
+                bm.add(m);
+            }
+        }
+        if(baseInterface.baseInterfacesObject != null) {
+            for(ByteCodeClass parentInterface : baseInterface.baseInterfacesObject) {
+                appendInheritedInterfaceMethodHeaders(b, bm, parentInterface);
+            }
+        }
+    }
+
     
     /**
      * @param baseClass the baseClass to set
@@ -1628,7 +1780,8 @@ public class ByteCodeClass {
                         bm.setForceVirtual(true);
                     }
                 } else {
-                    if(replace || (isInterface && isInterfaceInHierarchy(virtualMethods.get(offset).getClsName()))) {
+                    if(replace || (isInterface && (isInterfaceInHierarchy(virtualMethods.get(offset).getClsName()) ||
+                            "java_lang_Object".equals(virtualMethods.get(offset).getClsName())))) {
                         virtualMethods.set(offset, bm);
                         if(isInterface) {
                             bm.setForceVirtual(true);
@@ -1836,11 +1989,11 @@ public class ByteCodeClass {
             if(bf.isStaticField() && bf.isObjectType() && !bf.shouldRemoveFromHeapCollection()) {
                 b.append("    gcMarkObject(threadStateData, ");
                 if (bf.isVolatile()) {
-                    b.append("atomic_load(&STATIC_FIELD_");
+                    b.append("atomic_load_explicit(&STATIC_FIELD_");
                     b.append(clsName);
                     b.append("_");
                     b.append(bf.getFieldName());
-                    b.append(")");
+                    b.append(", memory_order_acquire)");
                 } else {
                     b.append("STATIC_FIELD_");
                     b.append(clsName);

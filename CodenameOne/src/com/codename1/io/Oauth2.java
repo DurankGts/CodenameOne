@@ -371,15 +371,15 @@ public class Oauth2 {
     }
 
     private String buildURL() {
-        StringBuilder URL = new StringBuilder(oauth2URL + "?client_id=" + Util.encodeUrl(clientId)
+        StringBuilder url = new StringBuilder(oauth2URL + "?client_id=" + Util.encodeUrl(clientId)
                 + "&redirect_uri=" + Util.encodeUrl(redirectURI));
         if (scope != null) {
-            URL.append("&scope=").append(Util.encodeUrl(scope));
+            url.append("&scope=").append(Util.encodeUrl(scope));
         }
         if (clientSecret != null) {
-            URL.append("&response_type=code");
+            url.append("&response_type=code");
         } else {
-            URL.append("&response_type=token");
+            url.append("&response_type=token");
         }
 
         if (additionalParams != null) {
@@ -387,15 +387,15 @@ public class Oauth2 {
             while (e.hasMoreElements()) {
                 String key = (String) e.nextElement();
                 String val = additionalParams.get(key).toString();
-                URL.append("&").append(Util.encodeUrl(key)).append("=").append(Util.encodeUrl(val));
+                url.append("&").append(Util.encodeUrl(key)).append("=").append(Util.encodeUrl(val));
             }
         }
-        return URL.toString();
+        return url.toString();
     }
 
     private Component createLoginComponent(final ActionListener<ActionEvent> al, final Form frm, final Form backToForm, final Dialog progress) {
 
-        String URL = buildURL();
+        String localUrl = buildURL();
 
         DocumentInfo.setDefaultEncoding(DocumentInfo.ENCODING_UTF8);
         final WebBrowser[] web = new WebBrowser[1];
@@ -406,10 +406,11 @@ public class Oauth2 {
                 handleURL(url, this, al, frm, backToForm, progress);
             }
 
+            @Override
             public void onStart(String url) {
             }
         };
-        web[0].setURL(URL);
+        web[0].setURL(localUrl);
 
         return web[0];
     }
@@ -515,6 +516,7 @@ public class Oauth2 {
                 class TokenRequest extends ConnectionRequest {
                     boolean callbackCalled;
 
+                    @Override
                     protected void readResponse(InputStream input) throws IOException {
                         byte[] tok = Util.readInputStream(input);
                         String t = StringUtil.newString(tok);
@@ -531,6 +533,7 @@ public class Oauth2 {
                         }
                     }
 
+                    @Override
                     protected void handleException(Exception err) {
                         if (backToForm != null && !callbackCalled) {
                             backToForm.showBack();
@@ -559,6 +562,7 @@ public class Oauth2 {
                         return result;
                     }
 
+                    @Override
                     protected void postResponse() {
 
                         if (backToParent && backToForm != null && !callbackCalled) {
@@ -670,6 +674,7 @@ public class Oauth2 {
             this.out = out;
         }
 
+        @Override
         public void actionPerformed(ActionEvent evt) {
             if (out.isDone()) {
                 return;
@@ -711,6 +716,7 @@ public class Oauth2 {
             return result;
         }
 
+        @Override
         public void actionPerformed(ActionEvent ev) {
             if (Display.getInstance().getCurrent() == progress) {
                 progress.dispose();
@@ -728,6 +734,7 @@ public class Oauth2 {
             this.al = al;
         }
 
+        @Override
         public void actionPerformed(NetworkEvent evt) {
             String url = (String) evt.getSource();
             if (url.startsWith(redirectURI)) {

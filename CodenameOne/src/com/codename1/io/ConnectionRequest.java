@@ -621,7 +621,7 @@ public class ConnectionRequest implements IOProgressListener {
         if (userHeaders == null) {
             userHeaders = new Hashtable();
         }
-        if (key.equalsIgnoreCase("content-type")) {
+        if ("content-type".equalsIgnoreCase(key)) {
             setContentType(value);
         } else {
             userHeaders.put(key, value);
@@ -723,7 +723,7 @@ public class ConnectionRequest implements IOProgressListener {
             // the default, and add a property to turn it off.
             //  -- SJH Sept. 15, 2016
             boolean shouldAddContentType = contentTypeSetExplicitly ||
-                    Display.getInstance().getProperty("ConnectionRequest.excludeContentTypeFromGetRequests", "true").equals("false");
+                    "false".equals(Display.getInstance().getProperty("ConnectionRequest.excludeContentTypeFromGetRequests", "true"));
 
             if (isPost() || (getHttpMethod() != null && !"get".equalsIgnoreCase(getHttpMethod()))) {
                 shouldAddContentType = true;
@@ -1111,6 +1111,7 @@ public class ConnectionRequest implements IOProgressListener {
         }
         if (!isKilled()) {
             Display.getInstance().callSerially(new Runnable() {
+                @Override
                 public void run() {
                     postResponse();
                 }
@@ -2139,6 +2140,7 @@ public class ConnectionRequest implements IOProgressListener {
     /**
      * {@inheritDoc}
      */
+    @Override
     public void ioStreamUpdate(Object source, int bytes) {
         if (!isKilled()) {
             NetworkManager.getInstance().fireProgressEvent(this, progress, getContentLength(), bytes);
@@ -2294,6 +2296,7 @@ public class ConnectionRequest implements IOProgressListener {
     /**
      * {@inheritDoc}
      */
+    @Override
     public int hashCode() {
         if (url != null) {
             int i = url.hashCode();
@@ -2308,6 +2311,7 @@ public class ConnectionRequest implements IOProgressListener {
     /**
      * {@inheritDoc}
      */
+    @Override
     public boolean equals(Object o) {
         if (o != null && o.getClass() == getClass()) {
             ConnectionRequest r = (ConnectionRequest) o;
@@ -2708,6 +2712,7 @@ public class ConnectionRequest implements IOProgressListener {
         setReadResponseForErrors(false);
         if (useCache) {
             Display.getInstance().scheduleBackgroundTask(new Runnable() {
+                @Override
                 public void run() {
                     if (getDestinationFile() != null) {
                         String file = getDestinationFile();
@@ -2742,6 +2747,7 @@ public class ConnectionRequest implements IOProgressListener {
         } else {
             final ActionListener onDownload = new ActionListener<NetworkEvent>() {
 
+                @Override
                 public void actionPerformed(NetworkEvent nevt) {
                     int rc = nevt.getResponseCode();
                     if (rc == 200 || rc == 201) {

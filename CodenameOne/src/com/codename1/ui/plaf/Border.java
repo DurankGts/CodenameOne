@@ -1086,6 +1086,7 @@ public class Border {
     /**
      * {{@inheritDoc}}
      */
+    @Override
     public boolean equals(Object obj) {
         if (obj != null && obj.getClass() == getClass()) {
             Border b = (Border) obj;
@@ -1128,6 +1129,7 @@ public class Border {
     /**
      * {@inheritDoc}
      */
+    @Override
     public int hashCode() {
         int hash = 7;
         hash = 31 * hash + type;
@@ -2039,34 +2041,34 @@ public class Border {
      * This method is for internal usage only!
      */
     public Object getProperty(String n) {
-        if (n.equals("ThemeColors")) {
+        if ("ThemeColors".equals(n)) {
             if (themeColors) {
                 return Boolean.TRUE;
             }
             return Boolean.FALSE;
         }
-        if (n.equals("Type")) {
+        if ("Type".equals(n)) {
             return Integer.valueOf(type);
         }
-        if (n.equals("ColorA")) {
+        if ("ColorA".equals(n)) {
             return Integer.valueOf(colorA);
         }
-        if (n.equals("ColorB")) {
+        if ("ColorB".equals(n)) {
             return Integer.valueOf(colorB);
         }
-        if (n.equals("ColorC")) {
+        if ("ColorC".equals(n)) {
             return Integer.valueOf(colorC);
         }
-        if (n.equals("ColorD")) {
+        if ("ColorD".equals(n)) {
             return Integer.valueOf(colorD);
         }
-        if (n.equals("ArcWidth")) {
+        if ("ArcWidth".equals(n)) {
             return Integer.valueOf(arcWidth);
         }
-        if (n.equals("ArcHeight")) {
+        if ("ArcHeight".equals(n)) {
             return Integer.valueOf(arcHeight);
         }
-        if (n.equals("Images")) {
+        if ("Images".equals(n)) {
             return images;
         }
         return null;

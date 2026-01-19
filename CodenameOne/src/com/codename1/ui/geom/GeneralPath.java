@@ -339,38 +339,38 @@ public final class GeneralPath implements Shape {
     }
 
     // 1 = convex, -1 = concave, 0 = not polygon
-    private static int detectPolygonType(Pt[] p, int num_vertices) {
+    private static int detectPolygonType(Pt[] p, int numVertices) {
         Pt v1 = tmpV1;
         Pt v2 = tmpV2;
 
-        double det_value;
-        double cur_det_value;
+        double detValue;
+        double curDetValue;
         int i;
 
-        if (num_vertices < 3) {
+        if (numVertices < 3) {
             return 0;
         }
 
-        v1 = calcVector(p[0], p[num_vertices - 1], v1);
+        v1 = calcVector(p[0], p[numVertices - 1], v1);
         v2 = calcVector(p[1], p[0], v2);
-        det_value = calcDeterminant(v1, v2);
+        detValue = calcDeterminant(v1, v2);
 
-        for (i = 1; i < num_vertices - 1; i++) {
+        for (i = 1; i < numVertices - 1; i++) {
             v2.clone(v1);
             v2 = calcVector(p[i + 1], p[i], v2);
-            cur_det_value = calcDeterminant(v1, v2);
+            curDetValue = calcDeterminant(v1, v2);
 
-            if ((cur_det_value * det_value) < 0.0) {
+            if ((curDetValue * detValue) < 0.0) {
                 return -1;
             }
 
         }
 
         v1 = v2;
-        v2 = calcVector(p[0], p[num_vertices - 1], v2);
-        cur_det_value = calcDeterminant(v1, v2);
+        v2 = calcVector(p[0], p[numVertices - 1], v2);
+        curDetValue = calcDeterminant(v1, v2);
 
-        if ((cur_det_value * det_value) < 0.0) {
+        if ((curDetValue * detValue) < 0.0) {
             return -1;
         } else {
             return 1;
@@ -472,6 +472,7 @@ public final class GeneralPath implements Shape {
         System.arraycopy(points, 0, out, 0, Math.min(points.length, out.length));
     }
 
+    @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
         sb.append("[General Path: ");
@@ -1131,6 +1132,7 @@ public final class GeneralPath implements Shape {
      *
      * @return 4-element array of the form {@code [x, y, width, height]}.
      */
+    @Override
     public float[] getBounds2D() {
         float[] out = new float[4];
         getBounds2D(out);
@@ -1176,6 +1178,7 @@ public final class GeneralPath implements Shape {
      *
      * @return The bounding box of the path.
      */
+    @Override
     public Rectangle getBounds() {
         // NOTE (SJH20180614): If the path contains bezier curves,  may be larger than drawn bounds.
         // See note in getBounds(Rectangle) for more details.
@@ -1241,6 +1244,7 @@ public final class GeneralPath implements Shape {
      *
      * @return True if this path forms a rectangle.  False otherwise.
      */
+    @Override
     public boolean isRectangle() {
         // NOTE (SJH20180614): This is used extensively in clipping.   We can probably
         // do this more efficiently without needing to call getBounds()
@@ -1323,6 +1327,7 @@ public final class GeneralPath implements Shape {
     /**
      * {{@inheritDoc}}
      */
+    @Override
     public PathIterator getPathIterator() {
         return new Iterator(this);
     }
@@ -1330,6 +1335,7 @@ public final class GeneralPath implements Shape {
     /**
      * {{@inheritDoc}}
      */
+    @Override
     public PathIterator getPathIterator(Transform m) {
         Iterator out = (Iterator) getPathIterator();
         out.transform = m;
@@ -1512,6 +1518,7 @@ public final class GeneralPath implements Shape {
     /**
      * {{@inheritDoc}}
      */
+    @Override
     public Shape intersection(Rectangle rect) {
         Shape out = ShapeUtil.intersection(rect, this);
         if (out == null) {
@@ -1547,6 +1554,7 @@ public final class GeneralPath implements Shape {
     /**
      * {{@inheritDoc}}
      */
+    @Override
     public boolean contains(int x, int y) {
         return contains((float) x, (float) y);
     }
@@ -1719,13 +1727,13 @@ public final class GeneralPath implements Shape {
             } else {
                 p.moveTo(_tmp1.x, _tmp1.y);
             }
-            _addToPath(p, startAngle, sweepAngle);
+            addToPath(p, startAngle, sweepAngle);
             if (!join && Math.abs(Math.abs(sweepAngle) - Math.PI * 2) < 0.001) {
                 p.closePath();
             }
         }
 
-        private void _addToPath(GeneralPath p, double startAngle, double sweepAngle) {
+        private void addToPath(GeneralPath p, double startAngle, double sweepAngle) {
             //double _2pi = Math.PI*2;
             double absSweepAngle = Math.abs(sweepAngle);
             if (absSweepAngle < 0.0001) {
@@ -1739,8 +1747,8 @@ public final class GeneralPath implements Shape {
                 if (sweepAngle < 0) {
                     diff = -diff;
                 }
-                _addToPath(p, startAngle, diff);
-                _addToPath(p, startAngle + diff, sweepAngle - diff);
+                addToPath(p, startAngle, diff);
+                addToPath(p, startAngle + diff, sweepAngle - diff);
             } else {
                 getPointAtAngle(startAngle + sweepAngle, _tmp1);
                 //System.out.println("Line to "+_tmp1.x+", "+_tmp1.y);
@@ -2368,38 +2376,38 @@ public final class GeneralPath implements Shape {
             double c = eqn[0] / d;
             int rc = 0;
 
-            double Q = (a * a - 3.0 * b) / 9.0;
-            double R = (2.0 * a * a * a - 9.0 * a * b + 27.0 * c) / 54.0;
-            double Q3 = Q * Q * Q;
-            double R2 = R * R;
+            double q = (a * a - 3.0 * b) / 9.0;
+            double r = (2.0 * a * a * a - 9.0 * a * b + 27.0 * c) / 54.0;
+            double q3 = q * q * q;
+            double r2 = r * r;
             double n = -a / 3.0;
 
-            if (R2 < Q3) {
+            if (r2 < q3) {
 
-                double t = MathUtil.acos(R / Math.sqrt(Q3)) / 3.0;
+                double t = MathUtil.acos(r / Math.sqrt(q3)) / 3.0;
                 double p = 2.0 * Math.PI / 3.0;
-                double m = -2.0 * Math.sqrt(Q);
+                double m = -2.0 * Math.sqrt(q);
                 res[rc++] = m * Math.cos(t) + n;
                 res[rc++] = m * Math.cos(t + p) + n;
                 res[rc++] = m * Math.cos(t - p) + n;
             } else {
-//          Debug.println("R2 >= Q3 (" + R2 + "/" + Q3 + ")");
+//          Debug.println("r2 >= q3 (" + r2 + "/" + q3 + ")");
 
-                double A = MathUtil.pow(Math.abs(R) + Math.sqrt(R2 - Q3), 1.0 / 3.0);
+                double powed = MathUtil.pow(Math.abs(r) + Math.sqrt(r2 - q3), 1.0 / 3.0);
 
-                if (R > 0.0) {
-                    A = -A;
+                if (r > 0.0) {
+                    powed = -powed;
                 }
 //          if (A == 0.0) {
-                if (-ROOT_DELTA < A && A < ROOT_DELTA) {
+                if (-ROOT_DELTA < powed && powed < ROOT_DELTA) {
                     res[rc++] = n;
                 } else {
-                    double B = Q / A;
-                    res[rc++] = A + B + n;
-//              if (R2 == Q3) {
-                    double delta = R2 - Q3;
+                    double qPowed = q / powed;
+                    res[rc++] = powed + qPowed + n;
+//              if (r2 == q3) {
+                    double delta = r2 - q3;
                     if (-ROOT_DELTA < delta && delta < ROOT_DELTA) {
-                        res[rc++] = -(A + B) / 2.0 + n;
+                        res[rc++] = -(powed + qPowed) / 2.0 + n;
                     }
                 }
 
@@ -3236,18 +3244,22 @@ public final class GeneralPath implements Shape {
             pointIndex = 0;
         }
 
+        @Override
         public int getWindingRule() {
             return p.getWindingRule();
         }
 
+        @Override
         public boolean isDone() {
             return typeIndex >= p.typeSize;
         }
 
+        @Override
         public void next() {
             typeIndex++;
         }
 
+        @Override
         public int currentSegment(double[] coords) {
             float[] fcoords = createFloatArrayFromPool(6);
             try {
@@ -3264,6 +3276,7 @@ public final class GeneralPath implements Shape {
             }
         }
 
+        @Override
         public int currentSegment(float[] coords) {
             if (isDone()) {
                 // awt.4B=Iterator out of bounds

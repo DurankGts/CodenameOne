@@ -75,6 +75,7 @@ public final class TestUtils {
         }
         if (Display.getInstance().isEdt()) {
             Display.getInstance().invokeAndBlock(new Runnable() {
+                @Override
                 public void run() {
                     try {
                         Thread.sleep(millis);
@@ -368,6 +369,7 @@ public final class TestUtils {
         Form f = Display.getInstance().getCurrent();
         if (!Display.getInstance().isEdt()) {
             Display.getInstance().callSerially(new Runnable() {
+                @Override
                 public void run() {
                     executeToolbarCommandAtOffset(offset);
                 }
@@ -427,6 +429,7 @@ public final class TestUtils {
         }
         if (Display.getInstance().isEdt()) {
             Display.getInstance().invokeAndBlock(new Runnable() {
+                @Override
                 public void run() {
                     waitForFormTitleImpl(title, timeout);
                 }
@@ -483,6 +486,7 @@ public final class TestUtils {
         }
         if (Display.getInstance().isEdt()) {
             Display.getInstance().invokeAndBlock(new Runnable() {
+                @Override
                 public void run() {
                     waitForFormNameImpl(name, timeout);
                 }
@@ -526,6 +530,7 @@ public final class TestUtils {
         }
         if (Display.getInstance().isEdt()) {
             Display.getInstance().invokeAndBlock(new Runnable() {
+                @Override
                 public void run() {
                     waitForUnnamedFormImpl(timeout);
                 }
@@ -1108,8 +1113,8 @@ public final class TestUtils {
         if (verbose) {
             log("assertRelativeErrorExceeded(" + expected + ", " + actual + ", " + minRelativeError + ")");
         }
-        double relative_error = Math.abs((expected - actual) / actual) * 100;
-        if (relative_error < minRelativeError) {
+        double relativeError = Math.abs((expected - actual) / actual) * 100;
+        if (relativeError < minRelativeError) {
             assertBool(false);
         }
     }
@@ -1118,8 +1123,8 @@ public final class TestUtils {
         if (verbose) {
             log("assertRelativeErrorExceeded(" + expected + ", " + actual + ", " + minRelativeError + ")");
         }
-        double relative_error = Math.abs((expected - actual) / actual) * 100;
-        if (relative_error < minRelativeError) {
+        double relativeError = Math.abs((expected - actual) / actual) * 100;
+        if (relativeError < minRelativeError) {
             assertBool(false);
         }
     }
@@ -1128,8 +1133,8 @@ public final class TestUtils {
         if (verbose) {
             log("assertRelativeErrorExceeded(" + expected + ", " + actual + ", " + minRelativeError + ", " + errorMessage + ")");
         }
-        double relative_error = Math.abs((expected - actual) / actual) * 100;
-        if (relative_error < minRelativeError) {
+        double relativeError = Math.abs((expected - actual) / actual) * 100;
+        if (relativeError < minRelativeError) {
             assertBool(false, errorMessage);
         }
     }
@@ -1138,8 +1143,8 @@ public final class TestUtils {
         if (verbose) {
             log("assertRelativeErrorExceeded(" + expected + ", " + actual + ", " + minRelativeError + ", " + errorMessage + ")");
         }
-        double relative_error = Math.abs((expected - actual) / actual) * 100;
-        if (relative_error < minRelativeError) {
+        double relativeError = Math.abs((expected - actual) / actual) * 100;
+        if (relativeError < minRelativeError) {
             assertBool(false, errorMessage);
         }
     }
@@ -1148,8 +1153,8 @@ public final class TestUtils {
         if (verbose) {
             log("assertRelativeErrorNotExceeded(" + expected + ", " + actual + ", " + maxRelativeError + ", " + errorMessage + ")");
         }
-        double relative_error = Math.abs((expected - actual) / actual) * 100;
-        if (relative_error > maxRelativeError) {
+        double relativeError = Math.abs((expected - actual) / actual) * 100;
+        if (relativeError > maxRelativeError) {
             assertBool(false, errorMessage);
         }
     }
@@ -1158,8 +1163,8 @@ public final class TestUtils {
         if (verbose) {
             log("assertRelativeErrorNotExceeded(" + expected + ", " + actual + ", " + maxRelativeError + ", " + errorMessage + ")");
         }
-        double relative_error = Math.abs((expected - actual) / actual) * 100;
-        if (relative_error > maxRelativeError) {
+        double relativeError = Math.abs((expected - actual) / actual) * 100;
+        if (relativeError > maxRelativeError) {
             assertBool(false, errorMessage);
         }
     }

@@ -119,7 +119,7 @@ public class Picker extends Button {
         // Fixes iOS picker issue https://github.com/codenameone/CodenameOne/issues/3283
         if (!defaultLightweightModeSet) {
             defaultLightweightModeSet = true;
-            defaultUseLightweightPopup = CN.getPlatformName().equals("ios");
+            defaultUseLightweightPopup = "ios".equals(CN.getPlatformName());
         }
 
         if (!Display.getInstance().isNativePickerTypeSupported(Display.PICKER_TYPE_STRINGS)) {
@@ -137,6 +137,7 @@ public class Picker extends Button {
             private static final int COMMAND_PREV = 3;
             private static final int COMMAND_CANCEL = 4;
 
+            @Override
             public void actionPerformed(ActionEvent evt) {
                 if (ignoreActionEvent(evt)) {
                     // This was fired from the interaction dialog in lightweight mode
@@ -1036,6 +1037,7 @@ public class Picker extends Button {
         final Form f = getComponentForm();
         if (f != null) {
             f.getAnimationManager().flushAnimation(new Runnable() {
+                @Override
                 public void run() {
                     Container contentPane = f.getContentPane();
                     if (f.isFormBottomPaddingEditingMode()) {
@@ -1125,6 +1127,7 @@ public class Picker extends Button {
                         if (dlg.isShowing()) {
                             restoreContentPane();
                             dlg.disposeToTheBottom(new Runnable() {
+                                @Override
                                 public void run() {
                                     if (stopEditingCallback != null) {
                                         Runnable r = stopEditingCallback;
@@ -1523,6 +1526,7 @@ public class Picker extends Button {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String[] getPropertyNames() {
         return new String[]{"Strings"};
     }
@@ -1530,6 +1534,7 @@ public class Picker extends Button {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Class[] getPropertyTypes() {
         return new Class[]{String[].class};
     }
@@ -1537,6 +1542,7 @@ public class Picker extends Button {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String[] getPropertyTypeNames() {
         return new String[]{"String []"};
     }
@@ -1544,8 +1550,9 @@ public class Picker extends Button {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Object getPropertyValue(String name) {
-        if (name.equals("Strings")) {
+        if ("Strings".equals(name)) {
             return getStrings();
         }
         return null;
@@ -1554,8 +1561,9 @@ public class Picker extends Button {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String setPropertyValue(String name, Object value) {
-        if (name.equals("Strings")) {
+        if ("Strings".equals(name)) {
             setStrings((String[]) value);
             return null;
         }

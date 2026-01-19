@@ -388,9 +388,12 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      *
      * @param cmps Components to be includd in the set.
      * @return ComponentSelector with specified components.
+     * @deprecated Use {@link #select(Component...)}.
      */
+    @Deprecated
+    @SuppressWarnings("PMD.MethodNamingConventions")
     public static ComponentSelector $(Component... cmps) {
-        return new ComponentSelector(cmps);
+        return select(cmps);
     }
 
     /**
@@ -400,7 +403,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @return
      */
     public static ComponentSelector select(Component... cmps) {
-        return $(cmps);
+        return new ComponentSelector(cmps);
     }
 
     /**
@@ -408,8 +411,21 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      *
      * @param e The event whose source component is added to the set.
      * @return A ComponentSelector with a single component - the source of the event.
+     * @deprecated Use {@link #select(ActionEvent)}.
      */
+    @Deprecated
+    @SuppressWarnings("PMD.MethodNamingConventions")
     public static ComponentSelector $(ActionEvent e) {
+        return select(e);
+    }
+
+    /**
+     * Alias of {@link #$(com.codename1.ui.events.ActionEvent) }
+     *
+     * @param e
+     * @return
+     */
+    public static ComponentSelector select(ActionEvent e) {
         Object src = e.getSource();
         if (src == null) {
             return new ComponentSelector();
@@ -420,24 +436,16 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
     }
 
     /**
-     * Alias of {@link #$(com.codename1.ui.events.ActionEvent) }
-     *
-     * @param e
-     * @return
-     */
-    public static ComponentSelector select(ActionEvent e) {
-        return $(e);
-    }
-
-    /**
      * Wraps {@link Display#callSerially(java.lang.Runnable) }
      *
      * @param r
      * @return Empty ComponentSelector.
+     * @deprecated Use {@link #select(Runnable)}.
      */
+    @Deprecated
+    @SuppressWarnings("PMD.MethodNamingConventions")
     public static ComponentSelector $(Runnable r) {
-        Display.getInstance().callSerially(r);
-        return new ComponentSelector();
+        return select(r);
     }
 
     /**
@@ -447,7 +455,8 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @return
      */
     public static ComponentSelector select(Runnable r) {
-        return $(r);
+        Display.getInstance().callSerially(r);
+        return new ComponentSelector();
     }
 
     /**
@@ -455,9 +464,12 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      *
      * @param cmps The components to include in the set.
      * @return ComponentSelector with provided components.
+     * @deprecated Use {@link #select(Set)}.
      */
+    @Deprecated
+    @SuppressWarnings("PMD.MethodNamingConventions")
     public static ComponentSelector $(Set<Component> cmps) {
-        return new ComponentSelector(cmps);
+        return select(cmps);
     }
 
     /**
@@ -467,7 +479,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @return
      */
     public static ComponentSelector select(Set<Component> cmps) {
-        return $(cmps);
+        return new ComponentSelector(cmps);
     }
 
     /**
@@ -477,9 +489,12 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @param selector A selector string that defines which components to include in the
      *                 set.
      * @return ComponentSelector with matching components.
+     * @deprecated Use {@link #select(String)}.
      */
+    @Deprecated
+    @SuppressWarnings("PMD.MethodNamingConventions")
     public static ComponentSelector $(String selector) {
-        return new ComponentSelector(selector);
+        return select(selector);
     }
 
     /**
@@ -489,7 +504,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @return
      */
     public static ComponentSelector select(String selector) {
-        return $(selector);
+        return new ComponentSelector(selector);
     }
 
     /**
@@ -499,9 +514,12 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @param selector Selector string to define which components will be included in the set.
      * @param roots    Roots for the selector to search.  Only components within the roots' subtrees will be included in the set.
      * @return ComponentSelector with matching components.
+     * @deprecated Use {@link #select(String, Component...)}.
      */
+    @Deprecated
+    @SuppressWarnings("PMD.MethodNamingConventions")
     public static ComponentSelector $(String selector, Component... roots) {
-        return new ComponentSelector(selector, roots);
+        return select(selector, roots);
     }
 
     /**
@@ -512,7 +530,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @return
      */
     public static ComponentSelector select(String selector, Component... roots) {
-        return $(selector, roots);
+        return new ComponentSelector(selector, roots);
     }
 
     /**
@@ -522,9 +540,12 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @param selector Selector string to define which components will be included in the set.
      * @param roots    Roots for the selector to search.  Only components within the roots' subtrees will be included in the set.
      * @return ComponentSelector with matching components.
+     * @deprecated Use {@link #select(String, Collection)}.
      */
+    @Deprecated
+    @SuppressWarnings("PMD.MethodNamingConventions")
     public static ComponentSelector $(String selector, Collection<Component> roots) {
-        return new ComponentSelector(selector, roots);
+        return select(selector, roots);
     }
 
     /**
@@ -535,7 +556,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @return
      */
     public static ComponentSelector select(String selector, Collection<Component> roots) {
-        return $(selector, roots);
+        return new ComponentSelector(selector, roots);
     }
 
     private static int dip2px(float dips) {
@@ -808,6 +829,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
             ComponentAnimation anim = ComponentAnimation.compoundAnimation(animations.toArray(new ComponentAnimation[animations.size()]));
 
             mgr.addAnimation(anim, new Runnable() {
+                @Override
                 public void run() {
                     if (callback != null) {
                         callback.onSucess(ComponentSelector.this);
@@ -886,6 +908,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
         if (mgr != null) {
             mgr.addAnimation(ComponentAnimation.compoundAnimation(animations1.toArray(new ComponentAnimation[animations1.size()])), new Runnable() {
 
+                @Override
                 public void run() {
                     AnimationManager mgr = null;
                     for (final Component c : animatingComponents) {
@@ -916,8 +939,10 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
                     }
                     final AnimationManager fmgr = mgr;
                     $(new Runnable() {
+                        @Override
                         public void run() {
                             fmgr.addAnimation(ComponentAnimation.compoundAnimation(animations2.toArray(new ComponentAnimation[animations2.size()])), new Runnable() {
+                                @Override
                                 public void run() {
                                     if (callback != null) {
                                         callback.onSucess(ComponentSelector.this);
@@ -1135,6 +1160,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
         if (mgr != null) {
             mgr.addAnimation(ComponentAnimation.compoundAnimation(animations.toArray(new ComponentAnimation[animations.size()])), new Runnable() {
 
+                @Override
                 public void run() {
                     for (final Component c : animatingComponents) {
                         //c.setHidden(true);
@@ -1201,6 +1227,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
         }
         getParent().animateUnlayout(duration, 255, new SuccessCallback<ComponentSelector>() {
 
+            @Override
             public void onSucess(ComponentSelector value) {
                 for (Component c : animatedComponents) {
                     c.setVisible(false);
@@ -1594,6 +1621,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      *
      * @return
      */
+    @Override
     public Iterator<Component> iterator() {
         return resultsImpl().iterator();
     }
@@ -1906,6 +1934,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      *
      * @return
      */
+    @Override
     public int size() {
         return resultsImpl().size();
     }
@@ -1913,6 +1942,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
     /**
      * @return True if there were no results.
      */
+    @Override
     public boolean isEmpty() {
         return resultsImpl().isEmpty();
     }
@@ -1923,6 +1953,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @param o
      * @return
      */
+    @Override
     public boolean contains(Object o) {
         return resultsImpl().contains(o);
     }
@@ -1932,6 +1963,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      *
      * @return
      */
+    @Override
     public Object[] toArray() {
         return resultsImpl().toArray();
     }
@@ -1943,6 +1975,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @param a
      * @return
      */
+    @Override
     public <T> T[] toArray(T[] a) {
         return resultsImpl().toArray(a);
     }
@@ -1953,6 +1986,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @param e
      * @return True on success
      */
+    @Override
     public boolean add(Component e) {
         setDirty();
         return resultsImpl().add(e);
@@ -2056,6 +2090,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @param o
      * @return Self for chaining.
      */
+    @Override
     public boolean remove(Object o) {
         setDirty();
         return resultsImpl().remove(o);
@@ -2080,6 +2115,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @param c
      * @return
      */
+    @Override
     public boolean containsAll(Collection<?> c) {
         return resultsImpl().containsAll(c);
     }
@@ -2090,6 +2126,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @param c
      * @return
      */
+    @Override
     public boolean addAll(Collection<? extends Component> c) {
         setDirty();
         return resultsImpl().addAll(c);
@@ -2149,6 +2186,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @param c
      * @return
      */
+    @Override
     public boolean retainAll(Collection<?> c) {
         setDirty();
         return resultsImpl().retainAll(c);
@@ -2172,6 +2210,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
      * @param c
      * @return
      */
+    @Override
     public boolean removeAll(Collection<?> c) {
         setDirty();
         return resultsImpl().removeAll(c);
@@ -2192,6 +2231,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
     /**
      * Clears the result set.
      */
+    @Override
     public void clear() {
         setDirty();
         resultsImpl().clear();
@@ -3518,6 +3558,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
         AnimationManager mgr = getAnimationManager();
         if (animations.size() > 0 && mgr != null) {
             mgr.addAnimation(ComponentAnimation.compoundAnimation(animations.toArray(new ComponentAnimation[animations.size()])), new Runnable() {
+                @Override
                 public void run() {
                     if (callback != null) {
                         callback.onSucess(ComponentSelector.this);
@@ -3578,6 +3619,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
         AnimationManager mgr = getAnimationManager();
         if (animations.size() > 0 && mgr != null) {
             mgr.addAnimation(ComponentAnimation.compoundAnimation(animations.toArray(new ComponentAnimation[animations.size()])), new Runnable() {
+                @Override
                 public void run() {
                     if (callback != null) {
                         callback.onSucess(ComponentSelector.this);
@@ -3639,6 +3681,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
         if (animations.size() > 0 && mgr != null) {
             mgr.addAnimation(ComponentAnimation.compoundAnimation(animations.toArray(new ComponentAnimation[animations.size()])), new Runnable() {
 
+                @Override
                 public void run() {
                     if (callback != null) {
                         callback.onSucess(ComponentSelector.this);
@@ -3678,6 +3721,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
         if (animations.size() > 0 && mgr != null) {
             mgr.addAnimation(ComponentAnimation.compoundAnimation(animations.toArray(new ComponentAnimation[animations.size()])), new Runnable() {
 
+                @Override
                 public void run() {
                     if (callback != null) {
                         callback.onSucess(ComponentSelector.this);
@@ -3739,6 +3783,7 @@ public class ComponentSelector implements Iterable<Component>, Set<Component> {
         AnimationManager mgr = getAnimationManager();
         if (animations.size() > 0 && mgr != null) {
             mgr.addAnimation(ComponentAnimation.compoundAnimation(animations.toArray(new ComponentAnimation[animations.size()])), new Runnable() {
+                @Override
                 public void run() {
                     if (callback != null) {
                         callback.onSucess(ComponentSelector.this);

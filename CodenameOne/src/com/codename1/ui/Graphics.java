@@ -79,6 +79,8 @@ public final class Graphics {
         impl = Display.impl;
     }
 
+    // PMD thinks we need to override finalize. Ugh.
+    @SuppressWarnings("PMD.MissingOverride")
     protected void finalize() {
         if (nativeGraphics != null) {
             impl.disposeGraphics(nativeGraphics);
@@ -176,11 +178,11 @@ public final class Graphics {
      * Sets the current rgb color while ignoring any potential alpha component within
      * said color value.
      *
-     * @param RGB the RGB value for the color.
+     * @param rgb the RGB value for the color.
      */
-    public void setColor(int RGB) {
+    public void setColor(int rgb) {
         paint = null;
-        color = 0xffffff & RGB;
+        color = 0xffffff & rgb;
         impl.setColor(nativeGraphics, color);
     }
 
@@ -210,13 +212,13 @@ public final class Graphics {
      * Sets the current rgb color while ignoring any potential alpha component within
      * said color value.
      *
-     * @param RGB the RGB value for the color.
+     * @param rgb the RGB value for the color.
      * @return The previous color value.
      * @since 8.0
      */
-    public int setAndGetColor(int RGB) {
+    public int setAndGetColor(int rgb) {
         int old = getColor();
-        setColor(RGB);
+        setColor(rgb);
         return old;
     }
 

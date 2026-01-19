@@ -238,10 +238,10 @@ public class FloatingActionButton extends Button {
      */
     @Override
     public void styleChanged(String propertyName, Style source) {
-        if (propertyName.equals(Style.BG_COLOR)) {
+        if (Style.BG_COLOR.equals(propertyName)) {
             updateBorder();
         }
-        if (getIcon() instanceof FontImage && propertyName.equals(Style.FG_COLOR)) {
+        if (getIcon() instanceof FontImage && Style.FG_COLOR.equals(propertyName)) {
             FontImage i = (FontImage) getIcon();
             FontImage image = FontImage.createMaterial(i.getText().charAt(0), "FloatingActionButton", sizeMm);
             image.setBgTransparency(0);
@@ -432,6 +432,7 @@ public class FloatingActionButton extends Button {
             this.con = con;
         }
 
+        @Override
         public void actionPerformed(ActionEvent evt) {
             for (Component c : con) {
                 c.setY(con.getHeight());
@@ -448,6 +449,7 @@ public class FloatingActionButton extends Button {
             this.next = next;
         }
 
+        @Override
         public void actionPerformed(ActionEvent evt) {
             next.pressed();
             next.released();

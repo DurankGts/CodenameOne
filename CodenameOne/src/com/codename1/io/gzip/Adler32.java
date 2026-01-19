@@ -46,38 +46,42 @@ final public class Adler32 implements Checksum {
 
     // The following logic has come from zlib.1.2.
     static long combine(long adler1, long adler2, long len2) {
-        long BASEL = BASE;
+        long basel = BASE;
         long sum1;
         long sum2;
         long rem;  // unsigned int
 
-        rem = len2 % BASEL;
+        rem = len2 % basel;
         sum1 = adler1 & 0xffffL;
         sum2 = rem * sum1;
-        sum2 %= BASEL; // MOD(sum2);
-        sum1 += (adler2 & 0xffffL) + BASEL - 1;
-        sum2 += ((adler1 >> 16) & 0xffffL) + ((adler2 >> 16) & 0xffffL) + BASEL - rem;
-        if (sum1 >= BASEL) sum1 -= BASEL;
-        if (sum1 >= BASEL) sum1 -= BASEL;
-        if (sum2 >= (BASEL << 1)) sum2 -= (BASEL << 1);
-        if (sum2 >= BASEL) sum2 -= BASEL;
+        sum2 %= basel; // MOD(sum2);
+        sum1 += (adler2 & 0xffffL) + basel - 1;
+        sum2 += ((adler1 >> 16) & 0xffffL) + ((adler2 >> 16) & 0xffffL) + basel - rem;
+        if (sum1 >= basel) sum1 -= basel;
+        if (sum1 >= basel) sum1 -= basel;
+        if (sum2 >= (basel << 1)) sum2 -= (basel << 1);
+        if (sum2 >= basel) sum2 -= basel;
         return sum1 | (sum2 << 16);
     }
 
+    @Override
     public void reset(long init) {
         s1 = init & 0xffff;
         s2 = (init >> 16) & 0xffff;
     }
 
+    @Override
     public void reset() {
         s1 = 1L;
         s2 = 0L;
     }
 
+    @Override
     public long getValue() {
         return ((s2 << 16) | s1);
     }
 
+    @Override
     public void update(byte[] buf, int index, int len) {
 
         if (len == 1) {
@@ -109,6 +113,7 @@ final public class Adler32 implements Checksum {
         s2 %= BASE;
     }
 
+    @Override
     public Adler32 copy() {
         Adler32 foo = new Adler32();
         foo.s1 = this.s1;

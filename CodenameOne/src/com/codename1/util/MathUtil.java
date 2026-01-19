@@ -73,7 +73,7 @@ public abstract class MathUtil {
     private static final long HI_MASK = 0xffffffff00000000L,
             LO_MASK = 0x00000000ffffffffL;
     private static final int HI_SHIFT = 32;
-    /* __ieee754_exp(x)
+    /* __ieee754Exp(x)
      * Returns the exponential of x.
      *
      * Method
@@ -144,7 +144,7 @@ public abstract class MathUtil {
                     -6.93147180369123816490e-01}, /* 0xbfe62e42, 0xfee00000 */
             ln2LO = new double[]{1.90821492927058770002e-10, /* 0x3dea39ef, 0x35793c76 */
                     -1.90821492927058770002e-10}; /* 0xbdea39ef, 0x35793c76 */
-    /* __ieee754_log(x)
+    /* __ieee754Log(x)
      * Return the logrithm of x
      *
      * Method :
@@ -203,7 +203,7 @@ public abstract class MathUtil {
             Lg5 = 1.818357216161805012e-01, /* 3FC74664 96CB03DE */
             Lg6 = 1.531383769920937332e-01, /* 3FC39A09 D078C69F */
             Lg7 = 1.479819860511658591e-01;  /* 3FC2F112 DF3E5244 */
-    /* __ieee754_pow(x,y) return x**y
+    /* __ieee754Pow(x,y) return x**y
      *
      *          n
      * Method:  Let x =  2   * (1+f)
@@ -318,7 +318,7 @@ public abstract class MathUtil {
      * This in turn uses ieee7854_exp(double).
      */
     public static final double exp(double a) {
-        return ieee754_exp(a);
+        return ieee754Exp(a);
     }
 
     /**
@@ -326,7 +326,7 @@ public abstract class MathUtil {
      * This in turn uses ieee7854_log(double).
      */
     public static final double log(double a) {
-        return ieee754_log(a);
+        return ieee754Log(a);
     }
 
     /**
@@ -334,7 +334,7 @@ public abstract class MathUtil {
      * This in turn uses ieee7854_log(double)/ieee7854_log(10.0).
      */
     public static final double log10(double a) {
-        return ieee754_log(a) / log10;
+        return ieee754Log(a) / log10;
     }
 
     /**
@@ -343,28 +343,28 @@ public abstract class MathUtil {
      * This in turn uses ieee7854_log(double).
      */
     public static final double pow(double a, double b) {
-        return ieee754_pow(a, b);
+        return ieee754Pow(a, b);
     }
 
     /**
      * Return the arcsine of a.
      */
     public static final double asin(double a) {
-        return ieee754_asin(a);
+        return ieee754Asin(a);
     }
 
     /**
      * Return the arccosine of a.
      */
     public static final double acos(double a) {
-        return ieee754_acos(a);
+        return ieee754Acos(a);
     }
 
     /**
      * Return the arctangent of a, call it b, where a = tan(b).
      */
     public static final double atan(double a) {
-        return ieee754_atan(a);
+        return ieee754Atan(a);
     }
 
     /**
@@ -376,10 +376,10 @@ public abstract class MathUtil {
      * This in turn uses ieee7854_arctan2(double).
      */
     public static final double atan2(double b, double a) {
-        return ieee754_atan2(a, b);
+        return ieee754Atan2(a, b);
     }
 
-    private static final double ieee754_exp(double x) {
+    private static final double ieee754Exp(double x) {
         double y, c, t;
         double hi = 0, lo = 0;
         int k = 0;
@@ -446,8 +446,8 @@ public abstract class MathUtil {
         }
     }
 
-    private static final double ieee754_log(double x) {
-        double hfsq, f, s, z, R, w, t1, t2, dk;
+    private static double ieee754Log(double x) {
+        double hfsq, f, s, z, r, w, t1, t2, dk;
         int k, hx, lx, i, j;
         long xl = Double.doubleToLongBits(x);
 
@@ -485,12 +485,12 @@ public abstract class MathUtil {
                     return dk * ln2_hi + dk * ln2_lo;
                 }
             }
-            R = f * f * (0.5 - 0.33333333333333333 * f);
+            r = f * f * (0.5 - 0.33333333333333333 * f);
             if (k == 0) {
-                return f - R;
+                return f - r;
             } else {
                 dk = k;
-                return dk * ln2_hi - ((R - dk * ln2_lo) - f);
+                return dk * ln2_hi - ((r - dk * ln2_lo) - f);
             }
         }
         s = f / (2.0 + f);
@@ -502,25 +502,25 @@ public abstract class MathUtil {
         t1 = w * (Lg2 + w * (Lg4 + w * Lg6));
         t2 = z * (Lg1 + w * (Lg3 + w * (Lg5 + w * Lg7)));
         i |= j;
-        R = t2 + t1;
+        r = t2 + t1;
         if (i > 0) {
             hfsq = 0.5 * f * f;
             if (k == 0) {
-                return f - (hfsq - s * (hfsq + R));
+                return f - (hfsq - s * (hfsq + r));
             } else {
-                return dk * ln2_hi - ((hfsq - (s * (hfsq + R) + dk * ln2_lo)) - f);
+                return dk * ln2_hi - ((hfsq - (s * (hfsq + r) + dk * ln2_lo)) - f);
             }
         } else {
             if (k == 0) {
-                return f - s * (f - R);
+                return f - s * (f - r);
             } else {
-                return dk * ln2_hi - ((s * (f - R) - dk * ln2_lo) - f);
+                return dk * ln2_hi - ((s * (f - r) - dk * ln2_lo) - f);
             }
         }
     }
 
-    private static final double ieee754_pow(double x, double y) {
-        double z, ax, z_h, z_l, p_h, p_l;
+    private static double ieee754Pow(double x, double y) {
+        double z, ax, zH, zL, pH, pL;
         double y1, t1, t2, r, s, t, u, v, w;
         //int i0,i1;
         int i, j, k, yisint, n;
@@ -657,7 +657,7 @@ public abstract class MathUtil {
             t1 = Double.longBitsToDouble(Double.doubleToLongBits(t1) & HI_MASK);
             t2 = v - (t1 - u);
         } else {
-            double ss, s2, s_h, s_l, t_h, t_l;
+            double ss, s2, sH, sL, tH, tL;
             n = 0;
             /* take care subnormal number */
             if (ix < 0x00100000) {
@@ -685,56 +685,56 @@ public abstract class MathUtil {
             u = ax - bp[k];   /* bp[0]=1.0, bp[1]=1.5 */
             v = one / (ax + bp[k]);
             ss = u * v;
-            s_h = ss;
+            sH = ss;
             //__LO(s_h) = 0; // keep high word
-            s_h = Double.longBitsToDouble(Double.doubleToLongBits(s_h) & HI_MASK);
+            sH = Double.longBitsToDouble(Double.doubleToLongBits(sH) & HI_MASK);
             /* t_h=ax+bp[k] High */
-            t_h = zero;
+            tH = zero;
             //__HI(t_h)=((ix>>1)|0x20000000)+0x00080000+(k<<18);
-            t_h = Double.longBitsToDouble(((long) (((ix >> 1) | 0x20000000) + 0x00080000 + (k << 18)) << HI_SHIFT) | (Double.doubleToLongBits(t_h) & LO_MASK));
-            t_l = ax - (t_h - bp[k]);
-            s_l = v * ((u - s_h * t_h) - s_h * t_l);
+            tH = Double.longBitsToDouble(((long) (((ix >> 1) | 0x20000000) + 0x00080000 + (k << 18)) << HI_SHIFT) | (Double.doubleToLongBits(tH) & LO_MASK));
+            tL = ax - (tH - bp[k]);
+            sL = v * ((u - sH * tH) - sH * tL);
             /* compute log(ax) */
             s2 = ss * ss;
             r = s2 * s2 * (L1 + s2 * (L2 + s2 * (L3 + s2 * (L4 + s2 * (L5 + s2 * L6)))));
-            r += s_l * (s_h + ss);
-            s2 = s_h * s_h;
-            t_h = 3.0 + s2 + r;
+            r += sL * (sH + ss);
+            s2 = sH * sH;
+            tH = 3.0 + s2 + r;
             //__LO(t_h) = 0; // keep high word
-            t_h = Double.longBitsToDouble(Double.doubleToLongBits(t_h) & HI_MASK);
-            t_l = r - ((t_h - 3.0) - s2);
+            tH = Double.longBitsToDouble(Double.doubleToLongBits(tH) & HI_MASK);
+            tL = r - ((tH - 3.0) - s2);
             /* u+v = ss*(1+...) */
-            u = s_h * t_h;
-            v = s_l * t_h + t_l * ss;
+            u = sH * tH;
+            v = sL * tH + tL * ss;
             /* 2/(3log2)*(ss+...) */
-            p_h = u + v;
+            pH = u + v;
             //__LO(p_h) = 0; // keep high word
-            p_h = Double.longBitsToDouble(Double.doubleToLongBits(p_h) & HI_MASK);
-            p_l = v - (p_h - u);
-            z_h = cp_h * p_h;   /* cp_h+cp_l = 2/(3*log2) */
-            z_l = cp_l * p_h + p_l * cp + dp_l[k];
+            pH = Double.longBitsToDouble(Double.doubleToLongBits(pH) & HI_MASK);
+            pL = v - (pH - u);
+            zH = cp_h * pH;   /* cp_h+cp_l = 2/(3*log2) */
+            zL = cp_l * pH + pL * cp + dp_l[k];
             /* log2(ax) = (ss+..)*2/(3*log2) = n + dp_h + z_h + z_l */
             t = n;
-            t1 = (((z_h + z_l) + dp_h[k]) + t);
+            t1 = (((zH + zL) + dp_h[k]) + t);
             //__LO(t1) = 0; // keep high word
             t1 = Double.longBitsToDouble(Double.doubleToLongBits(t1) & HI_MASK);
-            t2 = z_l - (((t1 - t) - dp_h[k]) - z_h);
+            t2 = zL - (((t1 - t) - dp_h[k]) - zH);
         }
 
         /* split up y into y1+y2 and compute (y1+y2)*(t1+t2) */
         y1 = y;
         //__LO(y1) = 0; // keep high word
         y1 = Double.longBitsToDouble(Double.doubleToLongBits(y1) & HI_MASK);
-        p_l = (y - y1) * t1 + y * t2;
-        p_h = y1 * t1;
-        z = p_l + p_h;
+        pL = (y - y1) * t1 + y * t2;
+        pH = y1 * t1;
+        z = pL + pH;
         j = (int) (Double.doubleToLongBits(z) >>> HI_SHIFT);
         i = (int) (Double.doubleToLongBits(z) & LO_MASK);
         if (j >= 0x40900000) {        /* z >= 1024 */
             if (((j - 0x40900000) | i) != 0) /* if z > 1024 */ {
                 return s * huge * huge;     /* overflow */
             } else {
-                if (p_l + ovt > z - p_h) {
+                if (pL + ovt > z - pH) {
                     return s * huge * huge; /* overflow */
                 }
             }
@@ -742,7 +742,7 @@ public abstract class MathUtil {
             if (((j - 0xc090cc00) | i) != 0) /* z < -1075 */ {
                 return s * tiny * tiny;   /* underflow */
             } else {
-                if (p_l <= z - p_h) {
+                if (pL <= z - pH) {
                     return s * tiny * tiny;  /* underflow */
                 }
             }
@@ -763,13 +763,13 @@ public abstract class MathUtil {
             if (j < 0) {
                 n = -n;
             }
-            p_h -= t;
+            pH -= t;
         }
-        t = p_l + p_h;
+        t = pL + pH;
         //__LO(t) = 0; // keep high word
         t = Double.longBitsToDouble(Double.doubleToLongBits(t) & HI_MASK);
         u = t * lg2_h;
-        v = (p_l - (t - p_h)) * lg2 + t * lg2_l;
+        v = (pL - (t - pH)) * lg2 + t * lg2_l;
         z = u + v;
         w = v - (z - u);
         t = z * z;
@@ -787,7 +787,7 @@ public abstract class MathUtil {
         return s * z;
     }
 
-    /* __ieee754_acos(x)
+    /* __ieee754Acos(x)
      * Method :
      *  acos(x)  = pi/2 - asin(x)
      *  acos(-x) = pi/2 + asin(x)
@@ -810,7 +810,7 @@ public abstract class MathUtil {
      *
      * Function needed: sqrt
      */
-    private static final double ieee754_acos(double x) {
+    private static double ieee754Acos(double x) {
         double z, p, q, r, w, s, c, df;
         int hx, ix;
         hx = (int) (Double.doubleToLongBits(x) >>> HI_SHIFT);
@@ -857,7 +857,7 @@ public abstract class MathUtil {
         }
     }
 
-    /* __ieee754_asin(x)
+    /* __ieee754Asin(x)
      * Method :
      *  Since  asin(x) = x + x^3/6 + x^5*3/40 + x^7*15/336 + ...
      *  we approximate asin(x) on [0,0.5] by
@@ -886,7 +886,7 @@ public abstract class MathUtil {
      *  if |x|>1, return NaN with invalid signal.
      *
      */
-    private static final double ieee754_asin(double x) {
+    private static double ieee754Asin(double x) {
         double t, w, p, q, c, r, s;
         int hx, ix;
         hx = (int) (Double.doubleToLongBits(x) >>> HI_SHIFT);
@@ -933,7 +933,7 @@ public abstract class MathUtil {
         }
     }
 
-    private static final double ieee754_atan(double x) {
+    private static double ieee754Atan(double x) {
         double w, s1, s2, z;
         int ix, hx, id;
 
@@ -989,7 +989,7 @@ public abstract class MathUtil {
         }
     }
 
-    /* __ieee754_atan2(y,x)
+    /* __ieee754Atan2(y,x)
      * Method :
      *  1. Reduce y to positive by atan2(y,x)=-atan2(-y,x).
      *  2. Reduce x to positive by (if x and y are unexceptional):
@@ -1015,7 +1015,7 @@ public abstract class MathUtil {
      * compiler will convert from decimal to binary accurately enough
      * to produce the hexadecimal values shown.
      */
-    private static final double ieee754_atan2(double x, double y) {
+    private static double ieee754Atan2(double x, double y) {
         double z;
         int k, m;
         int hx, hy, ix, iy;
@@ -1035,7 +1035,7 @@ public abstract class MathUtil {
             return x + y;
         }
         if ((hx - 0x3ff00000 | lx) == 0) {
-            return ieee754_atan(y);   /* x=1.0 */
+            return ieee754Atan(y);   /* x=1.0 */
         }
         m = ((hy >> 31) & 1) | ((hx >> 30) & 2);  /* 2*sign(x)+sign(y) */
 
@@ -1094,7 +1094,7 @@ public abstract class MathUtil {
         } else if (hx < 0 && k < -60) {
             z = 0.0;   /* |y|/x < -2**60 */
         } else {
-            z = ieee754_atan(Math.abs(y / x));   /* safe to do y/x */
+            z = ieee754Atan(Math.abs(y / x));   /* safe to do y/x */
         }
         switch (m) {
             case 0:
@@ -1114,7 +1114,7 @@ public abstract class MathUtil {
      * manipulation rather than by actually performing an
      * exponentiation or a multiplication.
      */
-    public static final double scalb(double x, int n) {
+    public static double scalb(double x, int n) {
         int k, hx, lx;
         hx = (int) (Double.doubleToLongBits(x) >>> HI_SHIFT);
         lx = (int) (Double.doubleToLongBits(x) & LO_MASK);
@@ -1163,7 +1163,7 @@ public abstract class MathUtil {
      * @return scalb(x, n)
      * @deprecated Please update your code to use scalb
      */
-    public static final double scalbn(double x, int n) {
+    public static double scalbn(double x, int n) {
         return scalb(x, n);
     }
 
@@ -1172,7 +1172,7 @@ public abstract class MathUtil {
      * copySign(x,y) returns a value with the magnitude of x and
      * with the sign bit of y.
      */
-    public static final double copySign(final double x, final double y) {
+    public static double copySign(final double x, final double y) {
         //__HI(x) = (__HI(x)&0x7fffffff)|(__HI(y)&0x80000000);
         // The below is actually about 30% faster than doing greater/less comparisons.
         return Double.longBitsToDouble((Double.doubleToLongBits(x) & 0x7fffffffffffffffL)
@@ -1198,7 +1198,7 @@ public abstract class MathUtil {
      * @return copySign(x, y)
      * @deprecated Please update your code to use copySign
      */
-    public static final double copysign(final double x, final double y) {
+    public static double copysign(final double x, final double y) {
         return copySign(x, y);
     }
 

@@ -251,6 +251,7 @@ public class Table extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     protected void paintGlass(Graphics g) {
         if ((drawBorder) && (innerBorder != INNER_BORDERS_NONE)) {
             int xPos = getAbsoluteX();
@@ -464,6 +465,7 @@ public class Table extends Container {
             header.setTextPosition(LEFT);
             if (isSortSupported()) {
                 header.addActionListener(new ActionListener<ActionEvent>() {
+                    @Override
                     public void actionPerformed(ActionEvent evt) {
                         Comparator<Object> cmp = createColumnSortComparator(column);
                         if (column == sortedColumn) {
@@ -554,6 +556,7 @@ public class Table extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public void initComponent() {
         // this can happen if deinitialize is invoked due to a menu command which modifies
         // the content of the table while the listener wasn't bound
@@ -567,6 +570,7 @@ public class Table extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public void deinitialize() {
         // we unbind the listener to prevent a memory leak for the use case of keeping
         // the model while discarding the component
@@ -842,6 +846,7 @@ public class Table extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String[] getPropertyNames() {
         return new String[]{"data", "header"};
     }
@@ -849,6 +854,7 @@ public class Table extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Class[] getPropertyTypes() {
         return new Class[]{com.codename1.impl.CodenameOneImplementation.getStringArray2DClass(),
                 com.codename1.impl.CodenameOneImplementation.getStringArrayClass()};
@@ -857,6 +863,7 @@ public class Table extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String[] getPropertyTypeNames() {
         return new String[]{"String[][]", "String[]"};
     }
@@ -864,8 +871,9 @@ public class Table extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Object getPropertyValue(String name) {
-        if (name.equals("data")) {
+        if ("data".equals(name)) {
             String[][] result = new String[((DefaultTableModel) model).data.size()][];
             for (int iter = 0; iter < result.length; iter++) {
                 Object[] o = ((DefaultTableModel) model).data.get(iter);
@@ -884,7 +892,7 @@ public class Table extends Container {
             }
             return result;
         }
-        if (name.equals("header")) {
+        if ("header".equals(name)) {
             return ((DefaultTableModel) model).columnNames;
         }
         return null;
@@ -893,12 +901,13 @@ public class Table extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String setPropertyValue(String name, Object value) {
-        if (name.equals("data")) {
+        if ("data".equals(name)) {
             setModel(new DefaultTableModel(((DefaultTableModel) model).columnNames, (Object[][]) value));
             return null;
         }
-        if (name.equals("header")) {
+        if ("header".equals(name)) {
             setModel(new DefaultTableModel((String[]) value, ((DefaultTableModel) model).data, ((DefaultTableModel) model).editable));
             return null;
         }
@@ -956,6 +965,7 @@ public class Table extends Container {
             this.ccmp = ccmp;
         }
 
+        @Override
         public int compare(Object o1, Object o2) {
             if (o1 == null) {
                 if (o2 == null) {
@@ -988,6 +998,7 @@ public class Table extends Container {
         /**
          * {@inheritDoc}
          */
+        @Override
         public final void dataChanged(int row, int column) {
             if (row == Integer.MIN_VALUE) {
                 // special case... Rebuild the table
@@ -1034,6 +1045,7 @@ public class Table extends Container {
             revalidate();
         }
 
+        @Override
         public void actionPerformed(ActionEvent evt) {
             Component c = (Component) evt.getSource();
             int row = getCellRow(c);

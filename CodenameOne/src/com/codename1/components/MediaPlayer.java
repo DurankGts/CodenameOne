@@ -220,6 +220,7 @@ public class MediaPlayer extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     protected void initComponent() {
         if (userSetIcons) {
             Image play = UIManager.getInstance().getThemeImageConstant("mediaPlayImage");
@@ -255,6 +256,7 @@ public class MediaPlayer extends Container {
         if (progressUpdater == null) {
             progressUpdater = UITimer.timer(50, true, getComponentForm(),
                     new Runnable() {
+                        @Override
                         public void run() {
                             float dur = video.getDuration();
                             if (dur > 0) {
@@ -291,6 +293,7 @@ public class MediaPlayer extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     protected Dimension calcPreferredSize() {
         if (video == null && dataSource == null) {
             return new Dimension(240, 320);
@@ -348,6 +351,7 @@ public class MediaPlayer extends Container {
         }
         if (dataSource == null || !dataSource.equals(uri)) {
             Display.getInstance().startThread(new Runnable() {
+                @Override
                 public void run() {
                     try {
                         setDataSource(uri, null);
@@ -404,6 +408,7 @@ public class MediaPlayer extends Container {
             buttonsBar.addComponent(BorderLayout.CENTER,
                     FlowLayout.encloseCenterMiddle(progress));
             progress.addActionListener(new ActionListener() {
+                @Override
                 public void actionPerformed(ActionEvent evt) {
                     float dur = video.getDuration();
                     if (dur > 0 && progress != null) {
@@ -437,6 +442,7 @@ public class MediaPlayer extends Container {
             buttonsBar.addComponent(back);
             back.addActionListener(new ActionListener() {
 
+                @Override
                 public void actionPerformed(ActionEvent evt) {
                     if (video == null) {
                         return;
@@ -507,9 +513,11 @@ public class MediaPlayer extends Container {
             }
             Timer t = new Timer();
             t.schedule(new TimerTask() {
+                @Override
                 public void run() {
                     if (isInitialized()) {
                         Display.getInstance().callSerially(new Runnable() {
+                            @Override
                             public void run() {
                                 if (video != null && !video.isPlaying() && isInitialized()) {
                                     video.play();
@@ -526,6 +534,7 @@ public class MediaPlayer extends Container {
         }
         play.addActionListener(new ActionListener() {
 
+            @Override
             public void actionPerformed(ActionEvent evt) {
                 if (video == null) {
                     return;
@@ -554,6 +563,7 @@ public class MediaPlayer extends Container {
             }
         });
         Display.getInstance().callSerially(new Runnable() {
+            @Override
             public void run() {
                 if (video != null && video.isPlaying()) {
                     play.setUIID("MediaPlayerPause");
@@ -583,6 +593,7 @@ public class MediaPlayer extends Container {
             Button fwd = new Button();
             fwd.addActionListener(new ActionListener() {
 
+                @Override
                 public void actionPerformed(ActionEvent evt) {
                     if (video == null) {
                         return;
@@ -603,6 +614,7 @@ public class MediaPlayer extends Container {
         if (maximize && video != null && video.isVideo()) {
             Button max = new Button();
             max.addActionListener(new ActionListener() {
+                @Override
                 public void actionPerformed(ActionEvent evt) {
                     if (video == null) {
                         return;
@@ -634,6 +646,7 @@ public class MediaPlayer extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String[] getPropertyNames() {
         return new String[]{"backIcon", "forwardIcon", "pauseIcon", "playIcon", "dataSource"};
     }
@@ -641,6 +654,7 @@ public class MediaPlayer extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Class[] getPropertyTypes() {
         return new Class[]{Image.class, Image.class, Image.class, Image.class, String.class};
     }
@@ -648,20 +662,21 @@ public class MediaPlayer extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Object getPropertyValue(String name) {
-        if (name.equals("backIcon")) {
+        if ("backIcon".equals(name)) {
             return getBackIcon();
         }
-        if (name.equals("forwardIcon")) {
+        if ("forwardIcon".equals(name)) {
             return getFwdIcon();
         }
-        if (name.equals("playIcon")) {
+        if ("playIcon".equals(name)) {
             return getPlayIcon();
         }
-        if (name.equals("pauseIcon")) {
+        if ("pauseIcon".equals(name)) {
             return getPauseIcon();
         }
-        if (name.equals("dataSource")) {
+        if ("dataSource".equals(name)) {
             return getDataSource();
         }
         return super.getPropertyValue(name);
@@ -670,24 +685,25 @@ public class MediaPlayer extends Container {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String setPropertyValue(String name, Object value) {
-        if (name.equals("backIcon")) {
+        if ("backIcon".equals(name)) {
             this.backIcon = (Image) value;
             return null;
         }
-        if (name.equals("forwardIcon")) {
+        if ("forwardIcon".equals(name)) {
             this.fwdIcon = (Image) value;
             return null;
         }
-        if (name.equals("playIcon")) {
+        if ("playIcon".equals(name)) {
             this.playIcon = (Image) value;
             return null;
         }
-        if (name.equals("pauseIcon")) {
+        if ("pauseIcon".equals(name)) {
             this.pauseIcon = (Image) value;
             return null;
         }
-        if (name.equals("dataSource")) {
+        if ("dataSource".equals(name)) {
             setDataSource((String) value);
             return null;
         }

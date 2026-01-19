@@ -134,6 +134,7 @@ public class ImageViewer extends Component {
     /**
      * {@inheritDoc}
      */
+    @Override
     protected void resetFocusable() {
         setFocusable(true);
     }
@@ -141,6 +142,7 @@ public class ImageViewer extends Component {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String[] getPropertyNames() {
         return new String[]{"eagerLock", "image", "imageList", "swipePlaceholder"};
     }
@@ -148,6 +150,7 @@ public class ImageViewer extends Component {
     /**
      * {@inheritDoc}
      */
+    @Override
     protected boolean shouldBlockSideSwipe() {
         return true;
     }
@@ -155,6 +158,7 @@ public class ImageViewer extends Component {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Class[] getPropertyTypes() {
         return new Class[]{Boolean.class, Image.class,
                 com.codename1.impl.CodenameOneImplementation.getImageArrayClass(), Image.class};
@@ -163,6 +167,7 @@ public class ImageViewer extends Component {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String[] getPropertyTypeNames() {
         return new String[]{"Boolean", "Image", "Image[]", "Image"};
     }
@@ -170,17 +175,18 @@ public class ImageViewer extends Component {
     /**
      * {@inheritDoc}
      */
+    @Override
     public Object getPropertyValue(String name) {
-        if (name.equals("eagerLock")) {
+        if ("eagerLock".equals(name)) {
             if (isEagerLock()) {
                 return Boolean.TRUE;
             }
             return Boolean.FALSE;
         }
-        if (name.equals("image")) {
+        if ("image".equals(name)) {
             return getImage();
         }
-        if (name.equals("imageList")) {
+        if ("imageList".equals(name)) {
             if (getImageList() == null) {
                 return null;
             }
@@ -191,7 +197,7 @@ public class ImageViewer extends Component {
             }
             return a;
         }
-        if (name.equals("swipePlaceholder")) {
+        if ("swipePlaceholder".equals(name)) {
             return getSwipePlaceholder();
         }
         return null;
@@ -200,16 +206,17 @@ public class ImageViewer extends Component {
     /**
      * {@inheritDoc}
      */
+    @Override
     public String setPropertyValue(String name, Object value) {
-        if (name.equals("eagerLock")) {
+        if ("eagerLock".equals(name)) {
             setEagerLock(value != null && ((Boolean) value).booleanValue());
             return null;
         }
-        if (name.equals("image")) {
+        if ("image".equals(name)) {
             setImage((Image) value);
             return null;
         }
-        if (name.equals("imageList")) {
+        if ("imageList".equals(name)) {
             if (value == null) {
                 setImageList(null);
             } else {
@@ -217,7 +224,7 @@ public class ImageViewer extends Component {
             }
             return null;
         }
-        if (name.equals("swipePlaceholder")) {
+        if ("swipePlaceholder".equals(name)) {
             setSwipePlaceholder((Image) value);
             return null;
         }
@@ -834,6 +841,7 @@ public class ImageViewer extends Component {
             model.addSelectionListener((SelectionListener) listListener);
         } else {
             class Listener implements SelectionListener, DataChangedListener {
+                @Override
                 public void selectionChanged(int oldSelected, int newSelected) {
                     if (selectLock) {
                         return;
@@ -843,6 +851,7 @@ public class ImageViewer extends Component {
                     }
                 }
 
+                @Override
                 public void dataChanged(int type, int index) {
                     if (swipeableImages.getSize() > 0 && swipeableImages.getSelectedIndex() > -1 && swipeableImages.getSelectedIndex() < swipeableImages.getSize()) {
                         setImage(swipeableImages.getItemAt(swipeableImages.getSelectedIndex()));
@@ -1171,6 +1180,7 @@ public class ImageViewer extends Component {
             return false;
         }
 
+        @Override
         public void paint(Graphics g) {
         }
 

@@ -222,7 +222,7 @@ public class ZStream {
     // Flush as much pending output as possible. All deflate() output goes
     // through this function so some applications may wish to modify it
     // to avoid allocating a large strm->next_out buffer and copying into it.
-    // (See also read_buf()).
+    // (See also readBuf()).
     void flushPending() {
         int len = dstate.pending;
 
@@ -247,7 +247,7 @@ public class ZStream {
     // this function so some applications may wish to modify it to avoid
     // allocating a large strm->next_in buffer and copying from it.
     // (See also flush_pending()).
-    int read_buf(byte[] buf, int start, int size) {
+    int readBuf(byte[] buf, int start, int size) {
         int len = availIn;
 
         if (len > size) len = size;
@@ -313,40 +313,40 @@ public class ZStream {
         return nextIn;
     }
 
-    public void setNextIn(byte[] next_in) {
-        this.nextIn = next_in;
+    public void setNextIn(byte[] nextIn) {
+        this.nextIn = nextIn;
     }
 
     public int getNextInIndex() {
         return nextInIndex;
     }
 
-    public void setNextInIndex(int next_in_index) {
-        this.nextInIndex = next_in_index;
+    public void setNextInIndex(int nextInIndex) {
+        this.nextInIndex = nextInIndex;
     }
 
     public int getAvailIn() {
         return availIn;
     }
 
-    public void setAvailIn(int avail_in) {
-        this.availIn = avail_in;
+    public void setAvailIn(int availIn) {
+        this.availIn = availIn;
     }
 
     public byte[] getNextOut() {
         return nextOut;
     }
 
-    public void setNextOut(byte[] next_out) {
-        this.nextOut = next_out;
+    public void setNextOut(byte[] nextOut) {
+        this.nextOut = nextOut;
     }
 
     public int getNextOutIndex() {
         return nextOutIndex;
     }
 
-    public void setNextOutIndex(int next_out_index) {
-        this.nextOutIndex = next_out_index;
+    public void setNextOutIndex(int nextOutIndex) {
+        this.nextOutIndex = nextOutIndex;
     }
 
     public int getAvailOut() {
@@ -354,8 +354,8 @@ public class ZStream {
 
     }
 
-    public void setAvailOut(int avail_out) {
-        this.availOut = avail_out;
+    public void setAvailOut(int availOut) {
+        this.availOut = availOut;
     }
 
     public long getTotalOut() {

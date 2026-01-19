@@ -399,7 +399,7 @@ final class Inflate {
                             return e.r;
                         }
 
-                        if (z.msg != null && z.msg.equals("incorrect data check")) {
+                        if (z.msg != null && "incorrect data check".equals(z.msg)) {
                             this.mode = BAD;
                             this.marker = 5;       // can't try inflateSync
                             break;
@@ -412,7 +412,7 @@ final class Inflate {
                         }
                         z.msg = null;
                     } else {
-                        if (z.msg != null && z.msg.equals("incorrect data check")) {
+                        if (z.msg != null && "incorrect data check".equals(z.msg)) {
                             this.mode = BAD;
                             this.marker = 5;       // can't try inflateSync
                             break;
@@ -581,10 +581,10 @@ final class Inflate {
         int length = dictLength;
 
         if (this.mode == DICT0) {
-            long adler_need = z.adler.getValue();
+            long adlerNeed = z.adler.getValue();
             z.adler.reset();
             z.adler.update(dictionary, 0, dictLength);
-            if (z.adler.getValue() != adler_need) {
+            if (z.adler.getValue() != adlerNeed) {
                 return Z_DATA_ERROR;
             }
         }
@@ -596,7 +596,7 @@ final class Inflate {
             index = dictLength - length;
         }
         if (this.blocks != null) {
-            this.blocks.set_dictionary(dictionary, index, length);
+            this.blocks.setDictionary(dictionary, index, length);
         }
         this.mode = BLOCKS;
         return Z_OK;
@@ -660,7 +660,7 @@ final class Inflate {
     int inflateSyncPoint() {
         if (z == null || this.blocks == null)
             return Z_STREAM_ERROR;
-        return this.blocks.sync_point();
+        return this.blocks.syncPoint();
     }
 
     private int readBytes(int n, int r, int f) throws Return {

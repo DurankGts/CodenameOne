@@ -200,14 +200,14 @@ public class JavascriptContext {
      * @param id The ID of the javascript object.
      */
     void release(int id) {
-        String ID_KEY = JSObject.ID_KEY;
-        String PROP_REFCOUNT = JSObject.PROP_REFCOUNT;
+        String idKey = JSObject.ID_KEY;
+        String propRefcount = JSObject.PROP_REFCOUNT;
         String lt = jsLookupTable;
         String p = lt + "[" + id + "]";
         String js = "var id = " + id + "; " +
-                "if (typeof(id) != 'undefined' && typeof(" + lt + "[id]) != 'undefined' && " + lt + "[id]." + ID_KEY + "==id){" +
-                p + "." + PROP_REFCOUNT + "--;" +
-                "if (" + p + "." + PROP_REFCOUNT + "<=0){" +
+                "if (typeof(id) != 'undefined' && typeof(" + lt + "[id]) != 'undefined' && " + lt + "[id]." + idKey + "==id){" +
+                p + "." + propRefcount + "--;" +
+                "if (" + p + "." + propRefcount + "<=0){" +
                 "delete " + lt + "[id];" +
                 "}" +
                 "}";
@@ -403,6 +403,7 @@ public class JavascriptContext {
         }
         getWindow().set(callbackMethod, new JSFunction() {
 
+            @Override
             public void apply(JSObject self, Object[] args) {
                 callback.onSucess(args[0]);
                 getWindow().set(callbackMethod, null, true);
@@ -576,6 +577,7 @@ public class JavascriptContext {
      */
     private void dispatchCallback(final String request) {
         Runnable r = new Runnable() {
+            @Override
             public void run() {
                 String command = request.substring(request.indexOf("/!cn1command/") + "/!cn1command/".length());
                 // Get the callback id
@@ -983,6 +985,7 @@ public class JavascriptContext {
      */
     private class NavigationCallback implements BrowserNavigationCallback {
 
+        @Override
         public boolean shouldNavigate(String url) {
             //System.out.println("In shouldNavigate "+url);
             if (!url.startsWith("javascript:") && url.indexOf("/!cn1command/") != -1) {
@@ -1017,6 +1020,7 @@ public class JavascriptContext {
      */
     private class ScriptMessageListener implements ActionListener<JavascriptEvent> {
 
+        @Override
         public void actionPerformed(JavascriptEvent evt) {
             JavascriptEvent jevt = (JavascriptEvent) evt;
             JSObject source = jevt.getSelf();

@@ -48,6 +48,7 @@ public class GZConnectionRequest extends ConnectionRequest {
     /**
      * {@inheritDoc}
      */
+    @Override
     public boolean equals(Object o) {
         if (this == o) {
             return true;
@@ -71,6 +72,7 @@ public class GZConnectionRequest extends ConnectionRequest {
     /**
      * {@inheritDoc}
      */
+    @Override
     public int hashCode() {
         int result = super.hashCode();
         result = 31 * result + (isGzipped ? 1 : 0);
@@ -80,19 +82,21 @@ public class GZConnectionRequest extends ConnectionRequest {
     /**
      * {@inheritDoc}
      */
+    @Override
     protected void readHeaders(Object connection) throws IOException {
         super.readHeaders(connection);
 
         // ios does gzip seamlessly so this class will just break
-        if (!Display.getInstance().getProperty("os.gzip", "false").equals("true")) {
+        if (!"true".equals(Display.getInstance().getProperty("os.gzip", "false"))) {
             String c = getHeader(connection, "Content-Encoding");
-            isGzipped = c != null && c.equalsIgnoreCase("gzip");
+            isGzipped = c != null && "gzip".equalsIgnoreCase(c);
         }
     }
 
     /**
      * Overridden to convert the input stream you should now override readUnzipedResponse()
      */
+    @Override
     protected final void readResponse(InputStream input) throws IOException {
         if (isGzipped) {
             readUnzipedResponse(new GZIPInputStream(input));
