@@ -25,11 +25,9 @@ package com.codename1.ui;
 
 import java.util.ArrayList;
 
-/**
- * Class used by callSeriallyAndWait and invokeAndBlock and form to save code size
- *
- * @author Shai Almog
- */
+/// Class used by callSeriallyAndWait and invokeAndBlock and form to save code size
+///
+/// @author Shai Almog
 class RunnableWrapper implements Runnable {
     private static final Object THREADPOOL_LOCK = new Object();
     private static final ArrayList<Runnable> threadPool = new ArrayList<Runnable>();
@@ -69,6 +67,10 @@ class RunnableWrapper implements Runnable {
         }
     }
 
+    static void setMaxThreadCount(int maxThreadCount) {
+        RunnableWrapper.maxThreadCount = maxThreadCount;
+    }
+
     public RuntimeException getErr() {
         return err;
     }
@@ -82,6 +84,7 @@ class RunnableWrapper implements Runnable {
     }
 
     @Override
+    @SuppressWarnings("PMD.SwitchStmtsShouldHaveDefault")
     public void run() {
         if (parentForm != null) {
             // set current form uses this portion to make sure all set current operations
@@ -95,7 +98,7 @@ class RunnableWrapper implements Runnable {
             while (!dlg.isDisposed()) {
                 try {
                     synchronized (Display.lock) {
-                        if(!dlg.isDisposed()) {
+                        if (!dlg.isDisposed()) {
                             Display.lock.wait(40);
                         }
                     }
@@ -123,7 +126,7 @@ class RunnableWrapper implements Runnable {
                     while (!done) {
                         synchronized (Display.lock) {
                             try {
-                                if(!done) {
+                                if (!done) {
                                     Display.lock.wait(10);
                                 }
                             } catch (InterruptedException ex) {
@@ -139,7 +142,7 @@ class RunnableWrapper implements Runnable {
                     while (!Display.getInstance().codenameOneExited) {
                         Runnable r = null;
                         synchronized (THREADPOOL_LOCK) {
-                            if (threadPool.size() > 0) {
+                            if (!threadPool.isEmpty()) {
                                 r = threadPool.get(0);
                                 threadPool.remove(0);
                             } else {
@@ -159,9 +162,5 @@ class RunnableWrapper implements Runnable {
             }
         }
         done = true;
-    }
-
-    static void setMaxThreadCount(int maxThreadCount) {
-        RunnableWrapper.maxThreadCount = maxThreadCount;
     }
 }

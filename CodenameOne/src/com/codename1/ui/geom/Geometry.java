@@ -31,48 +31,46 @@ import com.codename1.util.MathUtil;
 import java.util.Arrays;
 import java.util.List;
 
-/**
- * A utility class to assist with geometry elements like bezier curves
- *
- * @author Steve Hannah
- */
+/// A utility class to assist with geometry elements like bezier curves
+///
+/// @author Steve Hannah
 class Geometry {
 
     private static int factorial(int n) {
         if (n < 0) {
             throw new IllegalArgumentException("factorial does not support negative numbers");
         }
-        if (n == 0) return 1;
+        if (n == 0) {
+            return 1;
+        }
         return n * factorial(n - 1);
     }
 
-    /**
-     * Encapsulates a BezierCurve.  Some functionality supports curves of arbitrary degree,
-     * but the most useful stuff only supports quadratic and cubic curves.
-     * <p>
-     * The main point of this class is to provide the ability to segment bezier curves
-     * into smaller components so that {@link GeneralPath#intersection(com.codename1.ui.geom.Rectangle) }
-     * will work for paths that contain curves.
-     */
+    /// Encapsulates a BezierCurve.  Some functionality supports curves of arbitrary degree,
+    /// but the most useful stuff only supports quadratic and cubic curves.
+    ///
+    /// The main point of this class is to provide the ability to segment bezier curves
+    /// into smaller components so that `GeneralPath#intersection(com.codename1.ui.geom.Rectangle)`
+    /// will work for paths that contain curves.
     static class BezierCurve {
 
-        /**
-         * The x, and y points used for the bezier curves.  {@literal (x[0], y[0])} is the starting point
-         * , {@literal (x[x.length-1], y[y.length-1])} is the end point, and all indices in between
-         * are the control points.  Cubic curves will have 4 points, quadratic curves, 3 points, lines
-         * 2 points.
-         */
-        final double[] x, y;
+        /// The x, and y points used for the bezier curves.  (x[0], y[0]) is the starting point
+        /// , (x[x.length-1], y[y.length-1]) is the end point, and all indices in between
+        /// are the control points.  Cubic curves will have 4 points, quadratic curves, 3 points, lines
+        /// 2 points.
+        final double[] x;
+        final double[] y;
 
-        private Point2D startPoint, endPoint;
+        private Point2D startPoint;
+        private Point2D endPoint;
         private Rectangle2D boundingRect;
 
 
-        /**
-         * Creates a bezier curve with the provided points.  Points should be entered as {@literal (x1, y1, x2, y2, ..., xn, yn}.
-         *
-         * @param pts The points.
-         */
+        /// Creates a bezier curve with the provided points.  Points should be entered as (x1, y1, x2, y2, ..., xn, yn.
+        ///
+        /// #### Parameters
+        ///
+        /// - `pts`: The points.
         public BezierCurve(double... pts) {
             int len = pts.length;
             if (len % 2 != 0) {
@@ -88,11 +86,11 @@ class Geometry {
 
         }
 
-        /**
-         * Creates a new bezier curve as a copy of another.
-         *
-         * @param toCopy The curve to copy.
-         */
+        /// Creates a new bezier curve as a copy of another.
+        ///
+        /// #### Parameters
+        ///
+        /// - `toCopy`: The curve to copy.
         public BezierCurve(BezierCurve toCopy) {
             x = new double[toCopy.x.length];
             y = new double[toCopy.y.length];
@@ -145,16 +143,19 @@ class Geometry {
             }
         }
 
-        /**
-         * Checks an array to see if it already contains a value within the desired epsilon range.
-         *
-         * @param needle     The value to search for
-         * @param haystack   The array to check
-         * @param epsilon    The range considered to be a match.
-         * @param startIndex Start index to check
-         * @param endIndex   End index to check
-         * @return
-         */
+        /// Checks an array to see if it already contains a value within the desired epsilon range.
+        ///
+        /// #### Parameters
+        ///
+        /// - `needle`: The value to search for
+        ///
+        /// - `haystack`: The array to check
+        ///
+        /// - `epsilon`: The range considered to be a match.
+        ///
+        /// - `startIndex`: Start index to check
+        ///
+        /// - `endIndex`: End index to check
         private static boolean contains(double needle, double[] haystack, double epsilon, int startIndex, int endIndex) {
             for (int i = startIndex; i < endIndex; i++) {
                 if (Math.abs(needle - haystack[i]) < epsilon) {
@@ -164,18 +165,26 @@ class Geometry {
             return false;
         }
 
-        /**
-         * Copies range from one array to another.  Only unique values are copied (epsilon arg is used for equality range).
-         * Returns the number of items that were copied.
-         *
-         * @param src      Source array
-         * @param srcStart Start index in source array to copy from
-         * @param dst      Destination array
-         * @param dstStart Start index in destination array to copy to.
-         * @param len      Number of elements to copy (max).
-         * @param epsilon  Range considered for equality.
-         * @return The number of elements that were actually copied.
-         */
+        /// Copies range from one array to another.  Only unique values are copied (epsilon arg is used for equality range).
+        /// Returns the number of items that were copied.
+        ///
+        /// #### Parameters
+        ///
+        /// - `src`: Source array
+        ///
+        /// - `srcStart`: Start index in source array to copy from
+        ///
+        /// - `dst`: Destination array
+        ///
+        /// - `dstStart`: Start index in destination array to copy to.
+        ///
+        /// - `len`: Number of elements to copy (max).
+        ///
+        /// - `epsilon`: Range considered for equality.
+        ///
+        /// #### Returns
+        ///
+        /// The number of elements that were actually copied.
         private static int arraycopy(double[] src, int srcStart, double[] dst, int dstStart, int len, double epsilon) {
             int numCopied = 0;
             for (int i = 0; i < len; i++) {
@@ -192,11 +201,7 @@ class Geometry {
             return "Curve{x=" + Arrays.toString(x) + ", y=" + Arrays.toString(y) + "}";
         }
 
-        /**
-         * Gets the end point of the curve.
-         *
-         * @return
-         */
+        /// Gets the end point of the curve.
         public Point2D getEndPoint() {
             if (endPoint == null) {
                 endPoint = new Point2D(x[n()], y[n()]);
@@ -204,11 +209,7 @@ class Geometry {
             return endPoint;
         }
 
-        /**
-         * Gets the start point of the curve.
-         *
-         * @return
-         */
+        /// Gets the start point of the curve.
         public Point2D getStartPoint() {
             if (startPoint == null) {
                 startPoint = new Point2D(x[0], y[0]);
@@ -220,24 +221,27 @@ class Geometry {
             return x.length - 1;
         }
 
-        /**
-         * ith polynomial coefficient for x(t) (i.e. the x component of B(t).  See https://en.wikipedia.org/wiki/B%C3%A9zier_curve#Polynomial_form
-         *
-         * @param j The power of t for which this is a coefficient in sum(t^j * C[j], j=0..n
-         * @return The coefficient
-         */
+        /// ith polynomial coefficient for x(t) (i.e. the x component of B(t).  See https://en.wikipedia.org/wiki/B%C3%A9zier_curve#Polynomial_form
+        ///
+        /// #### Parameters
+        ///
+        /// - `j`: The power of t for which this is a coefficient in sum(t^j * C[j], j=0..n
+        ///
+        /// #### Returns
+        ///
+        /// The coefficient
         public double cx(int j) {
             return (double) factorial(n()) / factorial(n() - j) * sumFactorX(j, j);
         }
 
-        /**
-         * Calculates the "summation" factor in {@link #cx(int) }.  See https://en.wikipedia.org/wiki/B%C3%A9zier_curve#Polynomial_form
-         * sum(-1^(i+j)*x[i]/(i!*(j-i)!), i=0..j
-         *
-         * @param j The coefficient that this factor belongs to.
-         * @param i
-         * @return
-         */
+        /// Calculates the "summation" factor in `#cx(int)`.  See https://en.wikipedia.org/wiki/B%C3%A9zier_curve#Polynomial_form
+        /// sum(-1^(i+j)*x[i]/(i!*(j-i)!), i=0..j
+        ///
+        /// #### Parameters
+        ///
+        /// - `j`: The coefficient that this factor belongs to.
+        ///
+        /// - `i`
         private double sumFactorX(int j, int i) {
             if (i == 0) {
                 return MathUtil.pow(-1, j) * x[0] / factorial(j);
@@ -246,23 +250,22 @@ class Geometry {
 
         }
 
-        /**
-         * The y component of the curve function.  See {@link #cx(int) }.
-         *
-         * @param j
-         * @return
-         */
+        /// The y component of the curve function.  See `#cx(int)`.
+        ///
+        /// #### Parameters
+        ///
+        /// - `j`
         public double cy(int j) {
             return (double) factorial(n()) / factorial(n() - j) * sumFactorY(j, j);
         }
 
-        /**
-         * The y counterpart of {@link #sumFactorY(int, int) }
-         *
-         * @param j
-         * @param i
-         * @return
-         */
+        /// The y counterpart of `int)`
+        ///
+        /// #### Parameters
+        ///
+        /// - `j`
+        ///
+        /// - `i`
         private double sumFactorY(int j, int i) {
             if (i == 0) {
                 return MathUtil.pow(-1, j) * y[0] / factorial(j);
@@ -271,19 +274,20 @@ class Geometry {
 
         }
 
-        /**
-         * Gets x coord for t value.
-         *
-         * @param t The t value in the curve.  t must be in [0 .. 1]
-         * @return The x value corresponding to the given t.
-         */
+        /// Gets x coord for t value.
+        ///
+        /// #### Parameters
+        ///
+        /// - `t`: The t value in the curve.  t must be in [0 .. 1]
+        ///
+        /// #### Returns
+        ///
+        /// The x value corresponding to the given t.
         public double x(double t) {
             return termX(t, n());
         }
 
-        /**
-         * Calculates up to the jth term of the x func.   See https://en.wikipedia.org/wiki/B%C3%A9zier_curve#Polynomial_form
-         */
+        /// Calculates up to the jth term of the x func.   See https://en.wikipedia.org/wiki/B%C3%A9zier_curve#Polynomial_form
         private double termX(double t, int j) {
             if (j == 0) {
                 return cx(j);
@@ -291,11 +295,7 @@ class Geometry {
             return cx(j) * MathUtil.pow(t, j) + termX(t, j - 1);
         }
 
-        /**
-         * Gets derivative's coefficients in increasing order of degree in t.
-         *
-         * @return
-         */
+        /// Gets derivative's coefficients in increasing order of degree in t.
         public double[] getDerivativeCoefficientsX() {
             switch (n()) {
                 case 1:
@@ -309,11 +309,7 @@ class Geometry {
             }
         }
 
-        /**
-         * Gets derivative's coefficients in increasing order of degree in t.
-         *
-         * @return
-         */
+        /// Gets derivative's coefficients in increasing order of degree in t.
         public double[] getDerivativeCoefficientsY() {
             switch (n()) {
                 case 1:
@@ -327,19 +323,16 @@ class Geometry {
             }
         }
 
-        /**
-         * Gets y coord for t value
-         *
-         * @param t The t value on the bezier function to retrieve y at.  T must be in [0 .. 1].
-         * @return
-         */
+        /// Gets y coord for t value
+        ///
+        /// #### Parameters
+        ///
+        /// - `t`: The t value on the bezier function to retrieve y at.  T must be in [0 .. 1].
         public double y(double t) {
             return termY(t, n());
         }
 
-        /**
-         * Calculates up to the jth term of the x func.   See https://en.wikipedia.org/wiki/B%C3%A9zier_curve#Polynomial_form
-         */
+        /// Calculates up to the jth term of the x func.   See https://en.wikipedia.org/wiki/B%C3%A9zier_curve#Polynomial_form
         private double termY(double t, int j) {
             if (j == 0) {
                 return cy(j);
@@ -347,13 +340,17 @@ class Geometry {
             return cy(j) * MathUtil.pow(t, j) + termY(t, j - 1);
         }
 
-        /**
-         * Finds all t values that intersect the give x vertical line.
-         *
-         * @param x
-         * @param res Output array.  For quadratics, this should be length at least 2.  For cubics, length must be at least 3.
-         * @return The number of x values found.
-         */
+        /// Finds all t values that intersect the give x vertical line.
+        ///
+        /// #### Parameters
+        ///
+        /// - `x`
+        ///
+        /// - `res`: Output array.  For quadratics, this should be length at least 2.  For cubics, length must be at least 3.
+        ///
+        /// #### Returns
+        ///
+        /// The number of x values found.
         private int findTValuesForX(double x, double[] res) {
 
             switch (n()) {
@@ -369,13 +366,17 @@ class Geometry {
             }
         }
 
-        /**
-         * Finds all t values that intersect the give y horizontal line.
-         *
-         * @param x
-         * @param res Output array.  For quadratics, this should be length at least 2.  For cubics, length must be at least 3.
-         * @return The number of x values found.
-         */
+        /// Finds all t values that intersect the give y horizontal line.
+        ///
+        /// #### Parameters
+        ///
+        /// - `x`
+        ///
+        /// - `res`: Output array.  For quadratics, this should be length at least 2.  For cubics, length must be at least 3.
+        ///
+        /// #### Returns
+        ///
+        /// The number of x values found.
         private int findTValuesForY(double y, double[] res) {
 
             switch (n()) {
@@ -391,11 +392,7 @@ class Geometry {
             }
         }
 
-        /**
-         * Returns bezier curve running in the opposite direction.
-         *
-         * @return
-         */
+        /// Returns bezier curve running in the opposite direction.
         public BezierCurve reverse() {
             int len = x.length;
             double[] params = new double[len * 2];
@@ -409,44 +406,55 @@ class Geometry {
 
         }
 
-        /**
-         * Segements this curve into two shorter curves.  Split at point t.
-         *
-         * @param t   t value where split should occur.  0 < t < 1
-         * @param out List where the two segemeted curves will be added.
-         */
+        /// Segements this curve into two shorter curves.  Split at point t.
+        ///
+        /// #### Parameters
+        ///
+        /// - `t`: t value where split should occur.  0 < t < 1
+        ///
+        /// - `out`: List where the two segemeted curves will be added.
         public void segment(double t, List<BezierCurve> out) {
             out.add(segment(t));
             out.add(reverse().segment(1 - t).reverse());
         }
 
-        /**
-         * Adds bezier curve to a path.
-         *
-         * @param p    The path to add to.
-         * @param join If false, it will first add a moveTo() command to the path.
-         */
+        /// Adds bezier curve to a path.
+        ///
+        /// #### Parameters
+        ///
+        /// - `p`: The path to add to.
+        ///
+        /// - `join`: If false, it will first add a moveTo() command to the path.
         public void addToPath(GeneralPath p, boolean join) {
             if (n() == 2) {
-                if (!join) p.moveTo(x[0], y[0]);
+                if (!join) {
+                    p.moveTo(x[0], y[0]);
+                }
                 p.quadTo(x[1], y[1], x[2], y[2]);
             } else if (n() == 3) {
-                if (!join) p.moveTo(x[0], y[0]);
+                if (!join) {
+                    p.moveTo(x[0], y[0]);
+                }
                 p.curveTo(x[1], y[1], x[2], y[2], x[3], y[3]);
             } else if (n() == 1) {
-                if (join) p.moveTo(x[0], y[0]);
+                if (join) {
+                    p.moveTo(x[0], y[0]);
+                }
                 p.lineTo(x[1], y[1]);
             }
         }
 
-        /**
-         * Strokes the bezier curve on a graphics context.
-         *
-         * @param g
-         * @param stroke
-         * @param translateX
-         * @param translateY
-         */
+        /// Strokes the bezier curve on a graphics context.
+        ///
+        /// #### Parameters
+        ///
+        /// - `g`
+        ///
+        /// - `stroke`
+        ///
+        /// - `translateX`
+        ///
+        /// - `translateY`
         public void stroke(Graphics g, Stroke stroke, int translateX, int translateY) {
             if (stroke == null) {
                 stroke = new Stroke(1, Stroke.CAP_BUTT, Stroke.JOIN_MITER, 1f);
@@ -518,29 +526,38 @@ class Geometry {
             return boundingRect;
         }
 
-        /**
-         * Segments the curve into 2 smaller component curves split at the given t value.  t in [0 .. 1].
-         * Returns only the first segment.  You can use reverse().segment(1-t).reverse() to get the other segment.
-         *
-         * @param t The value of t to segment on.
-         * @return The first segment.
-         */
+        /// Segments the curve into 2 smaller component curves split at the given t value.  t in [0 .. 1].
+        /// Returns only the first segment.  You can use reverse().segment(1-t).reverse() to get the other segment.
+        ///
+        /// #### Parameters
+        ///
+        /// - `t`: The value of t to segment on.
+        ///
+        /// #### Returns
+        ///
+        /// The first segment.
         public BezierCurve segment(double t) {
             return segment(0, t);
         }
 
-        /**
-         * Finds all of the t values that cross the given x vertical between y=minY and y=maxY.  The
-         * t values are added to the {@literal out} array, and the number of matches is returned.
-         * On quadratic curves, there should be a maximum of 2 results.  On cubic curves, there will be
-         * a maximum 3 results.
-         *
-         * @param x    The x value for which we wish to find t.
-         * @param minY Minimum y value we are interested in.
-         * @param maxY Maximum y value we are interested in.
-         * @param out  Out array.  For quadratics, this needs to have length at least 2.  For cubics, at least 3.
-         * @return The number of results found.
-         */
+        /// Finds all of the t values that cross the given x vertical between y=minY and y=maxY.  The
+        /// t values are added to the out array, and the number of matches is returned.
+        /// On quadratic curves, there should be a maximum of 2 results.  On cubic curves, there will be
+        /// a maximum 3 results.
+        ///
+        /// #### Parameters
+        ///
+        /// - `x`: The x value for which we wish to find t.
+        ///
+        /// - `minY`: Minimum y value we are interested in.
+        ///
+        /// - `maxY`: Maximum y value we are interested in.
+        ///
+        /// - `out`: Out array.  For quadratics, this needs to have length at least 2.  For cubics, at least 3.
+        ///
+        /// #### Returns
+        ///
+        /// The number of results found.
         public int findTValuesForX(double x, double minY, double maxY, double[] out) {
 
             int numMatches = findTValuesForX(x, out);
@@ -558,18 +575,24 @@ class Geometry {
             return numFiltered;
         }
 
-        /**
-         * Finds all of the t values that cross the given y horizontal between x=minX and x=maxX.  The
-         * t values are added to the {@literal out} array, and the number of matches is returned.
-         * On quadratic curves, there should be a maximum of 2 results.  On cubic curves, there will be
-         * a maximum 3 results.
-         *
-         * @param y    The x value for which we wish to find t.
-         * @param minX Minimum x value we are interested in.
-         * @param maxX Maximum x value we are interested in.
-         * @param out  Out array.  For quadratics, this needs to have length at least 2.  For cubics, at least 3.
-         * @return The number of results found.
-         */
+        /// Finds all of the t values that cross the given y horizontal between x=minX and x=maxX.  The
+        /// t values are added to the out array, and the number of matches is returned.
+        /// On quadratic curves, there should be a maximum of 2 results.  On cubic curves, there will be
+        /// a maximum 3 results.
+        ///
+        /// #### Parameters
+        ///
+        /// - `y`: The x value for which we wish to find t.
+        ///
+        /// - `minX`: Minimum x value we are interested in.
+        ///
+        /// - `maxX`: Maximum x value we are interested in.
+        ///
+        /// - `out`: Out array.  For quadratics, this needs to have length at least 2.  For cubics, at least 3.
+        ///
+        /// #### Returns
+        ///
+        /// The number of results found.
         public int findTValuesForY(double y, double minX, double maxX, double[] out) {
 
             int numMatches = findTValuesForY(y, out);
@@ -587,16 +610,22 @@ class Geometry {
             return numFiltered;
         }
 
-        /**
-         * Compares two bezier curves to see if they are equal (within epsilon margin of error).
-         *
-         * @param c       The bezier curve to compare to
-         * @param epsilon Curves are equal if all x and y values are within epsilon of the corresponding x/y value
-         *                in the other curve.  epsilon must be greater than 0
-         * @return True if curves are equal within epsilon margin of error.
-         */
+        /// Compares two bezier curves to see if they are equal (within epsilon margin of error).
+        ///
+        /// #### Parameters
+        ///
+        /// - `c`: The bezier curve to compare to
+        ///
+        /// - `epsilon`: @param epsilon Curves are equal if all x and y values are within epsilon of the corresponding x/y value
+        /// in the other curve.  epsilon must be greater than 0
+        ///
+        /// #### Returns
+        ///
+        /// True if curves are equal within epsilon margin of error.
         public boolean equals(BezierCurve c, double epsilon) {
-            if (c.n() != n()) return false;
+            if (c.n() != n()) {
+                return false;
+            }
             int len = x.length;
             for (int i = 0; i < len; i++) {
                 if (Math.abs(x[i] - c.x[i]) > epsilon) {
@@ -609,12 +638,13 @@ class Geometry {
             return true;
         }
 
-        /**
-         * Segments the bezier curve on all intersection points of the provided rectangle.
-         *
-         * @param rect The rectangle on which to segment the curve.
-         * @param out  list where the segmented curves are appended.
-         */
+        /// Segments the bezier curve on all intersection points of the provided rectangle.
+        ///
+        /// #### Parameters
+        ///
+        /// - `rect`: The rectangle on which to segment the curve.
+        ///
+        /// - `out`: list where the segmented curves are appended.
         public void segment(Rectangle2D rect, List<BezierCurve> out) {
             //System.out.println("segment("+rect+") on  "+this);
             int numIntersections = (n() == 2) ? ShapeUtil.intersectQuad(x[0], y[0], x[1], y[1], x[2], y[2], rect.getX(), rect.getY(), rect.getX() + rect.getWidth(), rect.getY() + rect.getHeight()) :
@@ -639,22 +669,23 @@ class Geometry {
             double epsilon = 0.01;
             // left edge
 
-            if ((numMatches = findTValuesForX(rect.getX(), rect.getY(), rect.getY() + rect.getHeight(), res)) > 0) {
-                //System.out.println("left: "+numMatches);
+            numMatches = findTValuesForX(rect.getX(), rect.getY(), rect.getY() + rect.getHeight(), res);
+            if (numMatches > 0) {
                 nextTvalIndex += arraycopy(res, 0, tvals, nextTvalIndex, numMatches, epsilon);
             }
             // right edge
-            if ((numMatches = findTValuesForX(rect.getX() + rect.getWidth(), rect.getY(), rect.getY() + rect.getHeight(), res)) > 0) {
-                //System.out.println("right: "+numMatches);
+            numMatches = findTValuesForX(rect.getX() + rect.getWidth(), rect.getY(), rect.getY() + rect.getHeight(), res);
+            if (numMatches > 0) {
                 nextTvalIndex += arraycopy(res, 0, tvals, nextTvalIndex, numMatches, epsilon);
             }
             // top edge
-            if ((numMatches = findTValuesForY(rect.getY(), rect.getX(), rect.getX() + rect.getWidth(), res)) > 0) {
-                //System.out.println("Top: "+numMatches);
+            numMatches = findTValuesForY(rect.getY(), rect.getX(), rect.getX() + rect.getWidth(), res);
+            if (numMatches > 0) {
                 nextTvalIndex += arraycopy(res, 0, tvals, nextTvalIndex, numMatches, epsilon);
             }
             // bottom edge
-            if ((numMatches = findTValuesForY(rect.getY() + rect.getHeight(), rect.getX(), rect.getX() + rect.getWidth(), res)) > 0) {
+            numMatches = findTValuesForY(rect.getY() + rect.getHeight(), rect.getX(), rect.getX() + rect.getWidth(), res);
+            if (numMatches > 0) {
                 //System.out.println("Bottom: "+numMatches+" "+Arrays.toString(res));
                 nextTvalIndex += arraycopy(res, 0, tvals, nextTvalIndex, numMatches, epsilon);
             }
@@ -695,13 +726,17 @@ class Geometry {
 
         }
 
-        /**
-         * Creates a new bezier curve on 0 to t1.
-         *
-         * @param t0 Start t
-         * @param t1 End t
-         * @return A new bezier curve on 0 to t1.
-         */
+        /// Creates a new bezier curve on 0 to t1.
+        ///
+        /// #### Parameters
+        ///
+        /// - `t0`: Start t
+        ///
+        /// - `t1`: End t
+        ///
+        /// #### Returns
+        ///
+        /// A new bezier curve on 0 to t1.
         private BezierCurve segment(double t0, double t1) {
             if (t1 <= 0 || t1 >= 1) {
                 throw new IllegalArgumentException("t must be between 0 and 1 but found " + t1);
@@ -714,12 +749,10 @@ class Geometry {
                 double x3 = (x[1] - x[0]) * t1 + x[0];
                 double y3 = (y[1] - y[0]) * t1 + y[0];
 
-                BezierCurve b1 = new BezierCurve(x0, y0,
+                return new BezierCurve(x0, y0,
                         x3, y3,
                         xt, yt
                 );
-
-                return b1;
 
             } else if (n() == 3) {
                 if (t0 != 0) {

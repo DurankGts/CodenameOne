@@ -30,43 +30,46 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-/**
- * Class implementing the socket API
- *
- * @author Shai Almog
- */
+/// Class implementing the socket API
+///
+/// @author Shai Almog
 public final class Socket {
     private Socket() {
     }
 
-    /**
-     * Returns true if sockets are supported in this port, false otherwise
-     *
-     * @return true if sockets are supported in this port, false otherwise
-     */
+    /// Returns true if sockets are supported in this port, false otherwise
+    ///
+    /// #### Returns
+    ///
+    /// true if sockets are supported in this port, false otherwise
     public static boolean isSupported() {
         return Util.getImplementation().isSocketAvailable();
     }
 
-    /**
-     * Returns true if server sockets are supported in this port, if this method returns
-     * false invocations of listen will always fail
-     *
-     * @return true if server sockets are supported in this port, false otherwise
-     * @deprecated server sockets are only supported on Android and Desktop and as such
-     * we recommend against using them
-     */
+    /// Returns true if server sockets are supported in this port, if this method returns
+    /// false invocations of listen will always fail
+    ///
+    /// #### Returns
+    ///
+    /// true if server sockets are supported in this port, false otherwise
+    ///
+    /// #### Deprecated
+    ///
+    /// @deprecated server sockets are only supported on Android and Desktop and as such
+    /// we recommend against using them
     public static boolean isServerSocketSupported() {
         return Util.getImplementation().isServerSocketAvailable();
     }
 
-    /**
-     * Connect to a remote host
-     *
-     * @param host the host
-     * @param port the connection port
-     * @param sc   callback for when the connection is established or fails
-     */
+    /// Connect to a remote host
+    ///
+    /// #### Parameters
+    ///
+    /// - `host`: the host
+    ///
+    /// - `port`: the connection port
+    ///
+    /// - `sc`: callback for when the connection is established or fails
     public static void connect(final String host, final int port, final SocketConnection sc) {
         if (host.indexOf('.') > -1 && host.indexOf(':') > -1) {
             throw new IllegalArgumentException("Port should be provided separately");
@@ -92,13 +95,15 @@ public final class Socket {
         }, "Connection to " + host).start();
     }
 
-    /**
-     * Connect to a remote host
-     *
-     * @param host the host
-     * @param port the connection port
-     * @param sc   callback for when the connection is established or fails
-     */
+    /// Connect to a remote host
+    ///
+    /// #### Parameters
+    ///
+    /// - `host`: the host
+    ///
+    /// - `port`: the connection port
+    ///
+    /// - `sc`: callback for when the connection is established or fails
     public static Close connectWithClose(final String host, final int port, final SocketConnection sc) {
         if (host.indexOf('.') > -1 && host.indexOf(':') > -1) {
             throw new IllegalArgumentException("Port should be provided separately");
@@ -132,7 +137,7 @@ public final class Socket {
                         Thread.sleep(200);
                     } catch (InterruptedException e) {
                         Log.e(e);
-                        throw new RuntimeException(e.getMessage());
+                        throw new RuntimeException(e.getMessage(), e);
                     }
                 }
                 if (Util.getImplementation().isSocketConnected(connection[0])) {
@@ -143,16 +148,23 @@ public final class Socket {
         };
     }
 
-    /**
-     * Listen to incoming connections on port
-     *
-     * @param port    the device port
-     * @param scClass class of callback for when the connection is established or fails, this class
-     *                will be instantiated for every incoming connection and must have a public no argument constructor.
-     * @return StopListening instance that allows the the caller to stop listening on a server socket
-     * @deprecated server sockets are only supported on Android and Desktop and as such
-     * we recommend against using them
-     */
+    /// Listen to incoming connections on port
+    ///
+    /// #### Parameters
+    ///
+    /// - `port`: the device port
+    ///
+    /// - `scClass`: @param scClass class of callback for when the connection is established or fails, this class
+    /// will be instantiated for every incoming connection and must have a public no argument constructor.
+    ///
+    /// #### Returns
+    ///
+    /// StopListening instance that allows the the caller to stop listening on a server socket
+    ///
+    /// #### Deprecated
+    ///
+    /// @deprecated server sockets are only supported on Android and Desktop and as such
+    /// we recommend against using them
     public static StopListening listen(final int port, final Class scClass) {
         class Listener implements StopListening, Runnable {
             private boolean stopped;
@@ -201,11 +213,11 @@ public final class Socket {
         return l;
     }
 
-    /**
-     * Returns the hostname or ip address of the device if available/applicable
-     *
-     * @return the hostname or ip address of the device if available/applicable
-     */
+    /// Returns the hostname or ip address of the device if available/applicable
+    ///
+    /// #### Returns
+    ///
+    /// the hostname or ip address of the device if available/applicable
     public static String getHostOrIP() {
         return Util.getImplementation().getHostOrIP();
     }
@@ -214,21 +226,17 @@ public final class Socket {
         void close() throws IOException;
     }
 
-    /**
-     * This interface can be invoked to stop listening on a server socket
-     */
+    /// This interface can be invoked to stop listening on a server socket
     public interface StopListening {
-        /**
-         * Stop listening
-         */
+        /// Stop listening
         void stop();
     }
 
     static class SocketInputStream extends InputStream {
         private final Object impl;
+        private final SocketConnection con;
         private byte[] buffer;
         private int bufferOffset;
-        private final SocketConnection con;
         private boolean closed;
 
         SocketInputStream(Object impl, SocketConnection con) {
@@ -267,11 +275,10 @@ public final class Socket {
             }
         }
 
-        // [ddyer 12/2015]
         // try to read some data into the buffer if we think there is some
         // available, but don't wait if there is not.  This is used to get
         // additional data for a read that has more room in it's buffer.
-        //
+        @SuppressWarnings("PMD.EmptyCatchBlock")
         private boolean getDataIfAvailable() {
             try {
                 if (available() > 0) {

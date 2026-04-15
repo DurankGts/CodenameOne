@@ -6,26 +6,11 @@ package com.codename1.util;
 
 import java.util.Random;
 
-/**
- * A simplified version of big integer from the bouncy castle implementation
- */
+/// A simplified version of big integer from the bouncy castle implementation
 public class BigInteger {
 
     public static final BigInteger ZERO = new BigInteger(0, new int[0]);
     public static final BigInteger ONE = valueOf(1);
-    private static final int BITS_PER_BYTE = 8;
-    private static final int BYTES_PER_INT = 4;
-    private static final byte[] rndMask = {(byte) 255, 127, 63, 31, 15, 7, 3, 1};
-    private final static byte[] bitCounts = {0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4, 1,
-            2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5, 1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4,
-            4, 5, 2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6, 1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3,
-            4, 3, 4, 4, 5, 2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6, 2, 3, 3, 4, 3, 4, 4, 5,
-            3, 4, 4, 5, 4, 5, 5, 6, 3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7, 1, 2, 2, 3, 2,
-            3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5, 2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6, 2, 3,
-            3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6, 3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6,
-            7, 2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6, 3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6,
-            5, 6, 6, 7, 3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7, 4, 5, 5, 6, 5, 6, 6, 7, 5,
-            6, 6, 7, 6, 7, 7, 8};
     TBigInteger peer;
 
     private BigInteger() {
@@ -48,6 +33,7 @@ public class BigInteger {
     public BigInteger(byte[] bval) throws NumberFormatException {
         peer = new TBigInteger(bval);
     }
+
     BigInteger(TBigInteger peer) {
         this.peer = peer;
     }
@@ -149,11 +135,13 @@ public class BigInteger {
 
     @Override
     public boolean equals(Object val) {
-        if (val == this)
+        if (val == this) {
             return true;
+        }
 
-        if (!(val instanceof BigInteger))
+        if (!(val instanceof BigInteger)) {
             return false;
+        }
         BigInteger biggie = (BigInteger) val;
         return peer.equals(biggie.peer);
     }
@@ -175,12 +163,10 @@ public class BigInteger {
         return (byte) intValue();
     }
 
-    /**
-     * return whether or not a BigInteger is probably prime with a
-     * probability of 1 - (1/2)**certainty.
-     * <p>
-     * From Knuth Vol 2, pg 395.
-     */
+    /// return whether or not a BigInteger is probably prime with a
+    /// probability of 1 - (1/2)**certainty.
+    ///
+    /// From Knuth Vol 2, pg 395.
     public boolean isProbablePrime(int certainty) {
         return peer.isProbablePrime(certainty);
     }

@@ -25,16 +25,12 @@ package com.codename1.charts.compat;
 
 import com.codename1.ui.Component;
 import com.codename1.ui.Font;
-import com.codename1.ui.Graphics;
 import com.codename1.ui.Stroke;
 import com.codename1.ui.geom.Rectangle2D;
 
-/**
- * DO NOT USE.  Compatibility class used internally by the Charts API.
- *
- * @author shannah
- * @deprecated
- */
+/// DO NOT USE.  Compatibility class used internally by the Charts API.
+///
+/// @author shannah
 public class Paint { // PMD Fix: UnusedPrivateField removed redundant antiAlias flag
     private Font typeface = Font.createSystemFont(Font.FACE_SYSTEM, Font.STYLE_PLAIN, Font.SIZE_SMALL);
     private int strokeCap = Cap.BUTT;

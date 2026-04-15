@@ -36,9 +36,9 @@ package com.codename1.io.gzip;
 
 import java.io.UnsupportedEncodingException;
 
-/**
- * @see "http://www.ietf.org/rfc/rfc1952.txt"
- */
+/// #### See also
+///
+/// - "http://www.ietf.org/rfc/rfc1952.txt"
 public class GZIPHeader {
 
     public static final byte OS_MSDOS = (byte) 0x00;
@@ -79,18 +79,21 @@ public class GZIPHeader {
     }
 
     public void setOS(int os) {
-        if ((0 <= os && os <= 13) || os == 255)
+        if ((0 <= os && os <= 13) || os == 255) {
             this.os = os;
-        else
+        } else {
             throw new IllegalArgumentException("os: " + os);
+        }
     }
 
     public String getName() {
-        if (name == null) return "";
+        if (name == null) {
+            return "";
+        }
         try {
             return new String(name, "ISO-8859-1");
         } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e.toString());
+            throw new RuntimeException(e.toString(), e);
         }
     }
 
@@ -98,16 +101,18 @@ public class GZIPHeader {
         try {
             this.name = name.getBytes("ISO-8859-1");
         } catch (UnsupportedEncodingException e) {
-            throw new IllegalArgumentException("name must be in ISO-8859-1 " + name);
+            throw new IllegalArgumentException("name must be in ISO-8859-1 " + name, e);
         }
     }
 
     public String getComment() {
-        if (comment == null) return "";
+        if (comment == null) {
+            return "";
+        }
         try {
             return new String(comment, "ISO-8859-1");
         } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e.toString());
+            throw new RuntimeException(e.toString(), e);
         }
     }
 
@@ -115,7 +120,7 @@ public class GZIPHeader {
         try {
             this.comment = comment.getBytes("ISO-8859-1");
         } catch (UnsupportedEncodingException e) {
-            throw new IllegalArgumentException("comment must be in ISO-8859-1 " + comment);
+            throw new IllegalArgumentException("comment must be in ISO-8859-1 " + comment, e);
         }
     }
 

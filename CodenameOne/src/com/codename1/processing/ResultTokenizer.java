@@ -32,8 +32,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Derivative Revision History:
 
 2012-03 - derivative work from original Sun source, added
-	support for nested expressions to support new features added
-	to Result class.
+    support for nested expressions to support new features added
+    to Result class.
 */
 
 package com.codename1.processing;
@@ -42,13 +42,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Vector;
 
-/**
- * Internal class, do not use.
- * <p>
- * Used internally by Result class apply() methods, this converts a path expression into a List of string tokens.
- *
- * @author Eric Coolman (2012-03 - derivative work from original Sun source).
- */
+/// Internal class, do not use.
+///
+/// Used internally by Result class apply() methods, this converts a path expression into a List of string tokens.
+///
+/// @author Eric Coolman (2012-03 - derivative work from original Sun source).
 class ResultTokenizer {
 
     private final String expression;
@@ -72,8 +70,9 @@ class ResultTokenizer {
             case Result.ARRAY_START:
             case Result.ARRAY_END:
                 return true;
+            default:
+                return false;
         }
-        return false;
     }
 
     static boolean isSeparator(final char ch) {
@@ -89,10 +88,13 @@ class ResultTokenizer {
         String tok;
         int i;
         for (pos = 0, tok = next(); !"".equals(tok); tok = next()) {
-            if (namespaceAliases != null && ((i = tok.indexOf(':')) != -1)) {
-                String mapto = (String) namespaceAliases.get(tok.substring(0, i));
-                if (mapto != null) {
-                    tok = mapto + tok.substring(i);
+            if (namespaceAliases != null) {
+                i = tok.indexOf(':');
+                if (i != -1) {
+                    String mapto = (String) namespaceAliases.get(tok.substring(0, i));
+                    if (mapto != null) {
+                        tok = mapto + tok.substring(i);
+                    }
                 }
             }
             tokens.add(tok);
@@ -100,24 +102,23 @@ class ResultTokenizer {
         return tokens;
     }
 
-    /**
-     * Handle the predicate expression within outermost brackets.
-     * This allows us to nest predicate expressions.  For example:
-     *
-     * <code>
-     * /result/address_component[/type[position() < 5]='locality']/long_name
-     * </code>
-     * The nested predicate in the above statement is
-     *
-     * <code>
-     * /type[position() < 5]='locality'
-     * </code>
-     * <p>
-     * which is applied against the address_component node.
-     *
-     * @param sbuf
-     * @return full predicate expression
-     */
+    /// Handle the predicate expression within outermost brackets.
+    /// This allows us to nest predicate expressions.  For example:
+    ///
+    /// `/result/address_component[/type[position() < 5]='locality']/long_name`
+    /// The nested predicate in the above statement is
+    ///
+    /// `/type[position() < 5]='locality'`
+    ///
+    /// which is applied against the address_component node.
+    ///
+    /// #### Parameters
+    ///
+    /// - `sbuf`
+    ///
+    /// #### Returns
+    ///
+    /// full predicate expression
     private String getPredicate(StringBuffer sbuf) {
         int stack = 1;
 

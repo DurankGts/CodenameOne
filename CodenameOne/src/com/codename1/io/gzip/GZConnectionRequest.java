@@ -28,50 +28,33 @@ import com.codename1.ui.Display;
 import java.io.IOException;
 import java.io.InputStream;
 
-/**
- * <p>A connection request that can detect a GZipped response, parse it automatically and unzip it.
- * Notice that some devices (iOS) always request gzip'ed data and always decompress it for us, however in
- * the case of iOS it doesn't remove the gziped header. The {@code GZConnectionRequest} is aware of such
- * behaviors so it's better to use that when connecting to the network (if applicable).</p>
- * <p>
- * By default `GZConnectionRequest` doesn't request gzipped data (only unzips it when its received) but it's
- * pretty easy to do so just add the HTTP header `Accept-Encoding: gzip` e.g.:
- * </p>
- *
- * <script src="https://gist.github.com/codenameone/9a4c6f49d836ca173235.js"></script>
- *
- * @author Shai Almog
- */
+/// A connection request that can detect a GZipped response, parse it automatically and unzip it.
+/// Notice that some devices (iOS) always request gzip'ed data and always decompress it for us, however in
+/// the case of iOS it doesn't remove the gziped header. The `GZConnectionRequest` is aware of such
+/// behaviors so it's better to use that when connecting to the network (if applicable).
+///
+/// By default `GZConnectionRequest` doesn't request gzipped data (only unzips it when its received) but it's
+/// pretty easy to do so just add the HTTP header `Accept-Encoding: gzip` e.g.:
+///
+/// ```java
+/// GZConnectionRequest con = new GZConnectionRequest();
+/// con.addRequestHeader("Accept-Encoding", "gzip");
+/// ```
+///
+/// @author Shai Almog
 public class GZConnectionRequest extends ConnectionRequest {
     private boolean isGzipped;
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public boolean equals(Object o) {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
+        if (!(o instanceof GZConnectionRequest)) {
             return false;
         }
-        if (!super.equals(o)) {
-            return false;
-        }
-
         GZConnectionRequest that = (GZConnectionRequest) o;
-
-        if (isGzipped != that.isGzipped) {
-            return false;
-        }
-
-        return true;
+        return super.equals(o) && isGzipped == that.isGzipped;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public int hashCode() {
         int result = super.hashCode();
@@ -79,9 +62,7 @@ public class GZConnectionRequest extends ConnectionRequest {
         return result;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     protected void readHeaders(Object connection) throws IOException {
         super.readHeaders(connection);
@@ -93,9 +74,7 @@ public class GZConnectionRequest extends ConnectionRequest {
         }
     }
 
-    /**
-     * Overridden to convert the input stream you should now override readUnzipedResponse()
-     */
+    /// Overridden to convert the input stream you should now override readUnzipedResponse()
     @Override
     protected final void readResponse(InputStream input) throws IOException {
         if (isGzipped) {
@@ -105,11 +84,11 @@ public class GZConnectionRequest extends ConnectionRequest {
         }
     }
 
-    /**
-     * This method can be overridden instead of readResponse
-     *
-     * @param input an input stream that is guaranteed to be deflated
-     */
+    /// This method can be overridden instead of readResponse
+    ///
+    /// #### Parameters
+    ///
+    /// - `input`: an input stream that is guaranteed to be deflated
     protected void readUnzipedResponse(InputStream input) throws IOException {
         super.readResponse(input);
     }

@@ -23,10 +23,8 @@
 
 package com.codename1.charts.util;
 
-/**
- * @author shannah
- */
-public class ColorUtil {
+/// @author shannah
+public abstract class ColorUtil {
     public static final int LTGRAY = IColor.LightGray.argb;
     public static final int BLUE = IColor.Blue.argb;
     public static final int BLACK = IColor.Black.argb;
@@ -39,33 +37,27 @@ public class ColorUtil {
 
 
     public static int argb(int a, int r, int g, int b) {
-        IColor c = new IColor(a, r, g, b);
-        return c.argb;
+        return new IColor(a, r, g, b).argb;
     }
 
     public static int alpha(int c) {
-        IColor pc = new IColor(c);
-        return pc.alpha;
+        return new IColor(c).alpha;
     }
 
     public static int red(int c) {
-        IColor pc = new IColor(c);
-        return pc.red;
+        return new IColor(c).red;
     }
 
     public static int green(int c) {
-        IColor pc = new IColor(c);
-        return pc.green;
+        return new IColor(c).green;
     }
 
     public static int blue(int c) {
-        IColor pc = new IColor(c);
-        return pc.blue;
+        return new IColor(c).blue;
     }
 
     public static int rgb(int r, int g, int b) {
-        IColor c = new IColor(r, g, b);
-        return c.argb;
+        return new IColor(r, g, b).argb;
     }
 
 
@@ -94,9 +86,9 @@ public class ColorUtil {
      */
 
 
-    /**
-     * @see Graphics
-     */
+    /// #### See also
+    ///
+    /// - Graphics
     private static class IColor
             implements Cloneable {
 
@@ -113,17 +105,21 @@ public class ColorUtil {
         public final static IColor Magenta = new IColor(255, 0, 255);
         public final static IColor Cyan = new IColor(0, 255, 255);
         public final static IColor Blue = new IColor(0, 0, 255);
-        public final int alpha, red, green, blue;
+        public final int alpha;
+        public final int red;
+        public final int green;
+        public final int blue;
         public final int argb;
 
         public IColor(int argb) {
             super();
 
             int a = ((argb >>> 24) & 0xff);
-            if (0 == a)
+            if (0 == a) {
                 this.alpha = 255;
-            else
+            } else {
                 this.alpha = a;
+            }
 
             this.red = (argb >>> 16) & 0xff;
             this.green = (argb >>> 8) & 0xff;
@@ -171,14 +167,15 @@ public class ColorUtil {
 
         @Override
         public boolean equals(Object that) {
-            if (this == that)
+            if (this == that) {
                 return true;
-            else if (null == that)
+            } else if (null == that) {
                 return false;
-            else if (that instanceof IColor)
+            } else if (that instanceof IColor) {
                 return (this.hashCode() == that.hashCode());
-            else
+            } else {
                 return false;
+            }
         }
 
         @Override

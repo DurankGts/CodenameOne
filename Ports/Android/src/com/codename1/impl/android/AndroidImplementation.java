@@ -81,6 +81,7 @@ import com.codename1.ui.util.Resources;
 import java.lang.ref.SoftReference;
 import java.lang.reflect.Method;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 import java.util.Vector;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
@@ -259,6 +260,24 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     public static CodenameOneActivity getActivity() {
         return activity;
     }
+    
+    @Override
+    public void setDisableScreenshots(final boolean disable) {
+        final CodenameOneActivity a = getActivity();
+        if (a == null || a.getWindow() == null) {
+            return;
+        }
+        a.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (disable) {
+                    a.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+                } else {
+                    a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+                }
+            }
+        });
+    }
 
     /**
      * @param aActivity the activity to set
@@ -296,6 +315,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     }
     
     private static Context context;
+    private static PermissionPromptCallback permissionPromptCallback;
     RelativeLayout relativeLayout;
     final Vector nativePeers = new Vector();
     int lastDirectionalKeyEventReceivedByWrapper;
@@ -343,10 +363,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
             // working its way through the system.  Give it some time
             // before forcing the deinitialize
             System.out.println("Waiting for deinitializing to complete before starting a new initialization");
-            try {
-                Thread.sleep(30);
-
-            } catch (Exception ex){}
+            Util.sleep(30);
         }
         if (deinitializing && instance != null) {
             instance.deinitialize();
@@ -525,7 +542,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
                     msg += "&category="+java.net.URLEncoder.encode(category, "UTF-8");
                 }
                 if (image != null) {
-                    image += "&image="+java.net.URLEncoder.encode(image, "UTF-8");
+                    msg += "&image="+java.net.URLEncoder.encode(image, "UTF-8");
                 }
                 os.writeUTF(msg);
                         
@@ -551,8 +568,13 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
                 k = part;
                 v = "";
             }
-            try { k = java.net.URLDecoder.decode(k, "UTF-8");} catch (Exception ex){}
-            try {v = java.net.URLDecoder.decode(v, "UTF-8");} catch (Exception ex){}
+            try {
+                k = java.net.URLDecoder.decode(k, "UTF-8");
+                v = java.net.URLDecoder.decode(v, "UTF-8");
+            } catch (UnsupportedEncodingException ex) {
+                // won't happen
+                com.codename1.io.Log.e(ex);
+            }
             out.put(k, v);
         }
         return out;
@@ -561,11 +583,11 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     public String getStackTrace(Thread parentThread, Throwable t) {
         System.out.println("CN1SS:ERR:Invoking getStackTrace in AndroidImplementation");
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        PrintWriter w = new PrintWriter(bos);
+        PrintWriter w = new PrintWriter(new OutputStreamWriter(bos, StandardCharsets.UTF_8));
         t.printStackTrace(w);
         w.close();
         System.out.println("CN1SS:ERR:AndroidImplementation getStackTrace completed");
-        return bos.toString();
+        return new String(bos.toByteArray(), StandardCharsets.UTF_8);
     }
 
     public static void initPushContent(String message, String image, String messageType, String category, Context context) {
@@ -885,8 +907,12 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
             newIntent.putExtra("pushActionId", action.getId());
             PendingIntent contentIntent = createMutablePendingIntent(context, requestCode++, newIntent);
             try {
-                int iconId = 0;
-                try { iconId = Integer.parseInt(action.getIcon());} catch (Exception ex){}
+                int iconId;
+                try {
+                    iconId = Integer.parseInt(action.getIcon());
+                } catch (NumberFormatException ex) {
+                    iconId = 0;
+                }
                 if (ActionWrapper.BuilderWrapper.isSupported()) {
                     // We need to take this abstracted "wrapper" approach because the Action.Builder class, and RemoteInput class
                     // aren't available until API 22.
@@ -1080,7 +1106,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
                 try {
                     getActivity().requestWindowFeature(Window.FEATURE_NO_TITLE);
                 } catch (Exception e) {
-                    //Log.d("Codename One", "No idea why this throws a Runtime Error", e);
+                    com.codename1.io.Log.p("requestWindowFeature FEATURE_NO_TITLE threw exception: " + e.toString());
                 }
             } else {
                 getActivity().invalidateOptionsMenu();
@@ -1220,10 +1246,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         Display.getInstance().callSerially(new Runnable() {
             public void run() {
                 Display.getInstance().invokeAndBlock(new Runnable(){ public void run(){
-                    try {
-                        Thread.sleep(50);
-
-                    } catch (Exception ex){}
+                    Util.sleep(50);
                 }});
                 if (!Display.isInitialized() || Display.getInstance().isMinimized()) {
                     return;
@@ -1538,15 +1561,12 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         //ugly workaround for a bug where on some android versions the async view
         //came back black from the background.
         if(myView instanceof AndroidAsyncView){
+            final AndroidAsyncView finalView = (AndroidAsyncView)myView;
             new Thread(new Runnable() {
-
                 @Override
                 public void run() {
-                    try {
-                        Thread.sleep(1000);
-                        ((AndroidAsyncView)myView).setPaintViewOnBuffer(false);
-                    } catch (Exception e) {
-                    }
+                    Util.sleep(1000);
+                    finalView.setPaintViewOnBuffer(false);
                 }
             }).start();
         }
@@ -1568,12 +1588,28 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
 
     @Override
     public boolean minimizeApplication() {
+        Activity activity = getActivity();
+        if (activity != null) {
+            // Move the app task to background instead of explicitly launching HOME.
+            // Some OEM launchers are no longer exported and can throw SecurityException
+            // when invoked via an ACTION_MAIN/CATEGORY_HOME intent.
+            if (activity.moveTaskToBack(true)) {
+                return true;
+            }
+        }
+
+        // Fallback for edge-cases where there is no active activity/task.
         Intent startMain = new Intent(Intent.ACTION_MAIN);
         startMain.addCategory(Intent.CATEGORY_HOME);
         startMain.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         startMain.putExtra("WaitForResult", Boolean.FALSE);
-        getContext().startActivity(startMain);
-        return true;
+        try {
+            getContext().startActivity(startMain);
+            return true;
+        } catch (SecurityException ex) {
+            Log.e("Codename One", "Unable to minimize application", ex);
+            return false;
+        }
     }
 
     @Override
@@ -1592,9 +1628,6 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     }
 
     public void editString(final Component cmp, int maxSize, final int constraint, String text, int keyCode) {
-        if (keyCode > 0 && getKeyboardType() == Display.KEYBOARD_TYPE_QWERTY) {
-            text += (char) keyCode;
-        }
         InPlaceEditView.edit(this, cmp, constraint);
     }
 
@@ -2331,12 +2364,6 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     public Object createImage(byte[] bytes, int offset, int len) {
         BitmapFactory.Options opts = new BitmapFactory.Options();
         opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
-        try {
-            BitmapFactory.Options.class.getField("inPurgeable").set(opts, true);
-        } catch (Exception e) {
-            // inPurgeable not supported
-            // http://www.droidnova.com/2d-sprite-animation-in-android-addendum,505.html
-        }
         return BitmapFactory.decodeByteArray(bytes, offset, len, opts);
     }
 
@@ -3940,7 +3967,6 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
                             );
                             
                             final com.codename1.media.AudioBuffer audioBuffer = com.codename1.media.MediaManager.getAudioBuffer(path, true, 64);
-                            final boolean[] stop = new boolean[1];
 
                             record[0] = new AbstractMedia() {
                                 private int lastTime;
@@ -6549,7 +6575,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         BufferedReader bufReader = null;
 
         try {
-            bufReader = new BufferedReader(new FileReader("/proc/mounts"));
+            bufReader = new BufferedReader(new InputStreamReader(new FileInputStream("/proc/mounts"), StandardCharsets.UTF_8));
             ArrayList<String> list = new ArrayList<String>();
             String line;
 
@@ -7148,8 +7174,10 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
                 serviceProperties = new HashMap<String,String>();
                 try {
                     i = a.openFileInput("CN1$AndroidServiceProperties");
-                } catch (FileNotFoundException notFoundEx){}
-                if(i == null) {
+                    if(i == null) {
+                        return serviceProperties;
+                    }
+                } catch (FileNotFoundException notFoundEx){
                     return serviceProperties;
                 }
                 DataInputStream is = new DataInputStream(i);
@@ -7614,6 +7642,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         private final EventDispatcher stateChangeListeners = new EventDispatcher();
         private PlayRequest pendingPlayRequest;
         private PauseRequest pendingPauseRequest;
+        private boolean androidSeekPreviewWorkaroundEnabled;
 
         @Override
         public State getState() {
@@ -7933,7 +7962,29 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         @Override
         public void setTime(int time) {
             if(nativeVideo != null){
-                nativeVideo.seekTo(time);
+                final int seekTime = time;
+                activity.runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (nativeVideo == null) {
+                            return;
+                        }
+                        nativeVideo.seekTo(seekTime);
+                        if (androidSeekPreviewWorkaroundEnabled && !nativeVideo.isPlaying()) {
+                            final int refreshSeekTime = Math.max(0, seekTime - 1);
+                            nativeVideo.postDelayed(new Runnable() {
+                                @Override
+                                public void run() {
+                                    if (nativeVideo != null && !nativeVideo.isPlaying()) {
+                                        nativeVideo.seekTo(refreshSeekTime);
+                                        nativeVideo.seekTo(seekTime);
+                                        nativeVideo.invalidate();
+                                    }
+                                }
+                            }, 60);
+                        }
+                    }
+                });
             }
         }
 
@@ -8091,6 +8142,10 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         public void setVariable(String key, Object value) {
             if (nativeVideo != null && Media.VARIABLE_NATIVE_CONTRLOLS_EMBEDDED.equals(key) && value instanceof Boolean) {
                 setNativeController((Boolean)value);
+                return;
+            }
+            if (Media.VARIABLE_ANDROID_SEEK_PREVIEW_WORKAROUND.equals(key) && value instanceof Boolean) {
+                androidSeekPreviewWorkaroundEnabled = ((Boolean)value).booleanValue();
             }
         }
 
@@ -8127,11 +8182,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
 
 
     private String getImageFilePath(Uri uri) {
-
-        File file = new File(uri.getPath());
         String scheme = uri.getScheme();
-        //String[] filePaths = file.getPath().split(":");
-        //String image_id = filePath[filePath.length - 1];
         String[] filePathColumn = {MediaStore.Images.Media.DATA};
         Cursor cursor = getContext().getContentResolver().query(
                 android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
@@ -8156,8 +8207,10 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         if (filePath == null || "content".equals(scheme)) {
             //if the file is not on the filesystem download it and save it
             //locally
+            InputStream inputStream = null;
+            OutputStream tmp = null;
             try {
-                InputStream inputStream = getContext().getContentResolver().openInputStream(uri);
+                inputStream = getContext().getContentResolver().openInputStream(uri);
                 if (inputStream != null) {
                     String name = new File(uri.toString()).getName();//getContentName(getContext().getContentResolver(), uri);
                     if (name != null) {
@@ -8168,27 +8221,20 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
                         filePath = homePath
                                 + getFileSystemSeparator() + name;
                         File f = new File(removeFilePrefix(filePath));
-                        OutputStream tmp = createFileOuputStream(f);
-                        byte[] buffer = new byte[1024];
-                        int read = -1;
-                        while ((read = inputStream.read(buffer)) > -1) {
-                            tmp.write(buffer, 0, read);
-                        }
-                        tmp.close();
-                        inputStream.close();
+                        tmp = createFileOuputStream(f);
+                        Util.copy(inputStream, tmp);
                     }
                 }
             } catch (Exception e) {
-                e.printStackTrace();
+                com.codename1.io.Log.e(e);
+            } finally {
+                Util.cleanup(tmp);
+                Util.cleanup(inputStream);
             }
         }
-        //long len = new com.codename1.io.File(filePath).length();
         return filePath;
     }
-    
-    
-    
-    
+
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent intent) {
 
@@ -9623,6 +9669,46 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         return apName;
     }
 
+    @Override
+    public boolean isVPNDetectionSupported() {
+        return true;
+    }
+
+    @Override
+    public boolean isVPNActive() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                android.net.Network network = cm.getActiveNetwork();
+                if (network != null) {
+                    android.net.NetworkCapabilities capabilities = cm.getNetworkCapabilities(network);
+                    if (capabilities != null && capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) {
+                        return true;
+                    }
+                }
+            }
+
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            while (interfaces != null && interfaces.hasMoreElements()) {
+                NetworkInterface current = interfaces.nextElement();
+                if (!current.isUp() || current.isLoopback()) {
+                    continue;
+                }
+                String name = current.getName();
+                if (name == null) {
+                    continue;
+                }
+                name = name.toLowerCase(Locale.US);
+                if (name.startsWith("tun") || name.startsWith("ppp") || name.startsWith("tap") || name.startsWith("ipsec")) {
+                    return true;
+                }
+            }
+        } catch (Throwable t) {
+            Log.d("Codename One", "VPN detection failed", t);
+        }
+        return false;
+    }
+
     /**
      * @inheritDoc
      */
@@ -10700,11 +10786,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
             }
 
             while (blocking && !complete[0]) {
-                synchronized(lock) {
-                    try {
-                        lock.wait(1000);
-                    } catch (Exception ex){}
-                }
+                Util.wait(lock, 1000);
                 if (!complete[0]) {
                     System.out.println("Waiting for background fetch to complete.  Make sure your background fetch handler calls onSuccess() or onError() in the callback when complete");
 
@@ -10914,6 +10996,33 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         return checkForPermission(permission, description, false);
     }
 
+    public static void setPermissionPromptCallback(PermissionPromptCallback callback) {
+        permissionPromptCallback = callback;
+    }
+
+    public static PermissionPromptCallback getPermissionPromptCallback() {
+        return permissionPromptCallback;
+    }
+
+    private static String getPermissionText(String key, String defaultValue) {
+        return UIManager.getInstance().localize(key, Display.getInstance().getProperty(key, defaultValue));
+    }
+
+    private static boolean showPermissionPrompt(String permission, String title, String body, String positiveButtonText, String negativeButtonText) {
+        if (permissionPromptCallback != null) {
+            return permissionPromptCallback.showPermissionPrompt(permission, title, body, positiveButtonText, negativeButtonText);
+        }
+        return Dialog.show(title, body, positiveButtonText, negativeButtonText);
+    }
+
+    private static void showPermissionMessage(String permission, String title, String body, String okButtonText) {
+        if (permissionPromptCallback != null) {
+            permissionPromptCallback.showPermissionMessage(permission, title, body, okButtonText);
+            return;
+        }
+        Dialog.show(title, body, okButtonText, null);
+    }
+
     /**
      * Return a list of all of the permissions that have been requested by the app (granted or no).
      * This can be used to see which permissions are included in the manifest file.
@@ -10952,29 +11061,29 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
                 return false;
             }
 
-            String prompt = Display.getInstance().getProperty(permission, description);
-            String title = Display.getInstance().getProperty("android.permission.ACCESS_BACKGROUND_LOCATION.title", "Requires permission");
-            String settingsBtn = Display.getInstance().getProperty("android.permission.ACCESS_BACKGROUND_LOCATION.settings", "Settings");
-            String cancelBtn = Display.getInstance().getProperty("android.permission.ACCESS_BACKGROUND_LOCATION.cancel", "Cancel");
+            String prompt = getPermissionText(permission, description);
+            String title = getPermissionText("android.permission.ACCESS_BACKGROUND_LOCATION.title", "Requires permission");
+            String settingsBtn = getPermissionText("android.permission.ACCESS_BACKGROUND_LOCATION.settings", "Settings");
+            String cancelBtn = getPermissionText("android.permission.ACCESS_BACKGROUND_LOCATION.cancel", "Cancel");
 
-            if(Dialog.show(title, prompt, settingsBtn, cancelBtn)){
+            if(showPermissionPrompt(permission, title, prompt, settingsBtn, cancelBtn)){
                 Intent intent = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
                 Uri uri = Uri.fromParts("package", getContext().getPackageName(), null);
                 intent.setData(uri);
                 getActivity().startActivity(intent);
 
-                String explanationTitle = Display.getInstance().getProperty("android.permission.ACCESS_BACKGROUND_LOCATION.explanation_title", "Permission Required");
-                String explanationBody = Display.getInstance().getProperty("android.permission.ACCESS_BACKGROUND_LOCATION.explanation_body", "Please enable 'Allow all the time' in the settings, then press OK.");
-                String okBtn = Display.getInstance().getProperty("android.permission.ACCESS_BACKGROUND_LOCATION.ok", "OK");
+                String explanationTitle = getPermissionText("android.permission.ACCESS_BACKGROUND_LOCATION.explanation_title", "Permission Required");
+                String explanationBody = getPermissionText("android.permission.ACCESS_BACKGROUND_LOCATION.explanation_body", "Please enable 'Allow all the time' in the settings, then press OK.");
+                String okBtn = getPermissionText("android.permission.ACCESS_BACKGROUND_LOCATION.ok", "OK");
 
-                Dialog.show(explanationTitle, explanationBody, okBtn, null);
+                showPermissionMessage(permission, explanationTitle, explanationBody, okBtn);
                 return android.support.v4.content.ContextCompat.checkSelfPermission(getActivity(), permission) == PackageManager.PERMISSION_GRANTED;
             } else {
                 return false;
             }
         }
 
-        String prompt = Display.getInstance().getProperty(permission, description);
+        String prompt = getPermissionText(permission, description);
 
         if (android.support.v4.content.ContextCompat.checkSelfPermission(getContext(),
                 permission)
@@ -10989,7 +11098,10 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
                     permission)) {
 
                 // Show an expanation to the user *asynchronously* -- don't block
-                if(Dialog.show("Requires permission", prompt, "Ask again", "Don't Ask")){
+                String title = getPermissionText(permission + ".title", "Requires permission");
+                String askAgain = getPermissionText(permission + ".askAgain", "Ask again");
+                String dontAsk = getPermissionText(permission + ".dontAsk", "Don't Ask");
+                if(showPermissionPrompt(permission, title, prompt, askAgain, dontAsk)){
                     return checkForPermission(permission, description, true);
                 }else {
                     return false;

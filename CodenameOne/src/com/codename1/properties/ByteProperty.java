@@ -23,32 +23,26 @@
 
 package com.codename1.properties;
 
-/**
- * This is the byte specific version of numeric property
- *
- * @author Shai Almog
- */
+/// This is the byte specific version of numeric property
+///
+/// @author Shai Almog
 public class ByteProperty<K> extends NumericProperty<Byte, K> {
 
-    /**
-     * {@inheritDoc}
-     */
+    /// Creates a byte property with the given name.
     public ByteProperty(String name) {
         super(name, Byte.class);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// Creates a byte property with the given name and initial value.
     public ByteProperty(String name, Byte value) {
         super(name, Byte.class, value);
     }
 
-    /**
-     * Returns the value as a primitive, if the value is null/nullable this will fail...
-     *
-     * @return the numeric value
-     */
+    /// Returns the value as a primitive, if the value is null/nullable this will fail...
+    ///
+    /// #### Returns
+    ///
+    /// the numeric value
     public byte getByte() {
         return get().byteValue();
     }

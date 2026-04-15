@@ -24,6 +24,8 @@ package com.codename1.components;
 
 import com.codename1.ui.Component;
 import com.codename1.ui.Display;
+import com.codename1.ui.Font;
+import com.codename1.ui.FontImage;
 import com.codename1.ui.Form;
 import com.codename1.ui.Graphics;
 import com.codename1.ui.Image;
@@ -36,61 +38,156 @@ import com.codename1.ui.geom.Dimension;
 import com.codename1.ui.list.DefaultListModel;
 import com.codename1.ui.list.ListModel;
 import com.codename1.ui.plaf.Style;
+import com.codename1.ui.plaf.UIManager;
 
-import static com.codename1.ui.ComponentSelector.$;
-
-/**
- * <p>ImageViewer allows zooming/panning an image and potentially flicking between multiple images
- * within a list of images. <br>
- * E.g. the trivial usage works like this:</p>
- * <script src="https://gist.github.com/codenameone/350a58254aa8b6f9f661.js"></script>
- * <img src="https://www.codenameone.com/img/developer-guide/components-imageviewer.png" alt="Simple image viewer zoomed out" />
- * <img src="https://www.codenameone.com/img/developer-guide/components-imageviewer-zoomed-in.png" alt="Simple image viewer zoomed in" />
- * <p>
- * You can simulate pinch to zoom on the simulator by dragging the right button away from the top left corner to
- * zoom in and towards the top left corner to zoom out. On Mac touchpads you can drag two fingers to achieve that.
- * </p>
- * <p>
- * A more elaborate usage includes flicking between multiple images e.g.:
- * </p>
- * <script src="https://gist.github.com/codenameone/2001562d621473fd42c5.js"></script>
- * <img src="https://www.codenameone.com/img/developer-guide/components-imageviewer-multi.png" alt="Image viewer with multiple elements" />
- *
- * <p>
- * You can even download image URL's dynamically into the {@code ImageViewer} thanks to the usage of the
- * {@link com.codename1.ui.list.ListModel}. E.g. in this model book cover images are downloaded dynamically:
- * </p>
- * <script src="https://gist.github.com/codenameone/305c3f5426b0e2e80833.js"></script>
- * <img src="https://www.codenameone.com/img/developer-guide/components-imageviewer-dynamic.png" alt="Image viewer with dynamic URL fetching model" />
- *
- * @author Shai Almog
- */
+/// ImageViewer allows zooming/panning an image and potentially flicking between multiple images
+/// within a list of images.
+///
+/// E.g. the trivial usage works like this:
+///
+/// ```java
+/// Form hi = new Form("ImageViewer", new BorderLayout());
+/// ImageViewer iv = new ImageViewer(duke);
+/// hi.add(BorderLayout.CENTER, iv);
+/// ```
+///
+/// You can simulate pinch to zoom on the simulator by dragging the right button away from the top left corner to
+/// zoom in and towards the top left corner to zoom out. On Mac touchpads you can drag two fingers to achieve that.
+///
+/// A more elaborate usage includes flicking between multiple images e.g.:
+///
+/// ```java
+/// Form hi = new Form("ImageViewer", new BorderLayout());
+///
+/// Image red = Image.createImage(100, 100, 0xffff0000);
+/// Image green = Image.createImage(100, 100, 0xff00ff00);
+/// Image blue = Image.createImage(100, 100, 0xff0000ff);
+/// Image gray = Image.createImage(100, 100, 0xffcccccc);
+///
+/// ImageViewer iv = new ImageViewer(red);
+/// iv.setImageList(new DefaultListModel<>(red, green, blue, gray));
+/// hi.add(BorderLayout.CENTER, iv);
+/// ```
+///
+/// Optional navigation affordances can be enabled when using an image list:
+///
+/// ```java
+/// iv.setNavigationArrowsVisible(true);
+/// iv.setThumbnailsVisible(true);
+/// iv.setThumbnailBarHeight(6f);
+/// ```
+///
+/// These options can also be configured globally using theme constants:
+///
+/// - `imageviewerNavigationArrowsBool`
+/// - `imageviewerThumbnailsBool`
+/// - `imageviewerThumbnailBarHeightMM`
+///
+/// You can even download image URL's dynamically into the `ImageViewer` thanks to the usage of the
+/// `com.codename1.ui.list.ListModel`. E.g. in this model book cover images are downloaded dynamically:
+///
+/// ```java
+/// Form hi = new Form("ImageViewer", new BorderLayout());
+/// final EncodedImage placeholder = EncodedImage.createFromImage(
+///         FontImage.createMaterial(FontImage.MATERIAL_SYNC, s).
+///                 scaled(300, 300), false);
+///
+/// class ImageList implements ListModel {
+///     private int selection;
+///     private String[] imageURLs = {
+///         "http://awoiaf.westeros.org/images/thumb/9/93/AGameOfThrones.jpg/300px-AGameOfThrones.jpg",
+///         "http://awoiaf.westeros.org/images/thumb/3/39/AClashOfKings.jpg/300px-AClashOfKings.jpg",
+///         "http://awoiaf.westeros.org/images/thumb/2/24/AStormOfSwords.jpg/300px-AStormOfSwords.jpg",
+///         "http://awoiaf.westeros.org/images/thumb/a/a3/AFeastForCrows.jpg/300px-AFeastForCrows.jpg",
+///         "http://awoiaf.westeros.org/images/7/79/ADanceWithDragons.jpg"
+///     };
+///     private Image[] images;
+///     private EventDispatcher listeners = new EventDispatcher();
+///
+///     public ImageList() {
+///         this.images = new EncodedImage[imageURLs.length];
+///     }
+///
+///     public Image getItemAt(final int index) {
+///         if(images[index] == null) {
+///             images[index] = placeholder;
+///             Util.downloadUrlToStorageInBackground(imageURLs[index], "list" + index, (e) -> {
+///                     try {
+///                         images[index] = EncodedImage.create(Storage.getInstance().createInputStream("list" + index));
+///                         listeners.fireDataChangeEvent(index, DataChangedListener.CHANGED);
+///                     } catch(IOException err) {
+///                         err.printStackTrace();
+///                     }
+///             });
+///         }
+///         return images[index];
+///     }
+///
+///     public int getSize() {
+///         return imageURLs.length;
+///     }
+///
+///     public int getSelectedIndex() {
+///         return selection;
+///     }
+///
+///     public void setSelectedIndex(int index) {
+///         selection = index;
+///     }
+///
+///     public void addDataChangedListener(DataChangedListener l) {
+///         listeners.addListener(l);
+///     }
+///
+///     public void removeDataChangedListener(DataChangedListener l) {
+///         listeners.removeListener(l);
+///     }
+///
+///     public void addSelectionListener(SelectionListener l) {
+///     }
+///
+///     public void removeSelectionListener(SelectionListener l) {
+///     }
+///
+///     public void addItem(Image item) {
+///     }
+///
+///     public void removeItem(int index) {
+///     }
+/// };
+///
+/// ImageList imodel = new ImageList();
+///
+/// ImageViewer iv = new ImageViewer(imodel.getItemAt(0));
+/// iv.setImageList(imodel);
+/// hi.add(BorderLayout.CENTER, iv);
+/// ```
+///
+/// @author Shai Almog
 public class ImageViewer extends Component {
-    /**
-     * Indicates the initial position of the image in the viewer to FIT to the
-     * component size
-     */
+    /// Indicates the initial position of the image in the viewer to FIT to the
+    /// component size
     public final static int IMAGE_FIT = 0;
-    /**
-     * Indicates the initial position of the image in the viewer to FILL the
-     * component size.
-     * Notice this type might drop edges of the images in order to stretch the image
-     * to the full size of the Component.
-     */
+    /// Indicates the initial position of the image in the viewer to FILL the
+    /// component size.
+    /// Notice this type might drop edges of the images in order to stretch the image
+    /// to the full size of the Component.
     public final static int IMAGE_FILL = 1;
     private static final int MIN_ZOOM = 1;
     private static final int MAX_ZOOM = 10;
-    /**
-     * The crop box.  This is automatically updated whenever pan/zoom is changed.
-     */
+    /// The crop box.  This is automatically updated whenever pan/zoom is changed.
     private final CropBox cropBox = new CropBox();
     private float zoom = 1;
     private float currentZoom = 1;
     private Image image;
-    private int imageX, imageY, imageDrawWidth, imageDrawHeight;
+    private int imageX;
+    private int imageY;
+    private int imageDrawWidth;
+    private int imageDrawHeight;
     private float panPositionX = 0.5f;
     private float panPositionY = 0.5f;
-    private int pressX, pressY;
+    private int pressX;
+    private int pressY;
     private ListModel<Image> swipeableImages;
     private DataChangedListener listListener;
     private Image swipePlaceholder;
@@ -99,82 +196,94 @@ public class ImageViewer extends Component {
     private Motion motion;
     private boolean zooming = false;
     private boolean animateZoom = true;
-    /**
-     * Allows the image to scale down when image initial position is set to fit
-     * this is off by default since the UX isn't great
-     */
+    /// Allows the image to scale down when image initial position is set to fit
+    /// this is off by default since the UX isn't great
     private boolean allowScaleDown;
     // return values from image aspect calc
-    private int prefX, prefY, prefW, prefH;
+    private int prefX;
+    private int prefY;
+    private int prefW;
+    private int prefH;
     private boolean eagerLock = true;
     private boolean selectLock;
     private boolean cycleLeft = true;
     private boolean cycleRight = true;
     private boolean isPinchZooming;
+    private boolean navigationArrowsVisible;
+    private boolean thumbnailsVisible;
+    private float thumbnailBarHeightMM = 6f;
+    private int pointerPressedAction;
+    private int pointerPressedThumbnailIndex = -1;
 
-    /**
-     * Default constructor
-     */
+    /// Default constructor
     public ImageViewer() {
         setFocusable(true);
         setUIIDFinal("ImageViewer");
         getAllStyles().setBgTransparency(0x0);
+        initThemeConstants();
     }
 
-    /**
-     * Initializes the component with an image
-     *
-     * @param i image to show
-     */
+    private void initThemeConstants() {
+        UIManager manager = getUIManager();
+        String uiidPrefix = getUIID().toLowerCase();
+        navigationArrowsVisible = manager.isThemeConstant(uiidPrefix + "NavigationArrowsBool", navigationArrowsVisible);
+        thumbnailsVisible = manager.isThemeConstant(uiidPrefix + "ThumbnailsBool", thumbnailsVisible);
+        thumbnailBarHeightMM = parseFloatThemeConstant(manager.getThemeConstant(uiidPrefix + "ThumbnailBarHeightMM", Float.toString(thumbnailBarHeightMM)), thumbnailBarHeightMM);
+    }
+
+    private static float parseFloatThemeConstant(String value, float defaultValue) {
+        if (value == null || value.length() == 0) {
+            return defaultValue;
+        }
+        try {
+            return Float.parseFloat(value);
+        } catch (NumberFormatException ex) {
+            return defaultValue;
+        }
+    }
+
+    /// Initializes the component with an image
+    ///
+    /// #### Parameters
+    ///
+    /// - `i`: image to show
     public ImageViewer(Image i) {
         this();
         setImage(i);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     protected void resetFocusable() {
         setFocusable(true);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public String[] getPropertyNames() {
-        return new String[]{"eagerLock", "image", "imageList", "swipePlaceholder"};
+        return new String[]{"eagerLock", "image", "imageList", "swipePlaceholder", "navigationArrowsVisible", "thumbnailsVisible"};
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     protected boolean shouldBlockSideSwipe() {
         return true;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public Class[] getPropertyTypes() {
         return new Class[]{Boolean.class, Image.class,
-                com.codename1.impl.CodenameOneImplementation.getImageArrayClass(), Image.class};
+                com.codename1.impl.CodenameOneImplementation.getImageArrayClass(), Image.class, Boolean.class, Boolean.class};
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public String[] getPropertyTypeNames() {
-        return new String[]{"Boolean", "Image", "Image[]", "Image"};
+        return new String[]{"Boolean", "Image", "Image[]", "Image", "Boolean", "Boolean"};
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public Object getPropertyValue(String name) {
         if ("eagerLock".equals(name)) {
@@ -200,12 +309,16 @@ public class ImageViewer extends Component {
         if ("swipePlaceholder".equals(name)) {
             return getSwipePlaceholder();
         }
+        if ("navigationArrowsVisible".equals(name)) {
+            return isNavigationArrowsVisible() ? Boolean.TRUE : Boolean.FALSE;
+        }
+        if ("thumbnailsVisible".equals(name)) {
+            return isThumbnailsVisible() ? Boolean.TRUE : Boolean.FALSE;
+        }
         return null;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public String setPropertyValue(String name, Object value) {
         if ("eagerLock".equals(name)) {
@@ -228,12 +341,18 @@ public class ImageViewer extends Component {
             setSwipePlaceholder((Image) value);
             return null;
         }
+        if ("navigationArrowsVisible".equals(name)) {
+            setNavigationArrowsVisible(value != null && ((Boolean) value).booleanValue());
+            return null;
+        }
+        if ("thumbnailsVisible".equals(name)) {
+            setThumbnailsVisible(value != null && ((Boolean) value).booleanValue());
+            return null;
+        }
         return super.setPropertyValue(name, value);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void initComponent() {
         super.initComponent();
@@ -275,27 +394,25 @@ public class ImageViewer extends Component {
         }
     }
 
-    /**
-     * Returns the x position of the image viewport which can be useful when it is being panned by the user
-     *
-     * @return x position within the image for the top left corner
-     */
+    /// Returns the x position of the image viewport which can be useful when it is being panned by the user
+    ///
+    /// #### Returns
+    ///
+    /// x position within the image for the top left corner
     public int getImageX() {
         return imageX;
     }
 
-    /**
-     * Returns the y position of the image viewport which can be useful when it is being panned by the user
-     *
-     * @return y position within the image for the top left corner
-     */
+    /// Returns the y position of the image viewport which can be useful when it is being panned by the user
+    ///
+    /// #### Returns
+    ///
+    /// y position within the image for the top left corner
     public int getImageY() {
         return imageY;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void deinitialize() {
         super.deinitialize();
@@ -303,9 +420,7 @@ public class ImageViewer extends Component {
         eagerUnlock();
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void keyReleased(int key) {
         if (swipeableImages != null) {
@@ -320,13 +435,13 @@ public class ImageViewer extends Component {
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void pointerPressed(int x, int y) {
         pressX = x;
         pressY = y;
+        pointerPressedAction = getPointerActionAt(x, y);
+        pointerPressedThumbnailIndex = getThumbnailIndexAt(x, y);
         currentZoom = zoom;
         getComponentForm().addComponentAwaitingRelease(this);
     }
@@ -356,13 +471,33 @@ public class ImageViewer extends Component {
         return swipeableImages.getItemAt(getImageLeftPos());
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void pointerReleased(int x, int y) {
         super.pointerReleased(x, y);
         isPinchZooming = false;
+        int releaseAction = getPointerActionAt(x, y);
+        if (pointerPressedAction != ACTION_NONE && pointerPressedAction == releaseAction) {
+            if (pointerPressedAction == ACTION_LEFT) {
+                navigateToLeft();
+                pointerPressedAction = ACTION_NONE;
+                return;
+            }
+            if (pointerPressedAction == ACTION_RIGHT) {
+                navigateToRight();
+                pointerPressedAction = ACTION_NONE;
+                return;
+            }
+            if (pointerPressedAction == ACTION_THUMBNAIL) {
+                int thumbnailIndex = getThumbnailIndexAt(x, y);
+                if (thumbnailIndex == pointerPressedThumbnailIndex) {
+                    navigateTo(thumbnailIndex);
+                }
+                pointerPressedAction = ACTION_NONE;
+                return;
+            }
+        }
+        pointerPressedAction = ACTION_NONE;
         if (panPositionX > 1) {
             if (panPositionX >= 1 + swipeThreshold && (cycleRight || swipeableImages.getSelectedIndex() < getImageRightPos())) {
                 new AnimatePanX(2, getImageRight(), getImageRightPos());
@@ -390,11 +525,12 @@ public class ImageViewer extends Component {
         isPinchZooming = false;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void pointerDragged(int x, int y) {
+        if (pointerPressedAction != ACTION_NONE) {
+            return;
+        }
         // could be a pan
         float distanceX = ((float) pressX - x) / getZoom();
         float distanceY = ((float) pressY - y) / getZoom();
@@ -444,18 +580,14 @@ public class ImageViewer extends Component {
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     protected void laidOut() {
         super.laidOut();
         updatePositions();
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     protected boolean pinch(float scale) {
         isPinchZooming = true;
@@ -569,15 +701,21 @@ public class ImageViewer extends Component {
         cropBox.set(-constrainedImageY / (double) imageDrawHeight, (constrainedImageX + imageDrawWidth - getWidth()) / (double) imageDrawWidth, (constrainedImageY + imageDrawHeight - getHeight()) / (double) imageDrawHeight, -constrainedImageX / (double) imageDrawWidth);
     }
 
-    /**
-     * Gets the current image cropped using the current pan and zoom state.  The cropped image
-     * dimensions will be the result of cropping the full-sized image with the current pan/zoom state.  The aspect
-     * ratio will match the aspect ratio of the ImageViewer - not the source image itself.
-     *
-     * @param backgroundColor The background color, visible for letterboxing.
-     * @return The cropped image.
-     * @since 7.0
-     */
+    /// Gets the current image cropped using the current pan and zoom state.  The cropped image
+    /// dimensions will be the result of cropping the full-sized image with the current pan/zoom state.  The aspect
+    /// ratio will match the aspect ratio of the ImageViewer - not the source image itself.
+    ///
+    /// #### Parameters
+    ///
+    /// - `backgroundColor`: The background color, visible for letterboxing.
+    ///
+    /// #### Returns
+    ///
+    /// The cropped image.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public Image getCroppedImage(int backgroundColor) {
         if (image == null) {
             return null;
@@ -588,15 +726,23 @@ public class ImageViewer extends Component {
         return getCroppedImage(width, height, backgroundColor);
     }
 
-    /**
-     * Gets the current image cropped using the current pan and zoom state.
-     *
-     * @param width           The width of the cropped image.  Use -1 to match aspect ratio of the ImageViewer component.  Either height or width must be positive.
-     * @param height          The height of the cropped image. Use -1 to match aspect ratio of the ImageViewer component.  Either height or width must be positive.
-     * @param backgroundColor Background color to use for letterboxing.
-     * @return Cropped image in specified dimensions.
-     * @since 7.0
-     */
+    /// Gets the current image cropped using the current pan and zoom state.
+    ///
+    /// #### Parameters
+    ///
+    /// - `width`: The width of the cropped image.  Use -1 to match aspect ratio of the ImageViewer component.  Either height or width must be positive.
+    ///
+    /// - `height`: The height of the cropped image. Use -1 to match aspect ratio of the ImageViewer component.  Either height or width must be positive.
+    ///
+    /// - `backgroundColor`: Background color to use for letterboxing.
+    ///
+    /// #### Returns
+    ///
+    /// Cropped image in specified dimensions.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public Image getCroppedImage(int width, int height, int backgroundColor) {
         if (image == null) {
             return null;
@@ -618,9 +764,7 @@ public class ImageViewer extends Component {
 
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     protected Dimension calcPreferredSize() {
         if (image != null) {
@@ -629,9 +773,7 @@ public class ImageViewer extends Component {
         return new Dimension(Display.getInstance().getDisplayWidth(), Display.getInstance().getDisplayHeight());
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public boolean animate() {
         boolean result = false;
@@ -659,29 +801,27 @@ public class ImageViewer extends Component {
         return super.animate() || result;
     }
 
-    /**
-     * Allows the image to scale down when image initial position is set to fit
-     * this is off by default since the UX isn't great
-     *
-     * @return the allowScaleDown
-     */
+    /// Allows the image to scale down when image initial position is set to fit
+    /// this is off by default since the UX isn't great
+    ///
+    /// #### Returns
+    ///
+    /// the allowScaleDown
     public boolean isAllowScaleDown() {
         return allowScaleDown;
     }
 
-    /**
-     * Allows the image to scale down when image initial position is set to fit
-     * this is off by default since the UX isn't great
-     *
-     * @param allowScaleDown the allowScaleDown to set
-     */
+    /// Allows the image to scale down when image initial position is set to fit
+    /// this is off by default since the UX isn't great
+    ///
+    /// #### Parameters
+    ///
+    /// - `allowScaleDown`: the allowScaleDown to set
     public void setAllowScaleDown(boolean allowScaleDown) {
         this.allowScaleDown = allowScaleDown;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void paint(Graphics g) {
         if (panPositionX < 0) {
@@ -708,6 +848,7 @@ public class ImageViewer extends Component {
                 g.drawImage(left, ((int) ratio) + getX() + prefX, getY() + prefY, prefW, prefH);
                 g.setRenderingHints(0);
             }
+            drawNavigationChrome(g);
             return;
         }
         if (panPositionX > 1) {
@@ -734,6 +875,7 @@ public class ImageViewer extends Component {
                 g.drawImage(right, ((int) ratio) + getX() + prefX, getY() + prefY, prefW, prefH);
                 g.setRenderingHints(0);
             }
+            drawNavigationChrome(g);
             return;
         }
         // can happen in the GUI builder
@@ -759,11 +901,141 @@ public class ImageViewer extends Component {
 
             g.setRenderingHints(0);
         }
+        drawNavigationChrome(g);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    private static final int ACTION_NONE = 0;
+    private static final int ACTION_LEFT = 1;
+    private static final int ACTION_RIGHT = 2;
+    private static final int ACTION_THUMBNAIL = 3;
+
+    private boolean canNavigate() {
+        return swipeableImages != null && swipeableImages.getSize() > 1;
+    }
+
+    private void navigateToLeft() {
+        if (!canNavigate()) {
+            return;
+        }
+        if (cycleLeft || swipeableImages.getSelectedIndex() > getImageLeftPos()) {
+            new AnimatePanX(-1, getImageLeft(), getImageLeftPos());
+        }
+    }
+
+    private void navigateToRight() {
+        if (!canNavigate()) {
+            return;
+        }
+        if (cycleRight || swipeableImages.getSelectedIndex() < getImageRightPos()) {
+            new AnimatePanX(2, getImageRight(), getImageRightPos());
+        }
+    }
+
+    private void navigateTo(int index) {
+        if (!canNavigate() || index < 0 || index >= swipeableImages.getSize()) {
+            return;
+        }
+        if (index != swipeableImages.getSelectedIndex()) {
+            swipeableImages.setSelectedIndex(index);
+        }
+    }
+
+    private int getPointerActionAt(int x, int y) {
+        if (!canNavigate()) {
+            return ACTION_NONE;
+        }
+        if (thumbnailsVisible && getThumbnailIndexAt(x, y) > -1) {
+            return ACTION_THUMBNAIL;
+        }
+        if (navigationArrowsVisible) {
+            int leftBound = getX() + Math.max(24, getWidth() / 8);
+            int rightBound = getX() + getWidth() - Math.max(24, getWidth() / 8);
+            if (x <= leftBound) {
+                return ACTION_LEFT;
+            }
+            if (x >= rightBound) {
+                return ACTION_RIGHT;
+            }
+        }
+        return ACTION_NONE;
+    }
+
+    private int getThumbnailIndexAt(int x, int y) {
+        if (!thumbnailsVisible || !canNavigate()) {
+            return -1;
+        }
+        int barHeight = Math.max(24, Display.getInstance().convertToPixels(thumbnailBarHeightMM));
+        int barTop = getY() + getHeight() - barHeight;
+        if (y < barTop || y > getY() + getHeight()) {
+            return -1;
+        }
+        int size = swipeableImages.getSize();
+        int availableWidth = getWidth() - 8;
+        int perThumbWidth = Math.max(14, availableWidth / size);
+        int startX = getX() + (getWidth() - (perThumbWidth * size)) / 2;
+        if (x < startX || x > startX + perThumbWidth * size) {
+            return -1;
+        }
+        int index = (x - startX) / perThumbWidth;
+        if (index < 0 || index >= size) {
+            return -1;
+        }
+        return index;
+    }
+
+    private void drawNavigationChrome(Graphics g) {
+        if (!canNavigate()) {
+            return;
+        }
+        if (navigationArrowsVisible) {
+            drawArrow(g, true);
+            drawArrow(g, false);
+        }
+        if (thumbnailsVisible) {
+            drawThumbnails(g);
+        }
+    }
+
+    private void drawArrow(Graphics g, boolean left) {
+        int diameter = 28;
+        int radius = diameter / 2;
+        int centerX = left ? getX() + 16 : getX() + getWidth() - 16;
+        int centerY = getY() + getHeight() / 2;
+        g.setColor(0x66000000);
+        g.fillArc(centerX - radius, centerY - radius, diameter, diameter, 0, 360);
+        g.setColor(0xffffff);
+        char icon = left ? FontImage.MATERIAL_CHEVRON_LEFT : FontImage.MATERIAL_CHEVRON_RIGHT;
+        String iconText = String.valueOf(icon);
+        Font oldFont = g.getFont();
+        g.setFont(FontImage.getMaterialDesignFont());
+        Font iconFont = g.getFont();
+        int iconX = centerX - iconFont.stringWidth(iconText) / 2;
+        int iconY = centerY - iconFont.getHeight() / 2;
+        g.drawString(iconText, iconX, iconY);
+        g.setFont(oldFont);
+    }
+
+    private void drawThumbnails(Graphics g) {
+        int size = swipeableImages.getSize();
+        int barHeight = Math.max(24, Display.getInstance().convertToPixels(thumbnailBarHeightMM));
+        int y = getY() + getHeight() - barHeight;
+        g.setColor(0x66000000);
+        g.fillRect(getX(), y, getWidth(), barHeight);
+        int availableWidth = getWidth() - 8;
+        int perThumbWidth = Math.max(14, availableWidth / size);
+        int thumbMargin = 2;
+        int startX = getX() + (getWidth() - (perThumbWidth * size)) / 2;
+        int thumbHeight = barHeight - 6;
+        for (int i = 0; i < size; i++) {
+            int tx = startX + i * perThumbWidth;
+            Image thumb = swipeableImages.getItemAt(i);
+            g.drawImage(thumb, tx + thumbMargin, y + 3, perThumbWidth - thumbMargin * 2, thumbHeight);
+            g.setColor(i == swipeableImages.getSelectedIndex() ? 0xffffff : 0x99ffffff);
+            g.drawRect(tx + thumbMargin, y + 3, perThumbWidth - thumbMargin * 2, thumbHeight);
+        }
+    }
+
+    /// {@inheritDoc}
     @Override
     protected void paintBackground(Graphics g) {
         // disable background painting for performance when zooming
@@ -772,22 +1044,22 @@ public class ImageViewer extends Component {
         }
     }
 
-    /**
-     * Returns the currently showing image
-     *
-     * @return the image
-     */
+    /// Returns the currently showing image
+    ///
+    /// #### Returns
+    ///
+    /// the image
     public Image getImage() {
         return image;
     }
 
-    /**
-     * Sets the currently showing image
-     *
-     * @param image the image to set
-     */
+    /// Sets the currently showing image
+    ///
+    /// #### Parameters
+    ///
+    /// - `image`: the image to set
     public final void setImage(Image image) {
-        if (this.image != image) {
+        if (this.image != image) { //NOPMD CompareObjectsWithEquals
             panPositionX = 0.5f;
             panPositionY = 0.5f;
             zoom = MIN_ZOOM;
@@ -803,30 +1075,30 @@ public class ImageViewer extends Component {
         }
     }
 
-    /**
-     * Sets the current image without any changes to the panning/scaling
-     *
-     * @param image new image instance
-     */
+    /// Sets the current image without any changes to the panning/scaling
+    ///
+    /// #### Parameters
+    ///
+    /// - `image`: new image instance
     public void setImageNoReposition(Image image) {
         this.image = image;
         repaint();
     }
 
-    /**
-     * Returns the list model containing the images in the we can swipe through
-     *
-     * @return the list model
-     */
+    /// Returns the list model containing the images in the we can swipe through
+    ///
+    /// #### Returns
+    ///
+    /// the list model
     public ListModel<Image> getImageList() {
         return swipeableImages;
     }
 
-    /**
-     * By providing this optional list of images you can allows swiping between multiple images
-     *
-     * @param model a list of images
-     */
+    /// By providing this optional list of images you can allows swiping between multiple images
+    ///
+    /// #### Parameters
+    ///
+    /// - `model`: a list of images
     public void setImageList(ListModel<Image> model) {
         if (model == null || model.getSize() == 0) {
             return;
@@ -865,38 +1137,95 @@ public class ImageViewer extends Component {
         this.swipeableImages = model;
     }
 
-    /**
-     * Indicates if the zoom should bee animated. It's true by default
-     *
-     * @param animateZoom true if zoom is animated
-     */
+    /// Indicates if the zoom should bee animated. It's true by default
+    ///
+    /// #### Parameters
+    ///
+    /// - `animateZoom`: true if zoom is animated
     public void setAnimateZoom(boolean animateZoom) {
         this.animateZoom = animateZoom;
     }
 
-    /**
-     * Indicates if the zoom should bee animated. It's true by default
-     *
-     * @return true if zoom is animated
-     */
+    /// Indicates if the zoom should bee animated. It's true by default
+    ///
+    /// #### Returns
+    ///
+    /// true if zoom is animated
     public boolean isAnimatedZoom() {
         return animateZoom;
     }
 
-    /**
-     * Manipulate the zoom level of the application
-     *
-     * @return the zoom
-     */
+    /// Indicates if side navigation arrows should be painted for moving between images.
+    ///
+    /// #### Returns
+    ///
+    /// `true` if side navigation arrows are visible.
+    public boolean isNavigationArrowsVisible() {
+        return navigationArrowsVisible;
+    }
+
+    /// Enables side navigation arrows (material font icons) for moving between images.
+    ///
+    /// #### Parameters
+    ///
+    /// - `navigationArrowsVisible`: `true` to show side navigation arrows.
+    public void setNavigationArrowsVisible(boolean navigationArrowsVisible) {
+        this.navigationArrowsVisible = navigationArrowsVisible;
+        repaint();
+    }
+
+    /// Indicates if thumbnails should be painted in a strip at the bottom for direct image selection.
+    ///
+    /// #### Returns
+    ///
+    /// `true` if the thumbnail strip is visible.
+    public boolean isThumbnailsVisible() {
+        return thumbnailsVisible;
+    }
+
+    /// Enables a bottom thumbnail strip for direct image selection.
+    ///
+    /// #### Parameters
+    ///
+    /// - `thumbnailsVisible`: `true` to show thumbnails.
+    public void setThumbnailsVisible(boolean thumbnailsVisible) {
+        this.thumbnailsVisible = thumbnailsVisible;
+        repaint();
+    }
+
+    /// Gets the thumbnail strip height in millimeters.
+    ///
+    /// #### Returns
+    ///
+    /// Height of the thumbnail strip in millimeters.
+    public float getThumbnailBarHeight() {
+        return thumbnailBarHeightMM;
+    }
+
+    /// Sets the thumbnail strip height in millimeters.
+    ///
+    /// #### Parameters
+    ///
+    /// - `thumbnailBarHeight`: Height of the thumbnail strip in millimeters.
+    public void setThumbnailBarHeight(float thumbnailBarHeight) {
+        this.thumbnailBarHeightMM = Math.max(1f, thumbnailBarHeight);
+        repaint();
+    }
+
+    /// Manipulate the zoom level of the application
+    ///
+    /// #### Returns
+    ///
+    /// the zoom
     public float getZoom() {
         return zoom;
     }
 
-    /**
-     * Manipulate the zoom level of the application
-     *
-     * @param zoom the zoom to set
-     */
+    /// Manipulate the zoom level of the application
+    ///
+    /// #### Parameters
+    ///
+    /// - `zoom`: the zoom to set
     public void setZoom(float zoom) {
         if (animateZoom) {
             zooming = true;
@@ -911,22 +1240,28 @@ public class ImageViewer extends Component {
         }
     }
 
-    /**
-     * Manipulate the zoom level of the application
-     *
-     * @param zoom         the zoom to set
-     * @param panPositionX A float value between 0 and 1 to set the image x position
-     * @param panPositionY A float value between 0 and 1 to set the image y position
-     */
+    /// Manipulate the zoom level of the application
+    ///
+    /// #### Parameters
+    ///
+    /// - `zoom`: the zoom to set
+    ///
+    /// - `panPositionX`: A float value between 0 and 1 to set the image x position
+    ///
+    /// - `panPositionY`: A float value between 0 and 1 to set the image y position
     public void setZoom(float zoom, float panPositionX, float panPositionY) {
-        if (panPositionX > 1)
+        if (panPositionX > 1) {
             panPositionX = 1;
-        if (panPositionX < 0)
+        }
+        if (panPositionX < 0) {
             panPositionX = 0;
-        if (panPositionY > 1)
+        }
+        if (panPositionY > 1) {
             panPositionY = 1;
-        if (panPositionY < 0)
+        }
+        if (panPositionY < 0) {
             panPositionY = 0;
+        }
         this.panPositionX = panPositionX;
         this.panPositionY = panPositionY;
         if (animateZoom) {
@@ -942,124 +1277,125 @@ public class ImageViewer extends Component {
         }
     }
 
-    /**
-     * This image is shown briefly during swiping while the full size image is loaded
-     *
-     * @return the swipePlaceholder
-     */
+    /// This image is shown briefly during swiping while the full size image is loaded
+    ///
+    /// #### Returns
+    ///
+    /// the swipePlaceholder
     public Image getSwipePlaceholder() {
         return swipePlaceholder;
     }
 
-    /**
-     * This image is shown briefly during swiping while the full size image is loaded
-     *
-     * @param swipePlaceholder the swipePlaceholder to set
-     */
+    /// This image is shown briefly during swiping while the full size image is loaded
+    ///
+    /// #### Parameters
+    ///
+    /// - `swipePlaceholder`: the swipePlaceholder to set
     public void setSwipePlaceholder(Image swipePlaceholder) {
         this.swipePlaceholder = swipePlaceholder;
     }
 
-    /**
-     * Eager locking effectively locks the right/left images as well as the main image, as a result
-     * more heap is taken
-     *
-     * @return the eagerLock
-     */
+    /// Eager locking effectively locks the right/left images as well as the main image, as a result
+    /// more heap is taken
+    ///
+    /// #### Returns
+    ///
+    /// the eagerLock
     public boolean isEagerLock() {
         return eagerLock;
     }
 
-    /**
-     * Eager locking effectively locks the right/left images as well as the main image, as a result
-     * more heap is taken
-     *
-     * @param eagerLock the eagerLock to set
-     */
+    /// Eager locking effectively locks the right/left images as well as the main image, as a result
+    /// more heap is taken
+    ///
+    /// #### Parameters
+    ///
+    /// - `eagerLock`: the eagerLock to set
     public void setEagerLock(boolean eagerLock) {
         this.eagerLock = eagerLock;
     }
 
-    /**
-     * By default the ImageViewer cycles from the beginning to the end of the list
-     * when going to the left, setting this to false prevents this behaviour
-     *
-     * @return true if it should cycle left from beginning
-     */
+    /// By default the ImageViewer cycles from the beginning to the end of the list
+    /// when going to the left, setting this to false prevents this behaviour
+    ///
+    /// #### Returns
+    ///
+    /// true if it should cycle left from beginning
     public boolean isCycleLeft() {
         return cycleLeft;
     }
 
-    /**
-     * By default the ImageViewer cycles from the beginning to the end of the list
-     * when going to the left, setting this to false prevents this behaviour
-     *
-     * @param cycleLeft the cycle left to set
-     */
+    /// By default the ImageViewer cycles from the beginning to the end of the list
+    /// when going to the left, setting this to false prevents this behaviour
+    ///
+    /// #### Parameters
+    ///
+    /// - `cycleLeft`: the cycle left to set
     public void setCycleLeft(boolean cycleLeft) {
         this.cycleLeft = cycleLeft;
     }
 
-    /**
-     * By default the ImageViewer cycles from the end to the beginning of the list
-     * when going to the right, setting this to false prevents this behaviour
-     *
-     * @return true if it should cycle right from the end
-     */
+    /// By default the ImageViewer cycles from the end to the beginning of the list
+    /// when going to the right, setting this to false prevents this behaviour
+    ///
+    /// #### Returns
+    ///
+    /// true if it should cycle right from the end
     public boolean isCycleRight() {
         return cycleRight;
     }
 
-    /**
-     * By default the ImageViewer cycles from the end to the beginning of the list
-     * when going to the right, setting this to false prevents this behaviour
-     *
-     * @param cycleRight the cycle right to set
-     */
+    /// By default the ImageViewer cycles from the end to the beginning of the list
+    /// when going to the right, setting this to false prevents this behaviour
+    ///
+    /// #### Parameters
+    ///
+    /// - `cycleRight`: the cycle right to set
     public void setCycleRight(boolean cycleRight) {
         this.cycleRight = cycleRight;
     }
 
-    /**
-     * The swipe threshold is a number between 0 and 1 that indicates the threshold
-     * after which the swiped image moves to the next image. Below that number the image
-     * will bounce back
-     *
-     * @return the threshold
-     */
+    /// The swipe threshold is a number between 0 and 1 that indicates the threshold
+    /// after which the swiped image moves to the next image. Below that number the image
+    /// will bounce back
+    ///
+    /// #### Returns
+    ///
+    /// the threshold
     public float getSwipeThreshold() {
         return swipeThreshold;
     }
 
-    /**
-     * The swipe threshold is a number between 0 and 1 that indicates the threshold
-     * after which the swiped image moves to the next image. Below that number the image
-     * will bounce back
-     *
-     * @param swipeThreshold the swipeThreshold to set
-     */
+    /// The swipe threshold is a number between 0 and 1 that indicates the threshold
+    /// after which the swiped image moves to the next image. Below that number the image
+    /// will bounce back
+    ///
+    /// #### Parameters
+    ///
+    /// - `swipeThreshold`: the swipeThreshold to set
     public void setSwipeThreshold(float swipeThreshold) {
         this.swipeThreshold = swipeThreshold;
     }
 
-    /**
-     * Sets the viewer initial image position to fill or to fit.
-     *
-     * @param imageInitialPosition values can be IMAGE_FILL or IMAGE_FIT
-     */
+    /// Sets the viewer initial image position to fill or to fit.
+    ///
+    /// #### Parameters
+    ///
+    /// - `imageInitialPosition`: values can be IMAGE_FILL or IMAGE_FIT
     public void setImageInitialPosition(int imageInitialPosition) {
         this.imageInitialPosition = imageInitialPosition;
     }
 
     private class CropBox {
-        /**
-         * The top, left, right, bottom crop positions expressed as
-         * ratios of corresponding axis length.  E.g. top/bottom are
-         * ratio of crop position to the height.  Left/right are ratio of crop
-         * position to width.  Positive values move inward toward image center
-         * Negative values move box out.
-         */
-        private double top, left, right, bottom;
+        /// The top, left, right, bottom crop positions expressed as
+        /// ratios of corresponding axis length.  E.g. top/bottom are
+        /// ratio of crop position to the height.  Left/right are ratio of crop
+        /// position to width.  Positive values move inward toward image center
+        /// Negative values move box out.
+        private double top;
+        private double left;
+        private double right;
+        private double bottom;
 
         CropBox() {
 
@@ -1084,35 +1420,35 @@ public class ImageViewer extends Component {
             return "CropBox{" + top + ", " + right + ", " + bottom + ", " + left + "}";
         }
 
-        /**
-         * Given a cropped image width, this returns the source image width necessary
-         * to produce the cropped image.
-         *
-         * @param croppedWidth
-         * @return
-         */
+        /// Given a cropped image width, this returns the source image width necessary
+        /// to produce the cropped image.
+        ///
+        /// #### Parameters
+        ///
+        /// - `croppedWidth`
         private int imageWidthForCroppedWidth(int croppedWidth) {
             return (int) Math.round(-croppedWidth / (left + right - 1));
         }
 
-        /**
-         * Given a cropped image height, this returns the source image height necessary to
-         * produce the cropped image.
-         *
-         * @param croppedHeight
-         * @return
-         */
+        /// Given a cropped image height, this returns the source image height necessary to
+        /// produce the cropped image.
+        ///
+        /// #### Parameters
+        ///
+        /// - `croppedHeight`
         private int imageHeightForCroppedHeight(int croppedHeight) {
             return (int) (Math.round(-croppedHeight / (top + bottom - 1)));
         }
 
-        /**
-         * Paints the source image onto a Graphics context for a cropped image.
-         *
-         * @param g           The graphics context
-         * @param imageWidth  The cropped image width.
-         * @param imageHeight The cropped image height.
-         */
+        /// Paints the source image onto a Graphics context for a cropped image.
+        ///
+        /// #### Parameters
+        ///
+        /// - `g`: The graphics context
+        ///
+        /// - `imageWidth`: The cropped image width.
+        ///
+        /// - `imageHeight`: The cropped image height.
         private void paint(Graphics g, int imageWidth, int imageHeight) {
             int ih = imageHeightForCroppedHeight(imageHeight);
             int iw = imageWidthForCroppedWidth(imageWidth);
@@ -1149,10 +1485,10 @@ public class ImageViewer extends Component {
                         setImage(replaceImage);
                         Image left = getImageLeft();
                         Image right = getImageRight();
-                        if (left != replaceImage) {
+                        if (left != replaceImage) { //NOPMD CompareObjectsWithEquals
                             left.unlock();
                         }
-                        if (right != replaceImage) {
+                        if (right != replaceImage) { //NOPMD CompareObjectsWithEquals
                             right.unlock();
                         }
                         selectLock = true;

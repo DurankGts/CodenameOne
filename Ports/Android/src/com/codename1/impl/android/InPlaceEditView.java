@@ -68,6 +68,7 @@ import android.widget.AutoCompleteTextView;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 
+import com.codename1.io.Util;
 import com.codename1.ui.Accessor;
 
 import com.codename1.ui.Component;
@@ -103,31 +104,6 @@ public class InPlaceEditView extends FrameLayout{
     public static final int REASON_TOUCH_OUTSIDE = 2;
     public static final int REASON_SYSTEM_KEY = 3;
 
-    static void scrollActiveTextfieldToVisible() {
-        if (isEditing() && sInstance != null) {
-            Runnable r = new Runnable() {
-
-                @Override
-                public void run() {
-                    if (sInstance != null && sInstance.mEditText != null && sInstance.mEditText.mTextArea != null) {
-                        TextArea ta = sInstance.mEditText.mTextArea;
-                        if (isScrollableParent(ta)) {
-                            ta.scrollRectToVisible(0, 0, ta.getWidth(), ta.getHeight(), ta);
-                            ta.getComponentForm().getAnimationManager().flushAnimation(new Runnable() {
-
-                                @Override
-                                public void run() {
-                                    reLayoutEdit();
-                                }
-                                
-                            });
-                        }
-                    }
-                }
-                
-            };
-        }
-    }
     // The native Android edit-box to place over Codename One's edit-component
     private EditView mEditText = null;
     private EditView mLastEditText = null;
@@ -1335,10 +1311,7 @@ public class InPlaceEditView extends FrameLayout{
 
             new Thread(new Runnable() {
                 public void run() {
-                    try {
-                        Thread.sleep(100);
-
-                    } catch (Exception ex){}
+                    Util.sleep(100);
                     if (thisCount != trySetEditModeCount-1) {
                         return;
                     }

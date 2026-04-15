@@ -6,6 +6,11 @@ setlocal EnableExtensions
 
 set MVNW=mvnw.cmd
 
+java -version 2>&1 | findstr /r /c:"version \"17\." /c:"version \"17\"" >nul
+if errorlevel 1 if exist "C:\Program Files\Java\jdk-17" set "JAVA_HOME=C:\Program Files\Java\jdk-17"
+if errorlevel 1 if exist "C:\Program Files\Eclipse Adoptium\jdk-17" set "JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-17"
+if not "%JAVA_HOME%"=="" set "PATH=%JAVA_HOME%\bin;%PATH%"
+
 SET CMD=%1
 if "%CMD%"=="" (
   set CMD=jar
@@ -65,6 +70,11 @@ goto :EOF
 !MVNW! -Pexecutable-jar package -Dcodename1.platform^=javase -DskipTests -U -e
 
 goto :EOF
+
+:compliance
+!MVNW! -pl common -am process-classes -DskipTests -U -e
+
+goto :EOF
 :help
 echo build.sh [COMMAND]
 echo Local Build Commands:
@@ -80,6 +90,8 @@ echo     *Requires either GRADLE_HOME environment variable^, or for gradle to be
 echo   ios_source
 echo     Generates an Xcode Project that you can open and build using Apple^'s development tools
 echo     *Requires a Mac with Xcode installed
+echo   compliance
+echo     Runs the common module process-classes phase ^(including cn1 compliance-check^)
 echo 
 echo Build Server Commands:
 echo   The following commands will build the app using the Codename One build server^, and require

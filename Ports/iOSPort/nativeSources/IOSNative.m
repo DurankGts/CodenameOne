@@ -28,6 +28,7 @@
 #include "xmlvm.h"
 #include "java_lang_String.h"
 #import "CN1ES2compat.h"
+#import <objc/runtime.h>
 
 #ifndef NEW_CODENAME_ONE_VM
 #include "xmlvm-util.h"
@@ -51,6 +52,8 @@
 #import <CoreLocation/CoreLocation.h>
 #import <MobileCoreServices/UTCoreTypes.h>
 #import <Foundation/Foundation.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #import <MessageUI/MFMailComposeViewController.h>
 #import <AddressBookUI/AddressBookUI.h>
 #import <MessageUI/MFMessageComposeViewController.h>
@@ -114,6 +117,76 @@ extern int popoverSupported();
 #endif
 #endif
 #endif
+
+// iOS doesn't allow blocking a static screenshot, but it does expose a flag
+// that tells us when the screen is being captured (recorded or mirrored). We
+// use that signal to temporarily cover the app view with a black overlay.
+static BOOL cn1_disableScreenshots = NO;
+static UIView *cn1ScreenCaptureView = nil;
+static id cn1ScreenCaptureObserver = nil;
+
+static UIView *cn1_screenCaptureContainer() {
+    // Prefer the GL view controller's view. Fall back to the key window so
+    // we can still cover the app if the controller isn't ready yet.
+    UIView *container = [[CodenameOne_GLViewController instance] view];
+    if (container == nil) {
+        container = [UIApplication sharedApplication].keyWindow;
+        if (container == nil && [[UIApplication sharedApplication].windows count] > 0) {
+            container = [[UIApplication sharedApplication].windows objectAtIndex:0];
+        }
+    }
+    return container;
+}
+
+static void cn1_updateScreenCaptureBlocker() {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 110000
+    // Compile-time guard: screen-capture detection APIs were introduced in iOS 11.
+    // This keeps older SDKs building cleanly without referencing unavailable symbols.
+    if (!cn1_disableScreenshots) {
+        if (cn1ScreenCaptureView != nil) {
+            [cn1ScreenCaptureView removeFromSuperview];
+            cn1ScreenCaptureView = nil;
+        }
+        return;
+    }
+    if (![[UIScreen mainScreen] respondsToSelector:@selector(isCaptured)]) {
+        // Runtime guard: if running on an older iOS version, just skip.
+        return;
+    }
+    BOOL captured = NO;
+    if (@available(iOS 11.0, *)) {
+        captured = [UIScreen mainScreen].isCaptured;
+    }
+    if (captured) {
+        // If screen capture is active, hide the UI behind an overlay view.
+        UIView *container = cn1_screenCaptureContainer();
+        if (container == nil) {
+            return;
+        }
+        if (cn1ScreenCaptureView == nil) {
+            cn1ScreenCaptureView = [[UIView alloc] initWithFrame:container.bounds];
+            cn1ScreenCaptureView.backgroundColor = [UIColor blackColor];
+            cn1ScreenCaptureView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            cn1ScreenCaptureView.userInteractionEnabled = NO;
+        }
+        if (cn1ScreenCaptureView.superview != container) {
+            [cn1ScreenCaptureView removeFromSuperview];
+            [container addSubview:cn1ScreenCaptureView];
+        } else {
+            cn1ScreenCaptureView.frame = container.bounds;
+        }
+    } else if (cn1ScreenCaptureView != nil) {
+        [cn1ScreenCaptureView removeFromSuperview];
+        cn1ScreenCaptureView = nil;
+    }
+#else
+    // Older SDKs don't have the screen-capture APIs. Nothing to do.
+    if (cn1ScreenCaptureView != nil) {
+        [cn1ScreenCaptureView removeFromSuperview];
+        cn1ScreenCaptureView = nil;
+    }
+#endif
+}
 
 /*static JAVA_OBJECT utf8_constant = JAVA_NULL;
  JAVA_OBJECT fromNSString(NSString* str)
@@ -2024,6 +2097,37 @@ void com_codename1_impl_ios_IOSNative_unlockScreen__(CN1_THREAD_STATE_MULTI_ARG 
     });
 }
 
+void com_codename1_impl_ios_IOSNative_setDisableScreenshots___boolean(CN1_THREAD_STATE_MULTI_ARG JAVA_OBJECT instanceObject, JAVA_BOOLEAN disable)
+{
+    BOOL shouldDisable = disable ? YES : NO;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        cn1_disableScreenshots = shouldDisable;
+        if (cn1ScreenCaptureObserver != nil) {
+            [[NSNotificationCenter defaultCenter] removeObserver:cn1ScreenCaptureObserver];
+            cn1ScreenCaptureObserver = nil;
+        }
+        if (cn1ScreenCaptureView != nil) {
+            [cn1ScreenCaptureView removeFromSuperview];
+            cn1ScreenCaptureView = nil;
+        }
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 110000
+        if (cn1_disableScreenshots && [[UIScreen mainScreen] respondsToSelector:@selector(isCaptured)]) {
+            if (@available(iOS 11.0, *)) {
+                // Listen for capture state changes so we can add/remove the overlay.
+                cn1ScreenCaptureObserver = [[NSNotificationCenter defaultCenter] addObserverForName:UIScreenCapturedDidChangeNotification
+                                                                                            object:[UIScreen mainScreen]
+                                                                                             queue:[NSOperationQueue mainQueue]
+                                                                                        usingBlock:^(NSNotification *notification) {
+                    cn1_updateScreenCaptureBlocker();
+                }];
+            }
+        }
+#endif
+        // Ensure the overlay reflects the current capture state immediately.
+        cn1_updateScreenCaptureBlocker();
+    });
+}
+
 extern void vibrateDevice();
 void com_codename1_impl_ios_IOSNative_vibrate___int(CN1_THREAD_STATE_MULTI_ARG JAVA_OBJECT instanceObject, JAVA_INT duration) {
     vibrateDevice();
@@ -2482,6 +2586,18 @@ void com_codename1_impl_ios_IOSNative_retainPeer___long(CN1_THREAD_STATE_MULTI_A
 #ifndef NO_UIWEBVIEW
 UIWebView* com_codename1_impl_ios_IOSNative_createBrowserComponent = nil;
 #endif
+static void cn1_setBrowserFollowTargetBlank(id webView, BOOL follow) {
+    objc_setAssociatedObject(webView, @selector(cn1FollowTargetBlank), [NSNumber numberWithBool:follow], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+static BOOL cn1_shouldFollowTargetBlank(id webView) {
+    NSNumber *value = objc_getAssociatedObject(webView, @selector(cn1FollowTargetBlank));
+    if (value == nil) {
+        return YES;
+    }
+    return [value boolValue];
+}
+
 JAVA_LONG com_codename1_impl_ios_IOSNative_createBrowserComponent___java_lang_Object(CN1_THREAD_STATE_MULTI_ARG JAVA_OBJECT instanceObject, JAVA_OBJECT obj) {
 #ifndef NO_UIWEBVIEW
     dispatch_sync(dispatch_get_main_queue(), ^{
@@ -2493,6 +2609,7 @@ JAVA_LONG com_codename1_impl_ios_IOSNative_createBrowserComponent___java_lang_Ob
         com_codename1_impl_ios_IOSNative_createBrowserComponent.delegate = del;
         com_codename1_impl_ios_IOSNative_createBrowserComponent.autoresizingMask=(UIViewAutoresizingFlexibleHeight | UIViewAutoresizingFlexibleWidth);
         [com_codename1_impl_ios_IOSNative_createBrowserComponent setAllowsInlineMediaPlayback:YES];
+        cn1_setBrowserFollowTargetBlank(com_codename1_impl_ios_IOSNative_createBrowserComponent, YES);
 #ifndef CN1_USE_ARC
         [com_codename1_impl_ios_IOSNative_createBrowserComponent retain];
 #endif
@@ -2536,6 +2653,7 @@ JAVA_LONG com_codename1_impl_ios_IOSNative_createWKBrowserComponent___java_lang_
             com_codename1_impl_ios_IOSNative_createWKBrowserComponent.backgroundColor = [UIColor clearColor];
             com_codename1_impl_ios_IOSNative_createWKBrowserComponent.opaque = NO;
             com_codename1_impl_ios_IOSNative_createWKBrowserComponent.autoresizesSubviews = YES;
+            cn1_setBrowserFollowTargetBlank(com_codename1_impl_ios_IOSNative_createWKBrowserComponent, YES);
 
             if (getBooleanClientProperty(CN1_THREAD_GET_STATE_PASS_ARG obj, @"BrowserComponent.ios.debug")) {
                 com_codename1_impl_ios_IOSNative_createWKBrowserComponent.inspectable = YES;
@@ -2596,6 +2714,24 @@ void com_codename1_impl_ios_IOSNative_setBrowserUserAgent___long_java_lang_Strin
         POOL_END();
     });
 #endif
+}
+
+void com_codename1_impl_ios_IOSNative_setBrowserFollowTargetBlank___long_boolean(CN1_THREAD_STATE_MULTI_ARG JAVA_OBJECT instanceObject, JAVA_LONG peer, JAVA_BOOLEAN follow) {
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        POOL_BEGIN();
+        if (isWKWebView(peer)) {
+#ifdef supportsWKWebKit
+            WKWebView* w = (BRIDGE_CAST WKWebView*)((void *)peer);
+            cn1_setBrowserFollowTargetBlank(w, follow);
+#endif
+        } else {
+#ifndef NO_UIWEBVIEW
+            UIWebView* w = (BRIDGE_CAST UIWebView*)((void *)peer);
+            cn1_setBrowserFollowTargetBlank(w, follow);
+#endif
+        }
+        POOL_END();
+    });
 }
 
 
@@ -4117,6 +4253,36 @@ JAVA_BOOLEAN com_codename1_impl_ios_IOSNative_isDarkModeDetectionSupported___R_b
     } else {
         return JAVA_FALSE;
     }
+}
+
+JAVA_BOOLEAN com_codename1_impl_ios_IOSNative_isVPNActive___R_boolean(CN1_THREAD_STATE_MULTI_ARG JAVA_OBJECT instanceObject) {
+    struct ifaddrs *interfaces = NULL;
+    if (getifaddrs(&interfaces) != 0) {
+        return JAVA_FALSE;
+    }
+    JAVA_BOOLEAN found = JAVA_FALSE;
+    struct ifaddrs *ifa = interfaces;
+    while (ifa != NULL) {
+        if (ifa->ifa_name == NULL || ifa->ifa_addr == NULL) {
+            ifa = ifa->ifa_next;
+            continue;
+        }
+        if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK)) {
+            ifa = ifa->ifa_next;
+            continue;
+        }
+        NSString *name = [NSString stringWithUTF8String:ifa->ifa_name];
+        if (name != nil) {
+            NSString *lowerName = [name lowercaseString];
+            if ([lowerName hasPrefix:@"utun"] || [lowerName hasPrefix:@"tap"] || [lowerName hasPrefix:@"tun"] || [lowerName hasPrefix:@"ppp"] || [lowerName hasPrefix:@"ipsec"]) {
+                found = JAVA_TRUE;
+                break;
+            }
+        }
+        ifa = ifa->ifa_next;
+    }
+    freeifaddrs(interfaces);
+    return found;
 }
 
 JAVA_BOOLEAN com_codename1_impl_ios_IOSNative_isLargerTextEnabled___R_boolean(CN1_THREAD_STATE_MULTI_ARG JAVA_OBJECT instanceObject) {
@@ -9563,6 +9729,67 @@ JAVA_INT com_codename1_impl_ios_IOSNative_readNSFile___long(CN1_THREAD_STATE_MUL
 #endif
 
 
+static void cn1CancelScheduledLocalNotificationById(NSString *nsId) {
+    if (nsId == nil) {
+        return;
+    }
+#ifdef CN1_INCLUDE_NOTIFICATIONS2
+    if (@available(iOS 10, *)) {
+        UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+        dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+        __block NSMutableArray<NSString *> *matches = [NSMutableArray array];
+        [center getPendingNotificationRequestsWithCompletionHandler:^(NSArray<UNNotificationRequest *> * _Nonnull requests) {
+            for (UNNotificationRequest *request in requests) {
+                NSString *uid = [NSString stringWithFormat:@"%@", [request.content.userInfo valueForKey:@"__ios_id__"]];
+                if ([nsId isEqualToString:uid] || [nsId isEqualToString:request.identifier]) {
+                    [matches addObject:request.identifier];
+                }
+            }
+            dispatch_semaphore_signal(sem);
+        }];
+        dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)));
+        if ([matches count] > 0) {
+            [center removePendingNotificationRequestsWithIdentifiers:matches];
+            [center removeDeliveredNotificationsWithIdentifiers:matches];
+        }
+    }
+#endif
+}
+
+#ifdef CN1_INCLUDE_NOTIFICATIONS2
+static UNNotificationTrigger* cn1CreateNotificationTrigger(JAVA_LONG fireDate, JAVA_INT repeatType) API_AVAILABLE(ios(10.0));
+static UNNotificationTrigger* cn1CreateNotificationTrigger(JAVA_LONG fireDate, JAVA_INT repeatType) {
+    NSTimeInterval targetTime = fireDate / 1000.0 + 1;
+    NSDate *targetDate = [NSDate dateWithTimeIntervalSince1970:targetTime];
+    NSTimeInterval delta = targetTime - [[NSDate date] timeIntervalSince1970];
+    if (delta < 1) {
+        delta = 1;
+    }
+
+    NSCalendar *calendar = [NSCalendar currentCalendar];
+    NSDateComponents *components;
+    switch (repeatType) {
+        case 0:
+            return [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:delta repeats:NO];
+        case 1:
+            components = [calendar components:(NSCalendarUnitSecond) fromDate:targetDate];
+            return [UNCalendarNotificationTrigger triggerWithDateMatchingComponents:components repeats:YES];
+        case 3:
+            components = [calendar components:(NSCalendarUnitMinute | NSCalendarUnitSecond) fromDate:targetDate];
+            return [UNCalendarNotificationTrigger triggerWithDateMatchingComponents:components repeats:YES];
+        case 4:
+            components = [calendar components:(NSCalendarUnitHour | NSCalendarUnitMinute | NSCalendarUnitSecond) fromDate:targetDate];
+            return [UNCalendarNotificationTrigger triggerWithDateMatchingComponents:components repeats:YES];
+        case 5:
+            components = [calendar components:(NSCalendarUnitWeekday | NSCalendarUnitHour | NSCalendarUnitMinute | NSCalendarUnitSecond) fromDate:targetDate];
+            return [UNCalendarNotificationTrigger triggerWithDateMatchingComponents:components repeats:YES];
+        default:
+            CN1Log(@"Unknown repeat interval type %d. Ignoring repeat interval", repeatType);
+            return [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:delta repeats:NO];
+    }
+}
+#endif
+
 JAVA_VOID com_codename1_impl_ios_IOSNative_sendLocalNotification___java_lang_String_java_lang_String_java_lang_String_java_lang_String_int_long_int_boolean( CN1_THREAD_STATE_MULTI_ARG
     JAVA_OBJECT me, JAVA_OBJECT notificationId, JAVA_OBJECT alertTitle, JAVA_OBJECT alertBody, JAVA_OBJECT alertSound, JAVA_INT badgeNumber, JAVA_LONG fireDate, JAVA_INT repeatType, JAVA_BOOLEAN foreground
                                                                                                                                                                      ) {
@@ -9593,115 +9820,37 @@ JAVA_VOID com_codename1_impl_ios_IOSNative_sendLocalNotification___java_lang_Str
     body = tmpStr;
     
     NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
-    [dict setObject: toNSString(CN1_THREAD_STATE_PASS_ARG notificationId) forKey: @"__ios_id__"];
+    NSString *notificationIdString = toNSString(CN1_THREAD_STATE_PASS_ARG notificationId);
+    [dict setObject: notificationIdString forKey: @"__ios_id__"];
     if (foreground) {
         [dict setObject: @"true" forKey: @"foreground"];
     }
-    
-    if (NO && @available(iOS 10, *)) {
-        // November 23, 2020 - Steve
-        // Disabling this block, which uses the new UNUserNotifications API for sending local notifications,
-        // and opting to continue to use the old UILocalNotifications API for now.  This is because
-        // the new API doesn't have an option to use a different repeat interval than the firstFire
-        // interval, and the UNUserNotifications API can still be used to receive the notification
-        // in the application delegate class fine.
-        // Eventually we'll probably want to switch to the new API, but for now, it is just too much work
-        // to try to replicate the functionality lost by the new API.
-        dispatch_sync(dispatch_get_main_queue(), ^{
-            
-            UNMutableNotificationContent* content = [[UNMutableNotificationContent alloc] init];
-            
-            content.title = [NSString localizedUserNotificationStringForKey:title arguments:nil];
-            content.body = [NSString localizedUserNotificationStringForKey:body
-                    arguments:nil];
-            if (alertSound) {
-                content.sound = [UNNotificationSound soundNamed:toNSString(CN1_THREAD_STATE_PASS_ARG alertSound)];
-                
+    if (@available(iOS 10, *)) {
+        UNMutableNotificationContent* content = [[UNMutableNotificationContent alloc] init];
+        content.title = [NSString localizedUserNotificationStringForKey:title arguments:nil];
+        content.body = [NSString localizedUserNotificationStringForKey:body arguments:nil];
+        if (alertSound != NULL) {
+            NSString *soundName = toNSString(CN1_THREAD_STATE_PASS_ARG alertSound);
+            if (soundName != nil && [soundName length] > 0) {
+                content.sound = [UNNotificationSound soundNamed:soundName];
             }
-            if (badgeNumber >= 0) {
-                
-                content.badge = [NSNumber numberWithInt:badgeNumber];
-            }
-            content.userInfo = dict;
-                                           
-            
-            
-           
-            UNTimeIntervalNotificationTrigger *trigger = [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:fireDate/1000 - [[NSDate date] timeIntervalSince1970] + 1 repeats:NO];
-            
-            // Create the request object.
-            UNNotificationRequest* request = [UNNotificationRequest
-                   requestWithIdentifier:toNSString(CN1_THREAD_STATE_PASS_ARG notificationId) content:content trigger:trigger];
-           
-           
-             
-            UNUserNotificationCenter* center = [UNUserNotificationCenter currentNotificationCenter];
-            UNAuthorizationOptions authOptions;
-            if (@available(iOS 12.0, *)) {
-              authOptions = UNAuthorizationOptionProvisional | UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge;
-
-            } else {
-              authOptions = UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge;
-
-            }
-            [center requestAuthorizationWithOptions:authOptions
-            completionHandler:^(BOOL granted, NSError * _Nullable error) {
-                [center addNotificationRequest:request withCompletionHandler:^(NSError * _Nullable error) {
-                   if (error != nil) {
-                       NSLog(@"%@", error.localizedDescription);
-                   }
-                }];
-            }];
-            
-        });
-        
-        
-        return;
-    } else {
-        UILocalNotification *notification = [[UILocalNotification alloc] init];
-        notification.alertTitle = title;
-        notification.alertBody = body;
-
-        notification.soundName= toNSString(CN1_THREAD_STATE_PASS_ARG alertSound);
-        notification.fireDate = [NSDate dateWithTimeIntervalSince1970: fireDate/1000 + 1];
-        notification.timeZone = [NSTimeZone defaultTimeZone];
+        }
         if (badgeNumber >= 0) {
-            notification.applicationIconBadgeNumber = badgeNumber;
+            content.badge = [NSNumber numberWithInt:badgeNumber];
         }
-        switch (repeatType) {
-            case 0:
-                notification.repeatInterval = nil;
-                break;
-            case 1:
-                notification.repeatInterval = NSMinuteCalendarUnit;
-                break;
-            case 3:
-                notification.repeatInterval = NSHourCalendarUnit;
-                break;
-            case 4:
-                notification.repeatInterval = NSDayCalendarUnit;
-                break;
-            case 5:
-                notification.repeatInterval = NSWeekCalendarUnit;
-                break;
-            default:
-                CN1Log(@"Unknown repeat interval type %d.  Ignoring repeat interval", repeatType);
-                notification.repeatInterval = nil;
-        }
-            
-        
-        
-        notification.userInfo = dict;
-        
-            
-            dispatch_sync(dispatch_get_main_queue(), ^{
-#ifdef __IPHONE_8_0
-                if ([UIApplication instancesRespondToSelector:@selector(registerUserNotificationSettings:)]){
-                    [[UIApplication sharedApplication] registerUserNotificationSettings:[UIUserNotificationSettings settingsForTypes:UIUserNotificationTypeAlert|UIUserNotificationTypeBadge|UIUserNotificationTypeSound categories:nil]];
-                }
-#endif
-                [[UIApplication sharedApplication] scheduleLocalNotification: notification];
-            });
+        content.userInfo = dict;
+
+        UNNotificationTrigger *trigger = cn1CreateNotificationTrigger(fireDate, repeatType);
+        UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:notificationIdString content:content trigger:trigger];
+        UNUserNotificationCenter* center = [UNUserNotificationCenter currentNotificationCenter];
+        cn1CancelScheduledLocalNotificationById(notificationIdString);
+        [center addNotificationRequest:request withCompletionHandler:^(NSError * _Nullable error) {
+            if (error != nil) {
+                CN1Log(@"Failed to schedule local notification: %@", error.localizedDescription);
+            }
+        }];
+    } else {
+        CN1Log(@"Ignoring local notification request on iOS versions below 10");
     }
 #endif
 }
@@ -9712,16 +9861,7 @@ JAVA_VOID com_codename1_impl_ios_IOSNative_cancelLocalNotification___java_lang_S
     }
     NSString *nsId = toNSString(CN1_THREAD_STATE_PASS_ARG notificationId);
     dispatch_sync(dispatch_get_main_queue(), ^{
-        UIApplication *app = [UIApplication sharedApplication];
-        NSArray *eventArray = [app scheduledLocalNotifications];
-        for (int i=0; i<[eventArray count]; i++) {
-            UILocalNotification *n = [eventArray objectAtIndex:i];
-            NSDictionary *userInfo = n.userInfo;
-            NSString *uid = [NSString stringWithFormat:@"%@", [userInfo valueForKey: @"__ios_id__"]];
-            if ([nsId isEqualToString:uid]) {
-                [app cancelLocalNotification:n];
-            }
-        }
+        cn1CancelScheduledLocalNotificationById(nsId);
     });
 }
 

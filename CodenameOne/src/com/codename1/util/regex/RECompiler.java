@@ -19,18 +19,19 @@ package com.codename1.util.regex;
 
 import java.util.HashMap;
 
-/**
- * A regular expression compiler class.  This class compiles a pattern string into a
- * regular expression program interpretable by the RE evaluator class.  The 'recompile'
- * command line tool uses this compiler to pre-compile regular expressions for use
- * with RE.  For a description of the syntax accepted by RECompiler and what you can
- * do with regular expressions, see the documentation for the RE matcher class.
- *
- * @author <a href="mailto:jonl@muppetlabs.com">Jonathan Locke</a>
- * @author <a href="mailto:gholam@xtra.co.nz">Michael McCallum</a>
- * @version $Id: RECompiler.java 518156 2007-03-14 14:31:26Z vgritsenko $
- * @see RE
- */
+/// A regular expression compiler class.  This class compiles a pattern string into a
+/// regular expression program interpretable by the RE evaluator class.  The 'recompile'
+/// command line tool uses this compiler to pre-compile regular expressions for use
+/// with RE.  For a description of the syntax accepted by RECompiler and what you can
+/// do with regular expressions, see the documentation for the RE matcher class.
+///
+/// @author [Jonathan Locke](mailto:jonl@muppetlabs.com)
+/// @author [Michael McCallum](mailto:gholam@xtra.co.nz)
+/// @version $Id: RECompiler.java 518156 2007-03-14 14:31:26Z vgritsenko $
+///
+/// #### See also
+///
+/// - RE
 public class RECompiler {
     // Node flags
     static final int NODE_NORMAL = 0;                 // No flags (nothing special)
@@ -74,21 +75,19 @@ public class RECompiler {
     int bracketMin;                                     // Minimum number of matches
     int bracketOpt;                                     // Additional optional matches
 
-    /**
-     * Constructor.  Creates (initially empty) storage for a regular expression program.
-     */
+    /// Constructor.  Creates (initially empty) storage for a regular expression program.
     public RECompiler() {
         // Start off with a generous, yet reasonable, initial size
         instruction = new char[128];
         lenInstruction = 0;
     }
 
-    /**
-     * Ensures that n more characters can fit in the program buffer.
-     * If n more can't fit, then the size is doubled until it can.
-     *
-     * @param n Number of additional characters to ensure will fit.
-     */
+    /// Ensures that n more characters can fit in the program buffer.
+    /// If n more can't fit, then the size is doubled until it can.
+    ///
+    /// #### Parameters
+    ///
+    /// - `n`: Number of additional characters to ensure will fit.
     void ensure(int n) {
         // Get current program length
         int curlen = instruction.length;
@@ -107,11 +106,11 @@ public class RECompiler {
         }
     }
 
-    /**
-     * Emit a single character into the program stream.
-     *
-     * @param c Character to add
-     */
+    /// Emit a single character into the program stream.
+    ///
+    /// #### Parameters
+    ///
+    /// - `c`: Character to add
     void emit(char c) {
         // Make room for character
         ensure(1);
@@ -120,14 +119,16 @@ public class RECompiler {
         instruction[lenInstruction++] = c;
     }
 
-    /**
-     * Inserts a node with a given opcode and opdata at insertAt.  The node relative next
-     * pointer is initialized to 0.
-     *
-     * @param opcode   Opcode for new node
-     * @param opdata   Opdata for new node (only the low 16 bits are currently used)
-     * @param insertAt Index at which to insert the new node in the program
-     */
+    /// Inserts a node with a given opcode and opdata at insertAt.  The node relative next
+    /// pointer is initialized to 0.
+    ///
+    /// #### Parameters
+    ///
+    /// - `opcode`: Opcode for new node
+    ///
+    /// - `opdata`: Opdata for new node (only the low 16 bits are currently used)
+    ///
+    /// - `insertAt`: Index at which to insert the new node in the program
     void nodeInsert(char opcode, int opdata, int insertAt) {
         // Make room for a new node
         ensure(RE.nodeSize);
@@ -140,12 +141,13 @@ public class RECompiler {
         lenInstruction += RE.nodeSize;
     }
 
-    /**
-     * Appends a node to the end of a node chain
-     *
-     * @param node    Start of node chain to traverse
-     * @param pointTo Node to have the tail of the chain point to
-     */
+    /// Appends a node to the end of a node chain
+    ///
+    /// #### Parameters
+    ///
+    /// - `node`: Start of node chain to traverse
+    ///
+    /// - `pointTo`: Node to have the tail of the chain point to
     void setNextOfEnd(int node, int pointTo) {
         // Traverse the chain until the next offset is 0
         int next = instruction[node + RE.offsetNext];
@@ -181,13 +183,17 @@ public class RECompiler {
         }
     }
 
-    /**
-     * Adds a new node
-     *
-     * @param opcode Opcode for node
-     * @param opdata Opdata for node (only the low 16 bits are currently used)
-     * @return Index of new node in program
-     */
+    /// Adds a new node
+    ///
+    /// #### Parameters
+    ///
+    /// - `opcode`: Opcode for node
+    ///
+    /// - `opdata`: Opdata for node (only the low 16 bits are currently used)
+    ///
+    /// #### Returns
+    ///
+    /// Index of new node in program
     int node(char opcode, int opdata) {
         // Make room for a new node
         ensure(RE.nodeSize);
@@ -203,32 +209,32 @@ public class RECompiler {
     }
 
 
-    /**
-     * Throws a new internal error exception
-     *
-     * @throws Error Thrown in the event of an internal error.
-     */
+    /// Throws a new internal error exception
+    ///
+    /// #### Throws
+    ///
+    /// - `Error`: Thrown in the event of an internal error.
     void internalError() throws Error {
         throw new Error("Internal error!");
     }
 
-    /**
-     * Throws a new syntax error exception
-     *
-     * @throws RESyntaxException Thrown if the regular expression has invalid syntax.
-     */
+    /// Throws a new syntax error exception
+    ///
+    /// #### Throws
+    ///
+    /// - `RESyntaxException`: Thrown if the regular expression has invalid syntax.
     void syntaxError(String s) throws RESyntaxException {
         throw new RESyntaxException(s);
     }
 
-    /**
-     * Match bracket {m,n} expression put results in bracket member variables
-     *
-     * @throws RESyntaxException Thrown if the regular expression has invalid syntax.
-     */
+    /// Match bracket {m,n} expression put results in bracket member variables
+    ///
+    /// #### Throws
+    ///
+    /// - `RESyntaxException`: Thrown if the regular expression has invalid syntax.
     void bracket() throws RESyntaxException {
         // Current character must be a '{'
-        if (idx >= len || pattern.charAt(idx++) != '{') {
+        if (idx >= len || pattern.charAt(idx++) != '{') { //NOPMD AssignmentInOperand
             internalError();
         }
 
@@ -261,7 +267,7 @@ public class RECompiler {
         }
 
         // Must have at least {m,} and maybe {m,n}.
-        if (idx >= len || pattern.charAt(idx++) != ',') {
+        if (idx >= len || pattern.charAt(idx++) != ',') { //NOPMD AssignmentInOperand
             syntaxError("Expected comma");
         }
 
@@ -299,21 +305,24 @@ public class RECompiler {
         }
 
         // Must have close brace
-        if (idx >= len || pattern.charAt(idx++) != '}') {
+        if (idx >= len || pattern.charAt(idx++) != '}') { //NOPMD AssignmentInOperand
             syntaxError("Missing close brace");
         }
     }
 
-    /**
-     * Match an escape sequence.  Handles quoted chars and octal escapes as well
-     * as normal escape characters.  Always advances the input stream by the
-     * right amount. This code "understands" the subtle difference between an
-     * octal escape and a backref.  You can access the type of ESC_CLASS or
-     * ESC_COMPLEX or ESC_BACKREF by looking at pattern[idx - 1].
-     *
-     * @return ESC_* code or character if simple escape
-     * @throws RESyntaxException Thrown if the regular expression has invalid syntax.
-     */
+    /// Match an escape sequence.  Handles quoted chars and octal escapes as well
+    /// as normal escape characters.  Always advances the input stream by the
+    /// right amount. This code "understands" the subtle difference between an
+    /// octal escape and a backref.  You can access the type of ESC_CLASS or
+    /// ESC_COMPLEX or ESC_BACKREF by looking at pattern[idx - 1].
+    ///
+    /// #### Returns
+    ///
+    /// ESC_* code or character if simple escape
+    ///
+    /// #### Throws
+    ///
+    /// - `RESyntaxException`: Thrown if the regular expression has invalid syntax.
     int escape() throws RESyntaxException {
         // "Shouldn't" happen
         if (pattern.charAt(idx) != '\\') {
@@ -418,12 +427,52 @@ public class RECompiler {
         }
     }
 
-    /**
-     * Compile a character class
-     *
-     * @return Index of class node
-     * @throws RESyntaxException Thrown if the regular expression has invalid syntax.
-     */
+    private int parsePosixCharacterClass(boolean nestedPosixClass) throws RESyntaxException {
+        // Skip colon
+        idx++;
+
+        // POSIX character classes are denoted with lowercase ASCII strings
+        int idxStart = idx;
+        while (idx < len && pattern.charAt(idx) >= 'a' && pattern.charAt(idx) <= 'z') {
+            idx++;
+        }
+
+        // Should be a ":]" to terminate the POSIX character class
+        if ((idx + 1) < len && pattern.charAt(idx) == ':' && pattern.charAt(idx + 1) == ']') {
+            // Get character class
+            String charClass = pattern.substring(idxStart, idx);
+
+            // Select the POSIX class id
+            Character i = (Character) hashPOSIX.get(charClass);
+            if (i != null) {
+                // Move past colon and right bracket
+                idx += 2;
+
+                // Nested POSIX class "[[:class:]]" consumes one more right bracket.
+                if (nestedPosixClass) {
+                    if (idx >= len || pattern.charAt(idx) != ']') {
+                        syntaxError("Invalid POSIX character class syntax");
+                    }
+                    idx++;
+                }
+
+                return node(RE.OP_POSIXCLASS, i.charValue());
+            }
+            syntaxError("Invalid POSIX character class '" + charClass + "'");
+        }
+        syntaxError("Invalid POSIX character class syntax");
+        return -1;
+    }
+
+    /// Compile a character class
+    ///
+    /// #### Returns
+    ///
+    /// Index of class node
+    ///
+    /// #### Throws
+    ///
+    /// - `RESyntaxException`: Thrown if the regular expression has invalid syntax.
     int characterClass() throws RESyntaxException {
         // Check for bad calling or empty class
         if (pattern.charAt(idx) != '[') {
@@ -431,38 +480,19 @@ public class RECompiler {
         }
 
         // Check for unterminated or empty class
-        if ((idx + 1) >= len || pattern.charAt(++idx) == ']') {
+        if ((idx + 1) >= len || pattern.charAt(++idx) == ']') { //NOPMD AssignmentInOperand
             syntaxError("Empty or unterminated class");
         }
 
-        // Check for POSIX character class
+        // Check for POSIX character class in the "[:class:]" form.
         if (idx < len && pattern.charAt(idx) == ':') {
-            // Skip colon
+            return parsePosixCharacterClass(false);
+        }
+
+        // Check for POSIX character class in the "[[:class:]]" form.
+        if ((idx + 1) < len && pattern.charAt(idx) == '[' && pattern.charAt(idx + 1) == ':') {
             idx++;
-
-            // POSIX character classes are denoted with lowercase ASCII strings
-            int idxStart = idx;
-            while (idx < len && pattern.charAt(idx) >= 'a' && pattern.charAt(idx) <= 'z') {
-                idx++;
-            }
-
-            // Should be a ":]" to terminate the POSIX character class
-            if ((idx + 1) < len && pattern.charAt(idx) == ':' && pattern.charAt(idx + 1) == ']') {
-                // Get character class
-                String charClass = pattern.substring(idxStart, idx);
-
-                // Select the POSIX class id
-                Character i = (Character) hashPOSIX.get(charClass);
-                if (i != null) {
-                    // Move past colon and right bracket
-                    idx += 2;
-
-                    // Return new POSIX character class node
-                    return node(RE.OP_POSIXCLASS, i.charValue());
-                }
-                syntaxError("Invalid POSIX character class '" + charClass + "'");
-            }
-            syntaxError("Invalid POSIX character class syntax");
+            return parsePosixCharacterClass(true);
         }
 
         // Try to build a class.  Create OP_ANYOF node
@@ -530,7 +560,7 @@ public class RECompiler {
                     rangeStart = (last == charInvalid ? 0 : last);
 
                     // Premature end of range. define up to Character.MAX_VALUE
-                    if ((idx + 1) < len && pattern.charAt(++idx) == ']') {
+                    if ((idx + 1) < len && pattern.charAt(++idx) == ']') { //NOPMD AssignmentInOperand
                         simpleChar = Character.MAX_VALUE;
                         break;
                     }
@@ -639,15 +669,19 @@ public class RECompiler {
         return last;
     }
 
-    /**
-     * Absorb an atomic character string.  This method is a little tricky because
-     * it can un-include the last character of string if a closure operator follows.
-     * This is correct because *+? have higher precedence than concatentation (thus
-     * ABC* means AB(C*) and NOT (ABC)*).
-     *
-     * @return Index of new atom node
-     * @throws RESyntaxException Thrown if the regular expression has invalid syntax.
-     */
+    /// Absorb an atomic character string.  This method is a little tricky because
+    /// it can un-include the last character of string if a closure operator follows.
+    /// This is correct because *+? have higher precedence than concatentation (thus
+    /// ABC* means AB(C*) and NOT (ABC)*).
+    ///
+    /// #### Returns
+    ///
+    /// Index of new atom node
+    ///
+    /// #### Throws
+    ///
+    /// - `RESyntaxException`: Thrown if the regular expression has invalid syntax.
+    @SuppressWarnings("PMD.SwitchStmtsShouldHaveDefault")
     int atom() throws RESyntaxException {
         // Create a string node
         int ret = node(RE.OP_ATOM, 0);
@@ -750,13 +784,19 @@ public class RECompiler {
         return ret;
     }
 
-    /**
-     * Match a terminal node.
-     *
-     * @param flags Flags
-     * @return Index of terminal node (closeable)
-     * @throws RESyntaxException Thrown if the regular expression has invalid syntax.
-     */
+    /// Match a terminal node.
+    ///
+    /// #### Parameters
+    ///
+    /// - `flags`: Flags
+    ///
+    /// #### Returns
+    ///
+    /// Index of terminal node (closeable)
+    ///
+    /// #### Throws
+    ///
+    /// - `RESyntaxException`: Thrown if the regular expression has invalid syntax.
     int terminal(int[] flags) throws RESyntaxException {
         switch (pattern.charAt(idx)) {
             case RE.OP_EOL:
@@ -817,6 +857,8 @@ public class RECompiler {
                         break;
                 }
             }
+            default:
+                break;
         }
 
         // Everything above either fails or returns.
@@ -825,13 +867,19 @@ public class RECompiler {
         return atom();
     }
 
-    /**
-     * Compile a possibly closured terminal
-     *
-     * @param flags Flags passed by reference
-     * @return Index of closured node
-     * @throws RESyntaxException Thrown if the regular expression has invalid syntax.
-     */
+    /// Compile a possibly closured terminal
+    ///
+    /// #### Parameters
+    ///
+    /// - `flags`: Flags passed by reference
+    ///
+    /// #### Returns
+    ///
+    /// Index of closured node
+    ///
+    /// #### Throws
+    ///
+    /// - `RESyntaxException`: Thrown if the regular expression has invalid syntax.
     int closure(int[] flags) throws RESyntaxException {
         // Before terminal
         int idxBeforeTerminal = idx;
@@ -1009,13 +1057,19 @@ public class RECompiler {
         }
     }
 
-    /**
-     * Compile body of one branch of an or operator (implements concatenation)
-     *
-     * @param flags Flags passed by reference
-     * @return Pointer to first node in the branch
-     * @throws RESyntaxException Thrown if the regular expression has invalid syntax.
-     */
+    /// Compile body of one branch of an or operator (implements concatenation)
+    ///
+    /// #### Parameters
+    ///
+    /// - `flags`: Flags passed by reference
+    ///
+    /// #### Returns
+    ///
+    /// Pointer to first node in the branch
+    ///
+    /// #### Throws
+    ///
+    /// - `RESyntaxException`: Thrown if the regular expression has invalid syntax.
     int branch(int[] flags) throws RESyntaxException {
         // Get each possibly closured piece and concat
         int node;
@@ -1056,14 +1110,20 @@ public class RECompiler {
         return ret;
     }
 
-    /**
-     * Compile an expression with possible parens around it.  Paren matching
-     * is done at this level so we can tie the branch tails together.
-     *
-     * @param flags Flag value passed by reference
-     * @return Node index of expression in instruction array
-     * @throws RESyntaxException Thrown if the regular expression has invalid syntax.
-     */
+    /// Compile an expression with possible parens around it.  Paren matching
+    /// is done at this level so we can tie the branch tails together.
+    ///
+    /// #### Parameters
+    ///
+    /// - `flags`: Flag value passed by reference
+    ///
+    /// #### Returns
+    ///
+    /// Node index of expression in instruction array
+    ///
+    /// #### Throws
+    ///
+    /// - `RESyntaxException`: Thrown if the regular expression has invalid syntax.
     int expr(int[] flags) throws RESyntaxException {
         // Create open paren node unless we were called from the top level (which has no parens)
         int paren = -1;
@@ -1142,17 +1202,27 @@ public class RECompiler {
         return ret;
     }
 
-    /**
-     * Compiles a regular expression pattern into a program runnable by the pattern
-     * matcher class 'RE'.
-     *
-     * @param pattern Regular expression pattern to compile (see RECompiler class
-     *                for details).
-     * @return A compiled regular expression program.
-     * @throws RESyntaxException Thrown if the regular expression has invalid syntax.
-     * @see RECompiler
-     * @see RE
-     */
+    /// Compiles a regular expression pattern into a program runnable by the pattern
+    /// matcher class 'RE'.
+    ///
+    /// #### Parameters
+    ///
+    /// - `pattern`: @param pattern Regular expression pattern to compile (see RECompiler class
+    /// for details).
+    ///
+    /// #### Returns
+    ///
+    /// A compiled regular expression program.
+    ///
+    /// #### Throws
+    ///
+    /// - `RESyntaxException`: Thrown if the regular expression has invalid syntax.
+    ///
+    /// #### See also
+    ///
+    /// - RECompiler
+    ///
+    /// - RE
     public REProgram compile(String pattern) throws RESyntaxException {
         // Initialize variables for compilation
         this.pattern = pattern;                         // Save pattern in instance variable
@@ -1181,20 +1251,18 @@ public class RECompiler {
         return new REProgram(parens, ins);
     }
 
-    /**
-     * Local, nested class for maintaining character ranges for character classes.
-     */
+    /// Local, nested class for maintaining character ranges for character classes.
     static class RERange {
         int size = 16;                      // Capacity of current range arrays
         int[] minRange = new int[size];     // Range minima
         int[] maxRange = new int[size];     // Range maxima
         int num = 0;                        // Number of range array elements in use
 
-        /**
-         * Deletes the range at a given index from the range lists
-         *
-         * @param index Index of range to delete from minRange and maxRange arrays.
-         */
+        /// Deletes the range at a given index from the range lists
+        ///
+        /// #### Parameters
+        ///
+        /// - `index`: Index of range to delete from minRange and maxRange arrays.
         void delete(int index) {
             // Return if no elements left or index is out of range
             if (num == 0 || index >= num) {
@@ -1213,41 +1281,42 @@ public class RECompiler {
             num--;
         }
 
-        /**
-         * Merges a range into the range list, coalescing ranges if possible.
-         *
-         * @param min Minimum end of range
-         * @param max Maximum end of range
-         */
+        /// Merges a range into the range list, coalescing ranges if possible.
+        ///
+        /// #### Parameters
+        ///
+        /// - `min`: Minimum end of range
+        ///
+        /// - `max`: Maximum end of range
         void merge(int min, int max) {
             // Loop through ranges
             for (int i = 0; i < num; i++) {
                 // Min-max is subsumed by minRange[i]-maxRange[i]
                 if (min >= minRange[i] && max <= maxRange[i]) {
                     return;
-                }
-
-                // Min-max subsumes minRange[i]-maxRange[i]
-                else if (min <= minRange[i] && max >= maxRange[i]) {
-                    delete(i);
-                    merge(min, max);
-                    return;
-                }
-
-                // Min is in the range, but max is outside
-                else if (min >= minRange[i] && min <= maxRange[i]) {
-                    min = minRange[i];
-                    delete(i);
-                    merge(min, max);
-                    return;
-                }
-
-                // Max is in the range, but min is outside
-                else if (max >= minRange[i] && max <= maxRange[i]) {
-                    max = maxRange[i];
-                    delete(i);
-                    merge(min, max);
-                    return;
+                } else {
+                    // Min-max subsumes minRange[i]-maxRange[i]
+                    if (min <= minRange[i] && max >= maxRange[i]) {
+                        delete(i);
+                        merge(min, max);
+                        return;
+                    } else {
+                        // Min is in the range, but max is outside
+                        if (min >= minRange[i] && min <= maxRange[i]) {
+                            min = minRange[i];
+                            delete(i);
+                            merge(min, max);
+                            return;
+                        } else {
+                            // Max is in the range, but min is outside
+                            if (max >= minRange[i] && max <= maxRange[i]) {
+                                max = maxRange[i];
+                                delete(i);
+                                merge(min, max);
+                                return;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1266,12 +1335,13 @@ public class RECompiler {
             num++;
         }
 
-        /**
-         * Removes a range by deleting or shrinking all other ranges
-         *
-         * @param min Minimum end of range
-         * @param max Maximum end of range
-         */
+        /// Removes a range by deleting or shrinking all other ranges
+        ///
+        /// #### Parameters
+        ///
+        /// - `min`: Minimum end of range
+        ///
+        /// - `max`: Maximum end of range
         void remove(int min, int max) {
             // Loop through ranges
             for (int i = 0; i < num; i++) {
@@ -1279,43 +1349,45 @@ public class RECompiler {
                 if (minRange[i] >= min && maxRange[i] <= max) {
                     delete(i);
                     return;
-                }
-
-                // min-max is subsumed by minRange[i]-maxRange[i]
-                else if (min >= minRange[i] && max <= maxRange[i]) {
-                    int minr = minRange[i];
-                    int maxr = maxRange[i];
-                    delete(i);
-                    if (minr < min) {
-                        merge(minr, min - 1);
+                } else {
+                    // min-max is subsumed by minRange[i]-maxRange[i]
+                    if (min >= minRange[i] && max <= maxRange[i]) {
+                        int minr = minRange[i];
+                        int maxr = maxRange[i];
+                        delete(i);
+                        if (minr < min) {
+                            merge(minr, min - 1);
+                        }
+                        if (max < maxr) {
+                            merge(max + 1, maxr);
+                        }
+                        return;
+                    } else {
+                        // minRange is in the range, but maxRange is outside
+                        if (minRange[i] >= min && minRange[i] <= max) {
+                            minRange[i] = max + 1;
+                            return;
+                        } else {
+                            // maxRange is in the range, but minRange is outside
+                            if (maxRange[i] >= min && maxRange[i] <= max) {
+                                maxRange[i] = min - 1;
+                                return;
+                            }
+                        }
                     }
-                    if (max < maxr) {
-                        merge(max + 1, maxr);
-                    }
-                    return;
-                }
-
-                // minRange is in the range, but maxRange is outside
-                else if (minRange[i] >= min && minRange[i] <= max) {
-                    minRange[i] = max + 1;
-                    return;
-                }
-
-                // maxRange is in the range, but minRange is outside
-                else if (maxRange[i] >= min && maxRange[i] <= max) {
-                    maxRange[i] = min - 1;
-                    return;
                 }
             }
         }
 
-        /**
-         * Includes (or excludes) the range from min to max, inclusive.
-         *
-         * @param min     Minimum end of range
-         * @param max     Maximum end of range
-         * @param include True if range should be included.  False otherwise.
-         */
+        /// Includes (or excludes) the range from min to max, inclusive.
+        ///
+        /// #### Parameters
+        ///
+        /// - `min`: Minimum end of range
+        ///
+        /// - `max`: Maximum end of range
+        ///
+        /// - `include`: True if range should be included.  False otherwise.
         void include(int min, int max, boolean include) {
             if (include) {
                 merge(min, max);
@@ -1324,12 +1396,13 @@ public class RECompiler {
             }
         }
 
-        /**
-         * Includes a range with the same min and max
-         *
-         * @param minmax  Minimum and maximum end of range (inclusive)
-         * @param include True if range should be included.  False otherwise.
-         */
+        /// Includes a range with the same min and max
+        ///
+        /// #### Parameters
+        ///
+        /// - `minmax`: Minimum and maximum end of range (inclusive)
+        ///
+        /// - `include`: True if range should be included.  False otherwise.
         void include(char minmax, boolean include) {
             include(minmax, minmax, include);
         }

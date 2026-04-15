@@ -39,12 +39,10 @@ import java.io.InputStreamReader;
 import java.util.Hashtable;
 import java.util.Vector;
 
-/**
- * Simple RSS read and parse request, to handle errors just subclass this and override
- * parsingError.
- *
- * @author Shai Almog
- */
+/// Simple RSS read and parse request, to handle errors just subclass this and override
+/// parsingError.
+///
+/// @author Shai Almog
 public class RSSService extends ConnectionRequest implements ParserCallback {
     private Vector results;
     private int limit = -1;
@@ -53,79 +51,62 @@ public class RSSService extends ConnectionRequest implements ParserCallback {
     private boolean createPlainTextDetails = true;
     private Image iconPlaceholder;
 
-    /**
-     * Simple constructor accepting the RSS url
-     *
-     * @param url rss link
-     */
+    /// Simple constructor accepting the RSS url
+    ///
+    /// #### Parameters
+    ///
+    /// - `url`: rss link
     public RSSService(String url) {
         setUrl(url);
         setPost(false);
         setDuplicateSupported(true);
     }
 
-    /**
-     * Simple constructor accepting the RSS url
-     *
-     * @param url   rss link
-     * @param limit the limit on the number of RSS entries supported
-     */
+    /// Simple constructor accepting the RSS url
+    ///
+    /// #### Parameters
+    ///
+    /// - `url`: rss link
+    ///
+    /// - `limit`: the limit on the number of RSS entries supported
     public RSSService(String url, int limit) {
         this(url);
         this.limit = limit;
         setDuplicateSupported(true);
     }
 
-    /**
-     * Simple constructor accepting the RSS url
-     *
-     * @param url         rss link
-     * @param limit       the limit on the number of RSS entries supported
-     * @param startOffset indicates the entry offset which we are interested
-     *                    in, this is useful if previously the limit for RSS entries was reached.
-     */
+    /// Simple constructor accepting the RSS url
+    ///
+    /// #### Parameters
+    ///
+    /// - `url`: rss link
+    ///
+    /// - `limit`: the limit on the number of RSS entries supported
+    ///
+    /// - `startOffset`: @param startOffset indicates the entry offset which we are interested
+    /// in, this is useful if previously the limit for RSS entries was reached.
     public RSSService(String url, int limit, int startOffset) {
         this(url, limit);
         this.startOffset = startOffset;
         setDuplicateSupported(true);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public boolean equals(Object o) {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
+        if (!(o instanceof RSSService)) {
             return false;
         }
-        if (!super.equals(o)) {
-            return false;
-        }
-
         RSSService that = (RSSService) o;
-
-        if (limit != that.limit) {
-            return false;
-        }
-        if (startOffset != that.startOffset) {
-            return false;
-        }
-        if (createPlainTextDetails != that.createPlainTextDetails) {
-            return false;
-        }
-        if (iconPlaceholder != null ? !iconPlaceholder.equals(that.iconPlaceholder) : that.iconPlaceholder != null) {
-            return false;
-        }
-
-        return true;
+        return super.equals(o) &&
+                limit == that.limit &&
+                startOffset == that.startOffset &&
+                hasMore == that.hasMore &&
+                createPlainTextDetails == that.createPlainTextDetails &&
+                (results == null ? that.results == null : results.equals(that.results)) &&
+                (iconPlaceholder == null ? that.iconPlaceholder == null : iconPlaceholder.equals(that.iconPlaceholder));
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public int hashCode() {
         int result = super.hashCode();
@@ -136,12 +117,7 @@ public class RSSService extends ConnectionRequest implements ParserCallback {
         return result;
     }
 
-    static class FinishParsing extends RuntimeException {
-    }
-
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     protected void readResponse(InputStream input) throws IOException {
         results = new Vector();
@@ -149,13 +125,14 @@ public class RSSService extends ConnectionRequest implements ParserCallback {
         input.mark(10);
 
         // Skip the bom marking UTF-8 in some streams
-        while (input.read() != '<') {
-            //input.mark(4);
+        int firstChar = input.read();
+        while (firstChar != -1 && firstChar != '<') {
+            firstChar = input.read();
         }
         int question = input.read();
         String cType = "UTF-8";
         if (question == '?') {
-            // we are in an XML header, check if the encoding section exists 
+            // we are in an XML header, check if the encoding section exists
             StringBuilder cs = new StringBuilder();
             question = input.read();
             while (question != '>') {
@@ -278,64 +255,64 @@ public class RSSService extends ConnectionRequest implements ParserCallback {
         return p;
     }
 
-
-    /**
-     * The results are presented as a vector of hashtables easily presentable in Codename One
-     *
-     * @return vector of hashtables
-     */
+    /// The results are presented as a vector of hashtables easily presentable in Codename One
+    ///
+    /// #### Returns
+    ///
+    /// vector of hashtables
     public Vector getResults() {
         return results;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public boolean parsingError(int errorId, String tag, String attribute, String value, String description) {
         return Dialog.show("Parsing Error", description, "Continue", "Cancel");
     }
 
-    /**
-     * Indicates whether more entries might be available since the limt might have been reached
-     *
-     * @return the hasMore
-     */
+    /// Indicates whether more entries might be available since the limt might have been reached
+    ///
+    /// #### Returns
+    ///
+    /// the hasMore
     public boolean hasMore() {
         return hasMore;
     }
 
-    /**
-     * Creates an additional "details" attribute in the resulting hashtables
-     * which effectively contains a plain text version of the description tag.
-     *
-     * @return the createPlainTextDetails
-     */
+    /// Creates an additional "details" attribute in the resulting hashtables
+    /// which effectively contains a plain text version of the description tag.
+    ///
+    /// #### Returns
+    ///
+    /// the createPlainTextDetails
     public boolean isCreatePlainTextDetails() {
         return createPlainTextDetails;
     }
 
-    /**
-     * Creates an additional "details" attribute in the resulting hashtables
-     * which effectively contains a plain text version of the description tag.
-     *
-     * @param createPlainTextDetails the createPlainTextDetails to set
-     */
+    /// Creates an additional "details" attribute in the resulting hashtables
+    /// which effectively contains a plain text version of the description tag.
+    ///
+    /// #### Parameters
+    ///
+    /// - `createPlainTextDetails`: the createPlainTextDetails to set
     public void setCreatePlainTextDetails(boolean createPlainTextDetails) {
         this.createPlainTextDetails = createPlainTextDetails;
     }
 
-    /**
-     * @return the iconPlaceholder
-     */
+    /// #### Returns
+    ///
+    /// the iconPlaceholder
     public Image getIconPlaceholder() {
         return iconPlaceholder;
     }
 
-    /**
-     * @param iconPlaceholder the iconPlaceholder to set
-     */
+    /// #### Parameters
+    ///
+    /// - `iconPlaceholder`: the iconPlaceholder to set
     public void setIconPlaceholder(Image iconPlaceholder) {
         this.iconPlaceholder = iconPlaceholder;
+    }
+
+    static class FinishParsing extends RuntimeException {
     }
 }

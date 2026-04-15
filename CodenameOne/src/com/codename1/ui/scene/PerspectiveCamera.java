@@ -29,10 +29,11 @@ import com.codename1.ui.Transform;
 
 import java.util.Arrays;
 
-/**
- * @author shannah
- * @deprecated Internal use only
- */
+/// @author shannah
+///
+/// #### Deprecated
+///
+/// Internal use only
 public class PerspectiveCamera extends Camera {
     public final Property<Double, Camera> verticalFieldOfView;
     private final Scene scene;
@@ -41,7 +42,7 @@ public class PerspectiveCamera extends Camera {
     public PerspectiveCamera(Scene scene, double fovY, double zNear, double zFar) {
         super(zNear, zFar);
         this.scene = scene;
-        verticalFieldOfView = new Property<Double, Camera>("verticalFieldOfView", 0.25);
+        verticalFieldOfView = new Property<Double, Camera>("verticalFieldOfView", fovY);
     }
 
     @Override
@@ -79,7 +80,7 @@ public class PerspectiveCamera extends Camera {
         currTransform.concatenate(perspectiveT);
         float zState = 0f;
         float cameraZ = -zNear - w * 0.5f * zState;
-        float cameraX = (float) -dw / 2;//-x-w/2;
+        float cameraX = (float) -dw / 2; //-x-w/2;
         float cameraY = -y - h * 0.5f;
         currTransform.translate(cameraX, cameraY, cameraZ);
 

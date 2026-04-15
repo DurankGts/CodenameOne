@@ -12,6 +12,8 @@ on:
       - 'docs/**'
       - '**/*.md'
       - '.github/workflows/developer-guide-docs.yml'
+      - '.github/workflows/website-docs.yml'
+      - '.github/workflows/initializr-cn1-version-pr.yml'
       - 'CodenameOneDesigner/**'
       - 'Ports/IOSPort/**'
   push:
@@ -25,6 +27,8 @@ on:
       - 'docs/**'
       - '**/*.md'
       - '.github/workflows/developer-guide-docs.yml'
+      - '.github/workflows/website-docs.yml'
+      - '.github/workflows/initializr-cn1-version-pr.yml'
       - 'CodenameOneDesigner/**'
       - 'Ports/IOSPort/**'
 
@@ -49,6 +53,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v1
+      - name: Validate Java 25 markdown docs style (CodenameOne + CLDC11)
+        run: ./.github/scripts/validate-java25-markdown-docs.sh
       - name: Set up Java
         run: |
           if [ "${{ matrix.java-version }}" = "8" ]; then
@@ -93,10 +99,23 @@ jobs:
             -Dcodename1.platform=javase \
             -Dcn1.binaries="${CN1_BINARIES}" \
             -pl codenameone-maven-plugin -am -Plocal-dev-javase test
+      - name: Run SpotBugs for ports and Maven plugin
+        if: ${{ matrix.java-version == 8 }}
+        working-directory: maven
+        env:
+          CN1_BINARIES: ${{ github.workspace }}/maven/target/cn1-binaries
+        run: |
+          mvn -B -DskipTests=true \
+            -Dcn1.binaries="${CN1_BINARIES}" \
+            -Pcompile-android \
+            -pl android,ios,codenameone-maven-plugin -am verify
+      - name: Run SpotBugs for ByteCodeTranslator
+        if: ${{ matrix.java-version == 8 }}
+        run: mvn -B -DskipTests=true -f vm/ByteCodeTranslator/pom.xml verify
       - name: Generate static analysis HTML summaries
         if: ${{ always() && matrix.java-version == 8 }}
         env:
-          QUALITY_REPORT_TARGET_DIRS: maven/core-unittests/target
+          QUALITY_REPORT_TARGET_DIRS: maven/core-unittests/target:maven/android/target:maven/ios/target:vm/ByteCodeTranslator/target:maven/codenameone-maven-plugin/target
           QUALITY_REPORT_SERVER_URL: ${{ github.server_url }}
           QUALITY_REPORT_REPOSITORY: ${{ github.repository }}
           QUALITY_REPORT_REF: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -109,10 +128,20 @@ jobs:
           mkdir -p quality-artifacts/static-analysis
           mkdir -p quality-artifacts/coverage
           shopt -s nullglob
-          for path in maven/core-unittests/target/spotbugsXml.xml maven/core-unittests/target/spotbugs.xml; do
-            if [ -f "$path" ]; then
-              cp "$path" quality-artifacts/static-analysis/
-            fi
+          for entry in \
+            "core-unittests:maven/core-unittests/target" \
+            "android:maven/android/target" \
+            "ios:maven/ios/target" \
+            "bytecode-translator:vm/ByteCodeTranslator/target" \
+            "maven-plugin:maven/codenameone-maven-plugin/target"; do
+            label="${entry%%:*}"
+            dir="${entry#*:}"
+            for filename in spotbugsXml.xml spotbugs.xml; do
+              if [ -f "${dir}/${filename}" ]; then
+                cp "${dir}/${filename}" "quality-artifacts/static-analysis/spotbugs-${label}.xml"
+                break
+              fi
+            done
           done
           if [ -f maven/core-unittests/target/pmd.xml ]; then
             cp maven/core-unittests/target/pmd.xml quality-artifacts/static-analysis/
@@ -206,7 +235,7 @@ jobs:
       - name: Generate quality report summary
         if: ${{ always() && matrix.java-version == 8 }}
         env:
-          QUALITY_REPORT_TARGET_DIRS: maven/core-unittests/target
+          QUALITY_REPORT_TARGET_DIRS: maven/core-unittests/target:maven/android/target:maven/ios/target:vm/ByteCodeTranslator/target:maven/codenameone-maven-plugin/target
           QUALITY_REPORT_SERVER_URL: ${{ github.server_url }}
           QUALITY_REPORT_REPOSITORY: ${{ github.repository }}
           QUALITY_REPORT_REF: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -243,6 +272,8 @@ jobs:
           ant $ANT_OPTS_ARGS -noinput -buildfile Ports/CLDC11/build.xml jar
       - name: Build with Ant
         run: |
+          mkdir -p ~/.codenameone
+          cp maven/UpdateCodenameOne.jar ~/.codenameone/
           ANT_OPTS_ARGS=""
           if [ "${{ matrix.java-version }}" != "8" ]; then
             ANT_OPTS_ARGS="-Djavac.source=1.8 -Djavac.target=1.8"
@@ -262,34 +293,7 @@ jobs:
 
       - name: Build JavaDocs
         if: matrix.java-version == 8
-        run: |
-          cd CodenameOne
-          mkdir -p build
-          mkdir -p build/tempJavaSources
-          mkdir -p dist
-          mkdir -p dist/javadoc
-          # Skip JavaDocSourceEmbed due to gist access issues in CI
-          cp -r src/* build/tempJavaSources/
-          # Provide a minimal ImplementationFactory stub for Javadoc type resolution on JDK 25.
-          cat > build/tempJavaSources/com/codename1/impl/ImplementationFactory.java <<'EOF'
-          package com.codename1.impl;
-
-          public class ImplementationFactory {
-              public static ImplementationFactory getInstance() {
-                  return null;
-              }
-
-              public Object createImplementation() {
-                  return null;
-              }
-          }
-          EOF
-          # Suppress doclint noise on modern JDKs (e.g., Java 25) while keeping output consistent.
-          # Exclude CLDC11 java.* stubs to avoid module conflicts on modern JDKs.
-          find build/tempJavaSources ../Ports/CLDC11/src -name "*.java" -not -path "../Ports/CLDC11/src/java/*" | /usr/bin/xargs javadoc --allow-script-in-comments --release 8 -exclude com.codename1.impl -Xdoclint:none -quiet -protected -d dist/javadoc -windowtitle "Codename One API" || true
-          cd dist/javadoc
-          zip -r ../../javadocs.zip *
-          cd ..
+        run: ./.github/scripts/build_javadocs.sh
 
       - name: Restore Java 8 after JavaDocs
         if: matrix.java-version == 8

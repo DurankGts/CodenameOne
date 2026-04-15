@@ -188,6 +188,8 @@ public class JavaSEPort extends CodenameOneImplementation {
 
     
     private static final int ICON_SIZE=24;
+    private static final Map<String, String[]> IOS_NATIVE_FONT_CANDIDATES = new HashMap<String, String[]>();
+    private static Set<String> availableFontNamesLowercase;
     private static final String PREF_AUTO_UPDATE_DEFAULT_BUNDLE = "cn1.autoDefaultResourceBundle";
     public final static boolean IS_MAC;
     private static boolean isIOS;
@@ -197,6 +199,59 @@ public class JavaSEPort extends CodenameOneImplementation {
     private Boolean darkMode;
     private AutoLocalizationBundle autoLocalizationBundle;
     private boolean autoUpdateDefaultResourceBundle;
+
+    static {
+        IOS_NATIVE_FONT_CANDIDATES.put("native:MainThin", new String[] {
+            "SF Pro Display", "SF Pro Text",
+            ".SF NS Text", ".SF NS Display", "SF UI Text",
+            "San Francisco", "Helvetica Neue", "HelveticaNeue"
+        });
+        IOS_NATIVE_FONT_CANDIDATES.put("native:MainLight", new String[] {
+            "SF Pro Text", "SF Pro Display",
+            ".SF NS Text", ".SF NS Display", "SF UI Text",
+            "San Francisco", "Helvetica Neue", "HelveticaNeue"
+        });
+        IOS_NATIVE_FONT_CANDIDATES.put("native:MainRegular", new String[] {
+            "SF Pro Text", "SF Pro Display", "SF UI Text", "San Francisco",
+            ".SF NS Text", ".SF NS Display",
+            "Helvetica Neue", "HelveticaNeue"
+        });
+        IOS_NATIVE_FONT_CANDIDATES.put("native:MainBold", new String[] {
+            "SF Pro Text", "SF Pro Display",
+            ".SF NS Text", ".SF NS Display", "SF UI Text",
+            "San Francisco", "Helvetica Neue", "HelveticaNeue"
+        });
+        IOS_NATIVE_FONT_CANDIDATES.put("native:MainBlack", new String[] {
+            "SF Pro Display", "SF Pro Text",
+            ".SF NS Display", ".SF NS Text", "SF UI Text",
+            "San Francisco", "Helvetica Neue", "HelveticaNeue"
+        });
+        IOS_NATIVE_FONT_CANDIDATES.put("native:ItalicThin", new String[] {
+            "SF Pro Display", "SF Pro Text",
+            ".SF NS Text", ".SF NS Display", "SF UI Text",
+            "San Francisco", "Helvetica Neue", "HelveticaNeue"
+        });
+        IOS_NATIVE_FONT_CANDIDATES.put("native:ItalicLight", new String[] {
+            "SF Pro Text", "SF Pro Display",
+            ".SF NS Text", ".SF NS Display", "SF UI Text",
+            "San Francisco", "Helvetica Neue", "HelveticaNeue"
+        });
+        IOS_NATIVE_FONT_CANDIDATES.put("native:ItalicRegular", new String[] {
+            "SF Pro Text", "SF Pro Display", "SF UI Text", "San Francisco",
+            ".SF NS Text", ".SF NS Display",
+            "Helvetica Neue", "HelveticaNeue"
+        });
+        IOS_NATIVE_FONT_CANDIDATES.put("native:ItalicBold", new String[] {
+            "SF Pro Text", "SF Pro Display",
+            ".SF NS Text", ".SF NS Display", "SF UI Text",
+            "San Francisco", "Helvetica Neue", "HelveticaNeue"
+        });
+        IOS_NATIVE_FONT_CANDIDATES.put("native:ItalicBlack", new String[] {
+            "SF Pro Display", "SF Pro Text",
+            ".SF NS Display", ".SF NS Text", "SF UI Text",
+            "San Francisco", "Helvetica Neue", "HelveticaNeue"
+        });
+    }
 
     /**
      * @return the fullScreen
@@ -386,9 +441,9 @@ public class JavaSEPort extends CodenameOneImplementation {
 
     public static boolean isRetina() {
         boolean isRetina = false;
-        GraphicsDevice graphicsDevice = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
 
         try {
+            GraphicsDevice graphicsDevice = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
             if (getJavaVersion() >= 9) {
                 // JDK9 Doesn't like the old hack for getting the scale via reflection.
                 // https://bugs.openjdk.java.net/browse/JDK-8172962
@@ -420,10 +475,8 @@ public class JavaSEPort extends CodenameOneImplementation {
     }
     
     public static double calcRetinaScale() {
-        
-        GraphicsDevice graphicsDevice = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
-
         try {
+            GraphicsDevice graphicsDevice = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
             if (getJavaVersion() >= 9) {
                 // JDK9 Doesn't like the old hack for getting the scale via reflection.
                 // https://bugs.openjdk.java.net/browse/JDK-8172962
@@ -758,6 +811,13 @@ public class JavaSEPort extends CodenameOneImplementation {
     private boolean disconnectedMode;
 
     private static boolean exposeFilesystem;
+
+    private ComponentTreeInspector getOrCreateComponentTreeInspector() {
+        if (componentTreeInspector == null) {
+            componentTreeInspector = new ComponentTreeInspector();
+        }
+        return componentTreeInspector;
+    }
     private boolean scrollWheeling;
     
     private JComponent textCmp;
@@ -1863,8 +1923,9 @@ public class JavaSEPort extends CodenameOneImplementation {
         }
 
         private boolean showContextMenu(final MouseEvent me) {
-            if (componentTreeInspector == null ||
-                    !componentTreeInspector.isSimulatorRightClickEnabled() ||
+            ComponentTreeInspector inspector = getOrCreateComponentTreeInspector();
+            if (inspector == null ||
+                    !inspector.isSimulatorRightClickEnabled() ||
                     !CN.isSimulator()) {
                 return false;
             }
@@ -1886,13 +1947,14 @@ public class JavaSEPort extends CodenameOneImplementation {
 
                 @Override
                 public void actionPerformed(ActionEvent e) {
-                    if (componentTreeInspector != null && componentTreeInspector.isSimulatorRightClickEnabled()) {
+                    ComponentTreeInspector inspector = getOrCreateComponentTreeInspector();
+                    if (inspector != null && inspector.isSimulatorRightClickEnabled()) {
                         Form f = Display.getInstance().getCurrent();
                         if (f != null) {
                             int x = scaleCoordinateX(me.getX());
                             int y = scaleCoordinateY(me.getY());
                             Component cmp = f.getComponentAt(x, y);
-                            componentTreeInspector.inspectComponent(cmp);
+                            inspector.inspectComponent(cmp);
                         }
                     }
                 }
@@ -2075,6 +2137,83 @@ public class JavaSEPort extends CodenameOneImplementation {
         private Cursor defaultCursor = Cursor.getDefaultCursor();        
         private int currentCursor = 0;
         private java.util.Timer reSize;
+        private final Object pendingSizeChangeLock = new Object();
+        private int pendingSizeChangeWidth = -1;
+        private int pendingSizeChangeHeight = -1;
+        private boolean pendingSizeChangeQueued;
+        private boolean pendingRevalidateAfterSizeChange;
+        private boolean pendingForceRevalidateAfterSizeChange;
+        private boolean pendingResetGraphicsAfterSizeChange;
+        private boolean pendingDelayedWindowRepaint;
+
+        private void queueSizeChangeEvent(int w, int h, boolean revalidate, boolean forceRevalidate, boolean resetGraphics, boolean delayedWindowRepaint) {
+            synchronized (pendingSizeChangeLock) {
+                pendingSizeChangeWidth = w;
+                pendingSizeChangeHeight = h;
+                pendingRevalidateAfterSizeChange |= revalidate;
+                pendingForceRevalidateAfterSizeChange |= forceRevalidate;
+                pendingResetGraphicsAfterSizeChange |= resetGraphics;
+                pendingDelayedWindowRepaint |= delayedWindowRepaint;
+                if (pendingSizeChangeQueued) {
+                    return;
+                }
+                pendingSizeChangeQueued = true;
+            }
+            Display.getInstance().callSerially(new Runnable() {
+                public void run() {
+                    int queuedW;
+                    int queuedH;
+                    boolean doRevalidate;
+                    boolean doForceRevalidate;
+                    boolean doResetGraphics;
+                    boolean doDelayedWindowRepaint;
+                    synchronized (pendingSizeChangeLock) {
+                        queuedW = pendingSizeChangeWidth;
+                        queuedH = pendingSizeChangeHeight;
+                        doRevalidate = pendingRevalidateAfterSizeChange;
+                        doForceRevalidate = pendingForceRevalidateAfterSizeChange;
+                        doResetGraphics = pendingResetGraphicsAfterSizeChange;
+                        doDelayedWindowRepaint = pendingDelayedWindowRepaint;
+                        pendingRevalidateAfterSizeChange = false;
+                        pendingForceRevalidateAfterSizeChange = false;
+                        pendingResetGraphicsAfterSizeChange = false;
+                        pendingDelayedWindowRepaint = false;
+                        pendingSizeChangeQueued = false;
+                    }
+
+                    JavaSEPort.this.sizeChanged(queuedW, queuedH);
+
+                    if (doResetGraphics) {
+                        g2dInstance = null;
+                    }
+
+                    Form f = Display.getInstance().getCurrent();
+                    if (f != null) {
+                        if (doForceRevalidate) {
+                            f.forceRevalidate();
+                        } else if (doRevalidate) {
+                            f.revalidate();
+                        }
+                    }
+
+                    if (doDelayedWindowRepaint) {
+                        new Thread(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    Thread.sleep(1500);
+                                } catch (Exception e) {
+                                }
+                                if (window != null) {
+                                    window.repaint();
+                                }
+                            }
+                        }).start();
+                        reSize = null;
+                    }
+                }
+            });
+        }
         
         public void mouseMoved(MouseEvent e) {
             e.consume();
@@ -2138,11 +2277,7 @@ public class JavaSEPort extends CodenameOneImplementation {
             Preferences pref = Preferences.userNodeForPackage(JavaSEPort.class);
             boolean desktopSkin = pref.getBoolean("desktopSkin", false);
             if (getSkin() == null && !desktopSkin) {
-                Display.getInstance().callSerially(new Runnable() {
-                    public void run() {
-                        JavaSEPort.this.sizeChanged((int)(getWidth() * retinaScale), (int)(getHeight() * retinaScale));
-                    }
-                });                
+                queueSizeChangeEvent((int)(getWidth() * retinaScale), (int)(getHeight() * retinaScale), false, false, false, false);
             }
 
         }
@@ -2186,17 +2321,7 @@ public class JavaSEPort extends CodenameOneImplementation {
                     setSize((int)topSize.getWidth(), (int)topSize.getHeight());
                     canvas.setForcedSize(new Dimension(getWidth(), getHeight()));
                     
-                    Display.getInstance().callSerially(new Runnable() {
-                        public void run() {
-                            
-                            JavaSEPort.this.sizeChanged((int)(getWidth() * retinaScale), (int)(getHeight() * retinaScale));
-                            
-                            Form f = Display.getInstance().getCurrent();
-                            if (f != null) {
-                                f.revalidate();
-                            }
-                        }
-                    });
+                    queueSizeChangeEvent((int)(getWidth() * retinaScale), (int)(getHeight() * retinaScale), true, false, false, false);
                     return;
                 } 
                 
@@ -2214,32 +2339,7 @@ public class JavaSEPort extends CodenameOneImplementation {
                         //    System.out.println("Resize with media container");
                         //    JavaSEPort.this.sizeChanged((int)(mediaContainer.getWidth() * retinaScale), (int)(mediaContainer.getHeight() * retinaScale));
                         //}else{
-                            Display.getInstance().callSerially(new Runnable() {
-                                public void run() {
-                                    JavaSEPort.this.sizeChanged((int)(getWidth() * retinaScale), (int)(getHeight() * retinaScale));
-                                    g2dInstance = null;
-                                    Form f = Display.getInstance().getCurrent();
-                                    if (f != null) {
-                                        f.forceRevalidate();
-                                    }
-                                    
-                                    // probably not necessary
-                                    new Thread(new Runnable() {
-                                        @Override
-                                        public void run() {
-                                            try {
-                                                Thread.sleep(1500);
-                                            } catch (Exception e) {
-                                            }
-                                            if (window != null) {
-                                                window.repaint();
-                                            }
-                                        }
-                                    }).start();
-
-                                    reSize = null;
-                                }
-                            });
+                            queueSizeChangeEvent((int)(getWidth() * retinaScale), (int)(getHeight() * retinaScale), false, true, true, true);
                             
                         //}
                         
@@ -3987,7 +4087,7 @@ public class JavaSEPort extends CodenameOneImplementation {
             public void actionPerformed(ActionEvent ae) {
                 if (appFrame != null) return;
 
-                new ComponentTreeInspector().showInFrame();
+                getOrCreateComponentTreeInspector().showInFrame();
             }
         });
 
@@ -8010,43 +8110,52 @@ public class JavaSEPort extends CodenameOneImplementation {
         return true;
     }
 
-    private String nativeFontName(String fontName) {
-        if(fontName != null && fontName.startsWith("native:")) {
-            if("native:MainThin".equals(fontName)) {
-                return "HelveticaNeue-UltraLight";
+    private static synchronized Set<String> getAvailableFontNamesLowercase() {
+        if (availableFontNamesLowercase == null) {
+            HashSet<String> out = new HashSet<String>();
+            GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
+            String[] families = ge.getAvailableFontFamilyNames();
+            for (String family : families) {
+                out.add(family.toLowerCase(Locale.US));
             }
-            if("native:MainLight".equals(fontName)) {
-                return "HelveticaNeue-Light";
+            availableFontNamesLowercase = out;
+        }
+        return availableFontNamesLowercase;
+    }
+    
+    static void setAvailableFontNamesLowercaseForTest(Set<String> fontNames) {
+        availableFontNamesLowercase = fontNames;
+    }
+
+    static void clearAvailableFontNamesLowercaseForTest() {
+        availableFontNamesLowercase = null;
+    }
+
+    static String findFirstInstalledFontCandidate(String[] candidates, Set<String> installedFontNames) {
+        if (candidates == null || installedFontNames == null) {
+            return null;
+        }
+        for (String candidate : candidates) {
+            if (candidate != null && installedFontNames.contains(candidate.toLowerCase(Locale.US))) {
+                return candidate;
             }
-            if("native:MainRegular".equals(fontName)) {
-                return "HelveticaNeue-Medium";
-            }
-            
-            if("native:MainBold".equals(fontName)) {
-                return "HelveticaNeue-Bold";
-            }
-            
-            if("native:MainBlack".equals(fontName)) {
-                return "HelveticaNeue-CondensedBlack";
-            }
-            
-            if("native:ItalicThin".equals(fontName)) {
-                return "HelveticaNeue-UltraLightItalic";
-            }
-            
-            if("native:ItalicLight".equals(fontName)) {
-                return "HelveticaNeue-LightItalic";
-            }
-            
-            if("native:ItalicRegular".equals(fontName)) {
-                return "HelveticaNeue-MediumItalic";
-            }
-            
-            if("native:ItalicBold".equals(fontName) || "native:ItalicBlack".equals(fontName)) {
-                return "HelveticaNeue-BoldItalic";
-            }
-        }            
+        }
         return null;
+    }
+
+    static String nativeFontNameForIOS(String fontName, Set<String> installedFontNames) {
+        if (fontName == null || !fontName.startsWith("native:")) {
+            return null;
+        }
+        String[] candidates = IOS_NATIVE_FONT_CANDIDATES.get(fontName);
+        return findFirstInstalledFontCandidate(candidates, installedFontNames);
+    }
+
+    private String nativeFontName(String fontName) {
+        if (!isIOS || fontName == null || !fontName.startsWith("native:")) {
+            return null;
+        }
+        return nativeFontNameForIOS(fontName, getAvailableFontNamesLowercase());
     }
     
     @Override
@@ -8054,10 +8163,12 @@ public class JavaSEPort extends CodenameOneImplementation {
         File fontFile = null;
         try {
             if(fontName.startsWith("native:")) {
-                if(IS_MAC && isIOS) {
+                if(isIOS) {
                     String nn = nativeFontName(fontName);
-                    java.awt.Font nf = new java.awt.Font(nn, java.awt.Font.PLAIN, medianFontSize);
-                    return nf;
+                    if (nn != null) {
+                        java.awt.Font nf = new java.awt.Font(nn, java.awt.Font.PLAIN, medianFontSize);
+                        return nf;
+                    }
                 }
                 String res; 
                 switch(fontName) {

@@ -22,22 +22,26 @@
  */
 package com.codename1.ui;
 
-/**
- * A package-private utility class for working with working with lead components.
- *
- * @author Steve Hannah
- * @since 7.0
- */
-class LeadUtil {
+/// A package-private utility class for working with working with lead components.
+///
+/// @author Steve Hannah
+///
+/// #### Since
+///
+/// 7.0
+abstract class LeadUtil {
 
-    /**
-     * Gets the lead parent for a component, or the component itself if there is
-     * no lead parent.
-     *
-     * @param cmp The component whose lead parent we wish to retrieve.
-     * @return The component's lead parent if one exists.  Will fall back to just return {@literal cmp}
-     * if no lead parent exists.
-     */
+    /// Gets the lead parent for a component, or the component itself if there is
+    /// no lead parent.
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component whose lead parent we wish to retrieve.
+    ///
+    /// #### Returns
+    ///
+    /// @return The component's lead parent if one exists.  Will fall back to just return cmp
+    /// if no lead parent exists.
     public static Component leadParentImpl(Component cmp) {
         if (cmp == null) {
             return null;
@@ -56,13 +60,16 @@ class LeadUtil {
         return cmp;
     }
 
-    /**
-     * Gets the lead component for a component if one exists, or just passes through the
-     * component provided in the argument.
-     *
-     * @param cmp The component.
-     * @return Either the lead component of the component, or the component itself.
-     */
+    /// Gets the lead component for a component if one exists, or just passes through the
+    /// component provided in the argument.
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component.
+    ///
+    /// #### Returns
+    ///
+    /// Either the lead component of the component, or the component itself.
     public static Component leadComponentImpl(Component cmp) {
         if (cmp == null) {
             return null;
@@ -79,13 +86,15 @@ class LeadUtil {
         return cmp;
     }
 
-    /**
-     * Dispatches a pointer pressed event to the lead component of {@literal cmp}.
-     *
-     * @param cmp A component whose lead component we will fire pointerPressed event on.
-     * @param x   X-coord
-     * @param y   Y-coord
-     */
+    /// Dispatches a pointer pressed event to the lead component of cmp.
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: A component whose lead component we will fire pointerPressed event on.
+    ///
+    /// - `x`: X-coord
+    ///
+    /// - `y`: Y-coord
     public static void pointerPressed(Component cmp, int x, int y) {
         if (cmp == null) {
             return;
@@ -97,81 +106,89 @@ class LeadUtil {
         if (f != null && !Display.impl.isScrollWheeling() && leadParent.isFocusable() && leadParent.isEnabled()) {
             f.setFocused(leadParent);
         }
-        if (cmp != lead) {
+        if (cmp != lead) { //NOPMD CompareObjectsWithEquals
             leadParent.repaint();
         }
 
     }
 
-    /**
-     * Dispatches a pointer dragged event to the lead component of {@literal cmp}.
-     *
-     * @param cmp A component whose lead component we will fire pointerDragged event on.
-     * @param x   X-coord
-     * @param y   Y-coord
-     */
+    /// Dispatches a pointer dragged event to the lead component of cmp.
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: A component whose lead component we will fire pointerDragged event on.
+    ///
+    /// - `x`: X-coord
+    ///
+    /// - `y`: Y-coord
     public static void pointerDragged(Component cmp, int x, int y) {
         if (cmp == null) {
             return;
         }
         Component lead = leadComponentImpl(cmp);
         lead.pointerDragged(x, y);
-        if (cmp != lead) {
+        if (cmp != lead) { //NOPMD CompareObjectsWithEquals
             leadParentImpl(cmp).repaint();
         }
 
     }
 
-    /**
-     * Dispatches a pointer dragged event to the lead component of {@literal cmp}.
-     *
-     * @param cmp A component whose lead component we will fire pointerDragged event on.
-     * @param x   X-coords
-     * @param y   Y-coords
-     */
+    /// Dispatches a pointer dragged event to the lead component of cmp.
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: A component whose lead component we will fire pointerDragged event on.
+    ///
+    /// - `x`: X-coords
+    ///
+    /// - `y`: Y-coords
     public static void pointerDragged(Component cmp, int[] x, int[] y) {
         if (cmp == null) {
             return;
         }
         Component lead = leadComponentImpl(cmp);
         lead.pointerDragged(x, y);
-        if (cmp != lead) {
+        if (cmp != lead) { //NOPMD CompareObjectsWithEquals
             leadParentImpl(cmp).repaint();
         }
 
     }
 
-    /**
-     * Dispatches a pointer released event to the lead component of {@literal cmp}.
-     *
-     * @param cmp A component whose lead component we will fire pointerReleased event on.
-     * @param x   X-coord
-     * @param y   Y-coord
-     */
+    /// Dispatches a pointer released event to the lead component of cmp.
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: A component whose lead component we will fire pointerReleased event on.
+    ///
+    /// - `x`: X-coord
+    ///
+    /// - `y`: Y-coord
     public static void pointerReleased(Component cmp, int x, int y) {
         if (cmp == null) {
             return;
         }
         Component lead = leadComponentImpl(cmp);
         lead.pointerReleased(x, y);
-        if (lead != cmp) {
+        if (lead != cmp) { //NOPMD CompareObjectsWithEquals
             leadParentImpl(cmp).repaint();
         }
     }
 
-    /**
-     * Dispatches a pointer pressed event to the lead component of {@literal cmp}.
-     *
-     * @param cmp A component whose lead component we will fire pointerPressed event on.
-     * @param x   X-coord
-     * @param y   Y-coord
-     */
+    /// Dispatches a pointer pressed event to the lead component of cmp.
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: A component whose lead component we will fire pointerPressed event on.
+    ///
+    /// - `x`: X-coord
+    ///
+    /// - `y`: Y-coord
     public static void pointerHoverReleased(Component cmp, int[] x, int[] y) {
         if (cmp == null) {
             return;
         }
         leadComponentImpl(cmp).pointerHoverReleased(x, y);
-        if (leadParentImpl(cmp) != cmp) {
+        if (leadParentImpl(cmp) != cmp) { //NOPMD CompareObjectsWithEquals
             leadParentImpl(cmp).repaint();
         }
     }
@@ -182,7 +199,7 @@ class LeadUtil {
         }
         Component lead = leadComponentImpl(cmp);
         lead.pointerHoverPressed(x, y);
-        if (lead != cmp) {
+        if (lead != cmp) { //NOPMD CompareObjectsWithEquals
             leadParentImpl(cmp).repaint();
         }
     }
@@ -193,7 +210,7 @@ class LeadUtil {
         }
         Component lead = leadComponentImpl(cmp);
         lead.pointerHover(x, y);
-        if (lead != cmp) {
+        if (lead != cmp) { //NOPMD CompareObjectsWithEquals
             leadParentImpl(cmp).repaint();
         }
     }
@@ -204,7 +221,7 @@ class LeadUtil {
         }
         Component lead = leadComponentImpl(cmp);
         lead.dragFinishedImpl(x, y);
-        if (lead != cmp) {
+        if (lead != cmp) { //NOPMD CompareObjectsWithEquals
             leadParentImpl(cmp).repaint();
         }
     }
@@ -215,7 +232,7 @@ class LeadUtil {
         }
         Component lead = leadComponentImpl(cmp);
         lead.longPointerPress(x, y);
-        if (cmp != lead) {
+        if (cmp != lead) { //NOPMD CompareObjectsWithEquals
             leadParentImpl(cmp).repaint();
         }
     }

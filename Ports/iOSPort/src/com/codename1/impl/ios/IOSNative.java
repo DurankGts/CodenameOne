@@ -157,6 +157,7 @@ public final class IOSNative {
     native void unlockOrientation();
     native void lockScreen();
     native void unlockScreen();
+    native void setDisableScreenshots(boolean disable);
 
     native void vibrate(int duration);
 
@@ -213,6 +214,7 @@ public final class IOSNative {
     native void setBrowserURL(long browserPeer, String url, String[] keys, String[] values);
     
     native void setBrowserUserAgent(long browserPeer, String ua);
+    native void setBrowserFollowTargetBlank(long browserPeer, boolean follow);
     
     native void browserBack(long browserPeer);
     native void browserStop(long browserPeer);
@@ -288,7 +290,8 @@ public final class IOSNative {
 
     native boolean isDarkMode();
     native boolean isDarkModeDetectionSupported();
-    
+    native boolean isVPNActive();
+
     native int fileCountInDir(String dir);
     native void listFilesInDir(String dir, String[] files);
     native void createDirectory(String dir);

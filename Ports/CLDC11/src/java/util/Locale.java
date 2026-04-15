@@ -1,9 +1,6 @@
 package java.util;
 
-/**
- *
- * @author Shai Almog
- */
+/// @author Shai Almog
 public class Locale {
     private static Locale defaultLocale;
     private String language;
@@ -13,7 +10,7 @@ public class Locale {
         this.country = locale;
     }
 
-    public Locale() {
+    Locale() {
         language = "en";
         int pos;
         if (language != null && (pos = language.indexOf('-')) != -1) {

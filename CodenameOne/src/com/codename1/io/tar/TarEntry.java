@@ -1,22 +1,18 @@
-/**
- * Copyright 2012 Kamran Zafar
- * <p>
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+/// Copyright 2012 Kamran Zafar
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+/// http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
 
-/**
- * The original source has been modified by Paul Williams.
- */
+/// The original source has been modified by Paul Williams.
 
 package com.codename1.io.tar;
 
@@ -24,10 +20,7 @@ import com.codename1.io.FileSystemStorage;
 
 import java.util.Date;
 
-/**
- * @author Kamran Zafar
- *
- */
+/// @author Kamran Zafar
 public class TarEntry {
     protected String file;
     protected TarHeader header;
@@ -48,8 +41,9 @@ public class TarEntry {
         this.parseTarHeader(headerBuf);
     }
 
+    @SuppressWarnings("PMD.SuspiciousEqualsMethodName")
     public boolean equals(TarEntry it) {
-        return this.header.name.toString().equals( it.header.name.toString() );
+        return this.header.name.toString().equals(it.header.name.toString());
     }
 
     @Override
@@ -142,18 +136,16 @@ public class TarEntry {
         this.header.size = size;
     }
 
-    /**
-     * Checks if the org.xeustechnologies.jtar entry is a directory
-     *
-     * @return
-     */
+    /// Checks if the org.xeustechnologies.jtar entry is a directory
     public boolean isDirectory() {
-        if (this.file != null)
+        if (this.file != null) {
             return FileSystemStorage.getInstance().isDirectory(this.file);
+        }
 
         if (this.header != null) {
-            if (this.header.linkFlag == TarHeader.LF_DIR)
+            if (this.header.linkFlag == TarHeader.LF_DIR) {
                 return true;
+            }
 
             return this.header.name.toString().endsWith("/");
         }
@@ -161,11 +153,11 @@ public class TarEntry {
         return false;
     }
 
-    /**
-     * Extract header from File
-     *
-     * @param entryName
-     */
+    /// Extract header from File
+    ///
+    /// #### Parameters
+    ///
+    /// - `entryName`
     public void extractTarHeader(String entryName) {
         String name = entryName;
 
@@ -173,15 +165,16 @@ public class TarEntry {
 
         name = name.replace(fileSystem.getFileSystemSeparator(), '/');
 
-        if (name.startsWith("/"))
+        if (name.startsWith("/")) {
             name = name.substring(1);
+        }
 
         header.linkName = new StringBuffer();
 
         header.name = new StringBuffer(name);
 
         if (fileSystem.isDirectory(file)) {
-            header.mode = 040755;
+            header.mode = 0x41ed;
             header.linkFlag = TarHeader.LF_DIR;
             if (header.name.charAt(header.name.length() - 1) != '/') {
                 header.name.append("/");
@@ -189,7 +182,7 @@ public class TarEntry {
             header.size = 0;
         } else {
             header.size = fileSystem.getLength(file);
-            header.mode = 0100644;
+            header.mode = 0x81a4;
             header.linkFlag = TarHeader.LF_NORMAL;
         }
 
@@ -200,12 +193,11 @@ public class TarEntry {
         header.devMinor = 0;
     }
 
-    /**
-     * Calculate checksum
-     *
-     * @param buf
-     * @return
-     */
+    /// Calculate checksum
+    ///
+    /// #### Parameters
+    ///
+    /// - `buf`
     public long computeCheckSum(byte[] buf) {
         long sum = 0;
         int blen = buf.length;
@@ -216,11 +208,11 @@ public class TarEntry {
         return sum;
     }
 
-    /**
-     * Writes the header to the byte buffer
-     *
-     * @param outbuf
-     */
+    /// Writes the header to the byte buffer
+    ///
+    /// #### Parameters
+    ///
+    /// - `outbuf`
     public void writeEntryHeader(byte[] outbuf) {
         int offset = 0;
 
@@ -235,8 +227,9 @@ public class TarEntry {
         offset = Octal.getLongOctalBytes(this.header.modTime, outbuf, offset, TarHeader.MODTIMELEN);
 
         int csOffset = offset;
-        for (int c = 0; c < TarHeader.CHKSUMLEN; ++c)
+        for (int c = 0; c < TarHeader.CHKSUMLEN; ++c) {
             outbuf[offset++] = (byte) ' ';
+        }
 
         outbuf[offset++] = this.header.linkFlag;
 
@@ -257,12 +250,13 @@ public class TarEntry {
         Octal.getCheckSumOctalBytes(checkSum, outbuf, csOffset, TarHeader.CHKSUMLEN);
     }
 
-    /**
-     * Parses the tar header to the byte buffer
-     *
-     * @param header
-     * @param bh
-     */
+    /// Parses the tar header to the byte buffer
+    ///
+    /// #### Parameters
+    ///
+    /// - `header`
+    ///
+    /// - `bh`
     public void parseTarHeader(byte[] bh) {
         int offset = 0;
 

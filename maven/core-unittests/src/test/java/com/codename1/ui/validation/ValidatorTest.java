@@ -1,14 +1,17 @@
 package com.codename1.ui.validation;
 
+import com.codename1.components.InteractionDialog;
 import com.codename1.junit.FormTest;
 import com.codename1.junit.UITestBase;
 import com.codename1.ui.Button;
 import com.codename1.ui.Component;
+import com.codename1.ui.Container;
 import com.codename1.ui.Form;
 import com.codename1.ui.Label;
 import com.codename1.ui.TextComponent;
 import com.codename1.ui.TextField;
 import com.codename1.ui.TextArea;
+import com.codename1.ui.geom.Rectangle;
 import com.codename1.ui.layouts.BoxLayout;
 import com.codename1.ui.plaf.UIManager;
 
@@ -178,6 +181,55 @@ class ValidatorTest extends UITestBase {
         if (scrollable != null) {
             scrollable.scrollRectToVisible(10, 0, 10, 10, ta);
         }
+    }
+
+
+
+    @FormTest
+    void testValidationEmblemSkippedWhenCoveredByLayeredPane() {
+        Form form = new Form(new BoxLayout(BoxLayout.Y_AXIS));
+        TextField tf = new TextField();
+        form.add(tf);
+        form.show();
+
+        Validator validator = new Validator();
+        Validator.ComponentListener listener = validator.new ComponentListener(tf);
+
+        Container layeredPane = form.getLayeredPane();
+        Label overlay = new Label("Overlay");
+        overlay.setX(20);
+        overlay.setY(20);
+        overlay.setWidth(80);
+        overlay.setHeight(40);
+        layeredPane.add(overlay);
+
+        assertTrue(listener.isPointCoveredByFormLayer(40, 40, form));
+        assertFalse(listener.isPointCoveredByFormLayer(5, 5, form));
+    }
+
+    @FormTest
+    void testValidationEmblemSkippedWhenCoveredByFormLayeredPane() {
+        Form form = new Form(new BoxLayout(BoxLayout.Y_AXIS));
+        TextField field = new TextField();
+        form.add(field);
+        form.show();
+
+        Validator validator = new Validator();
+        Validator.ComponentListener listener = validator.new ComponentListener(field);
+
+        InteractionDialog dialog = new InteractionDialog();
+        dialog.setAnimateShow(false);
+        dialog.add(new Label("Overlay"));
+        dialog.showPopupDialog(field);
+        flushSerialCalls();
+
+        Rectangle covered = new Rectangle(dialog.getAbsoluteX(), dialog.getAbsoluteY(),
+                Math.max(1, dialog.getWidth()), Math.max(1, dialog.getHeight()));
+        Rectangle notCovered = new Rectangle(0, 0, 2, 2);
+
+        assertTrue(listener.isEmblemRectCoveredByInteractionDialog(covered, form));
+        assertFalse(listener.isEmblemRectCoveredByInteractionDialog(notCovered, form));
+        dialog.dispose();
     }
 
     @FormTest

@@ -1,0 +1,15 @@
+{{- define "main" -}}
+<article class="post-single post-single--developer-guide">
+  <div class="post-content cn1-developer-guide" id="developer-guide">
+    {{- $guideFragment := "generated/developer-guide-content.html" -}}
+    {{- if fileExists $guideFragment -}}
+      {{- readFile $guideFragment | safeHTML -}}
+    {{- else -}}
+      <p>
+        Developer guide content isn't generated in this build.
+        Run the website build with <code>WEBSITE_INCLUDE_DEVGUIDE=true</code>.
+      </p>
+    {{- end -}}
+  </div>
+</article>
+{{- end -}}

@@ -2,9 +2,11 @@ package com.codename1.ui;
 
 import com.codename1.junit.FormTest;
 import com.codename1.junit.UITestBase;
+import com.codename1.testing.TestUtils;
 import com.codename1.ui.events.ActionListener;
 import com.codename1.ui.events.DataChangedListener;
 import com.codename1.ui.geom.Dimension;
+import com.codename1.ui.layouts.BoxLayout;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -133,6 +135,41 @@ class TextAreaTest extends UITestBase {
 
         textArea.setGrowByContent(false);
         assertFalse(textArea.isGrowByContent());
+    }
+
+    @FormTest
+    void testGrowByContentRevalidatesParentWhenRowsGrowDuringEditing() {
+        TextArea textArea = new TextArea();
+        textArea.setRows(1);
+        textArea.setSingleLineTextArea(false);
+        textArea.setGrowByContent(true);
+        TrackingContainer parent = new TrackingContainer();
+        parent.add(textArea);
+        parent.revalidatedLater = false;
+        Display.impl.setFocusedEditingText(textArea);
+        try {
+            textArea.setText("Line 1");
+            parent.revalidatedLater = false;
+            textArea.setText("Line 1\nLine 2");
+            assertTrue(parent.revalidatedLater, "Parent should be revalidated when growByContent row count increases");
+        } finally {
+            Display.impl.setFocusedEditingText(null);
+        }
+    }
+
+    @FormTest
+    void testGrowByContentDoesNotRevalidateWhenNotEditing() {
+        TextArea textArea = new TextArea();
+        textArea.setRows(2);
+        textArea.setGrowByContent(true);
+        TrackingContainer parent = new TrackingContainer();
+        parent.add(textArea);
+        parent.revalidatedLater = false;
+
+        Display.impl.setFocusedEditingText(null);
+        textArea.setText("Line 1");
+
+        assertFalse(parent.revalidatedLater, "Parent should not be revalidated when text changes outside active editing");
     }
 
     @FormTest
@@ -353,5 +390,75 @@ class TextAreaTest extends UITestBase {
         TextArea textArea = new TextArea();
         assertDoesNotThrow(() -> textArea.refreshTheme(false));
         assertDoesNotThrow(() -> textArea.refreshTheme(true));
+    }
+
+    @FormTest
+    void testMultilineVerticalAlignmentIsRetained() {
+        TextArea textArea = new TextArea("Line 1\nLine 2\nLine 3");
+        textArea.setSingleLineTextArea(false);
+        textArea.setRows(4);
+        textArea.setEditable(true);
+        textArea.setVerticalAlignment(Component.CENTER);
+
+        assertEquals(Component.CENTER, textArea.getVerticalAlignment());
+
+        textArea.setVerticalAlignment(Component.BOTTOM);
+        assertEquals(Component.BOTTOM, textArea.getVerticalAlignment());
+    }
+
+    @FormTest
+    void testVerticalAlignmentRejectsInvalidValues() {
+        TextArea textArea = new TextArea();
+        assertThrows(IllegalArgumentException.class, () -> textArea.setVerticalAlignment(Component.BASELINE));
+    }
+
+    @FormTest
+    void testVerticalAlignmentScreenshotStates() {
+        Form form = new Form("TextArea VAlign", BoxLayout.y());
+        form.getStyle().setPadding(4, 4, 4, 4);
+
+        TextArea topAligned = createAlignmentSample("TOP", Component.TOP);
+        TextArea centerAligned = createAlignmentSample("CENTER", Component.CENTER);
+        TextArea bottomAligned = createAlignmentSample("BOTTOM", Component.BOTTOM);
+        TextArea overflowAligned = createOverflowSample(Component.BOTTOM);
+
+        form.addAll(topAligned, centerAligned, bottomAligned, overflowAligned);
+        form.show();
+        flushSerialCalls();
+
+        assertTrue(TestUtils.screenshotTest("TextAreaVerticalAlignmentStates"));
+    }
+
+    private TextArea createAlignmentSample(String label, int valign) {
+        TextArea sample = new TextArea(label + "\nline 2");
+        sample.setRows(4);
+        sample.setColumns(20);
+        sample.setSingleLineTextArea(false);
+        sample.setEditable(false);
+        sample.setVerticalAlignment(valign);
+        return sample;
+    }
+
+    private TextArea createOverflowSample(int valign) {
+        TextArea sample = new TextArea("Overflow line 1\nOverflow line 2\nOverflow line 3\nOverflow line 4\nOverflow line 5");
+        sample.setRows(3);
+        sample.setColumns(20);
+        sample.setSingleLineTextArea(false);
+        sample.setEditable(false);
+        sample.setVerticalAlignment(valign);
+        return sample;
+    }
+
+    private static class TrackingContainer extends Container {
+        private boolean revalidatedLater;
+
+        TrackingContainer() {
+            super(BoxLayout.y());
+        }
+
+        @Override
+        public void revalidateLater() {
+            revalidatedLater = true;
+        }
     }
 }

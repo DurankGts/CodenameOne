@@ -35,41 +35,27 @@ import com.codename1.ui.plaf.Style;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.util.Enumeration;
 import java.util.Hashtable;
 import java.util.Vector;
 
-/**
- * This class is responsible for applying CSS directives to an HTMLComponent
- *
- * @author Ofir Leitner
- */
+/// This class is responsible for applying CSS directives to an HTMLComponent
+///
+/// @author Ofir Leitner
 class CSSEngine {
 
-    /**
-     * Denotes that the selector should be applied to the unselected style of the component
-     */
+    /// Denotes that the selector should be applied to the unselected style of the component
     final static int STYLE_UNSELECTED = 1;
-    /**
-     * Denotes that the selector should be applied to the selected style of the component
-     */
+    /// Denotes that the selector should be applied to the selected style of the component
     final static int STYLE_SELECTED = 2;
-    /**
-     * Denotes that the selector should be applied to the pressed style of the component
-     */
+    /// Denotes that the selector should be applied to the pressed style of the component
     final static int STYLE_PRESSED = 4;
     static final String CLIENT_PROPERTY_CSS_CONTENT = "cssContent";
-    /**
-     * A list of the attributes that can contain a URL, in order to scan them and update relative URLs to an absolute one
-     */
+    /// A list of the attributes that can contain a URL, in order to scan them and update relative URLs to an absolute one
     private static final int[] URL_ATTRIBUTES = {CSSElement.CSS_BACKGROUND_IMAGE, CSSElement.CSS_LIST_STYLE_IMAGE};
-    /**
-     * The indentation applied on a list when its 'list-style-position' is 'inside' vs. 'outside'
-     */
+    /// The indentation applied on a list when its 'list-style-position' is 'inside' vs. 'outside'
     private final static int INDENT_LIST_STYLE_POSITION = 15;
     // The possible values of the 'text-transform' attribute
-    private static final int TEXT_TRANSFORM_NONE = 0;
     private static final int TEXT_TRANSFORM_UPPERCASE = 1;
     private static final int TEXT_TRANSFORM_LOWERCASE = 2;
     private static final int TEXT_TRANSFORM_CAPITALIZE = 3;
@@ -83,23 +69,17 @@ class CSSEngine {
     private static final int INPUT_REQUIRED_FALSE = 1;
     // The possible values of the 'background-attachment' attribute
     private static final int BG_ATTACHMENT_FIXED = 0;
-    private static final int BG_ATTACHMENT_SCROLL = 1;
     // The possible values of the 'white-space' attribute
     private static final int WHITE_SPACE_NORMAL = 0;
     private static final int WHITE_SPACE_PRE = 1;
     private static final int WHITE_SPACE_NOWRAP = 2;
     // The possible values of the 'display' attribute
-    private static final int DISPLAY_INLINE = 0;
-    private static final int DISPLAY_BLOCK = 1;
-    private static final int DISPLAY_LIST_ITEM = 2;
     private static final int DISPLAY_NONE = 3;
     private static final int DISPLAY_MARQUEE = 4;
     // The possible values of the 'font-variant' attribute
-    private static final int FONT_VARIANT_NORMAL = 0;
     private static final int FONT_VARIANT_SMALLCAPS = 1;
     // The possible values of the 'list-style-position' attribute
     private static final int LIST_STYLE_POSITION_INSIDE = 0;
-    private static final int LIST_STYLE_POSITION_OUTSIDE = 1;
     // The possible values of the 'border-style' attribute
     private static final int BORDER_STYLE_NONE = 0;
     private static final int BORDER_STYLE_SOLID = 1;
@@ -120,57 +100,50 @@ class CSSEngine {
     private static final int STYLE = 1;
     private static final int COLOR = 2;
     // The possible values of the 'visibility' attribute
-    private static final int VISIBILITY_HIDDEN = 0;
     private static final int VISIBILITY_VISIBLE = 1;
-    private static final int VISIBILITY_COLLAPSE = 2; // collapse behaves the same as hidden in most browsers.
     // The possible values of the 'border-collapse' attribute
     private static final int BORDER_COLLAPSE_COLLAPSE = 0;
-    private static final int BORDER_COLLAPSE_SEPARATE = 1;
     // The possible values of the 'empty-cells' attribute
-    private static final int EMPTY_CELLS_HIDE = 0;
     private static final int EMPTY_CELLS_SHOW = 1;
     // The possible values of the 'caption-side' attribute
-    private static final int CAPTION_SIDE_BOTTOM = 0;
-    private static final int CAPTION_SIDE_TOP = 1;
     // The possible values of the 'direction' attribute
     private static final int DIRECTION_RTL = 0;
-    private static final int DIRECTION_LTR = 1;
     private static final int DEFAULT_3D_BORDER_COLOR = 0x9a9a9a; // default color for outset/inset/ridge/groove
-    //int count; //for debugging
-    private static class CSSEngineHolder {
-        private static final CSSEngine INSTANCE = new CSSEngine();
-    }
     private static final Hashtable specialKeys = new Hashtable(); // A hashtable containing all recognized special key strings and their keycodes
     private final Hashtable matchingFonts = new Hashtable(); // A hashtable used as a cache for quick find of matching fonts
 
-    /**
-     * Returns the singleton instance of CSSEngine and creates it if necessary
-     *
-     * @return The singleton instance of CSSEngine
-     */
+    /// Returns the singleton instance of CSSEngine and creates it if necessary
+    ///
+    /// #### Returns
+    ///
+    /// The singleton instance of CSSEngine
     static CSSEngine getInstance() {
         return CSSEngineHolder.INSTANCE;
     }
 
-    /**
-     * Adds support for a special key to be used as an accesskey.
-     * The CSS property -wap-accesskey supports special keys, for example "phone-send" that may have different key codes per device.
-     * This method allows pairing between such keys to their respective key codes.
-     * Note that these keys are valid only for -wap-aceesskey in CSS files, and not for the XHTML accesskey attribute.
-     *
-     * @param specialKeyName The name of the special key as denoted in CSS files
-     * @param specialKeyCode The special key code
-     */
+    /// Adds support for a special key to be used as an accesskey.
+    /// The CSS property -wap-accesskey supports special keys, for example "phone-send" that may have different key codes per device.
+    /// This method allows pairing between such keys to their respective key codes.
+    /// Note that these keys are valid only for -wap-aceesskey in CSS files, and not for the XHTML accesskey attribute.
+    ///
+    /// #### Parameters
+    ///
+    /// - `specialKeyName`: The name of the special key as denoted in CSS files
+    ///
+    /// - `specialKeyCode`: The special key code
     static void addSpecialKey(String specialKeyName, int specialKeyCode) {
         specialKeys.put(specialKeyName, Integer.valueOf(specialKeyCode));
     }
 
-    /**
-     * Omits quotes of all kinds if they exist in the string
-     *
-     * @param str The string to check
-     * @return A quoteless string
-     */
+    /// Omits quotes of all kinds if they exist in the string
+    ///
+    /// #### Parameters
+    ///
+    /// - `str`: The string to check
+    ///
+    /// #### Returns
+    ///
+    /// A quoteless string
     static String omitQuotesIfExist(String str) {
         if (str == null) {
             return null;
@@ -181,12 +154,15 @@ class CSSEngine {
         return str;
     }
 
-    /**
-     * Extracts a url from a CSS URL value
-     *
-     * @param cssURL the CSS formatted URL - url(someurl)
-     * @return A regular URL - someurl
-     */
+    /// Extracts a url from a CSS URL value
+    ///
+    /// #### Parameters
+    ///
+    /// - `cssURL`: the CSS formatted URL - url(someurl)
+    ///
+    /// #### Returns
+    ///
+    /// A regular URL - someurl
     static String getCSSUrl(String cssURL) {
         if ((cssURL != null) && (cssURL.toLowerCase().startsWith("url("))) {
             int index = cssURL.indexOf(')');
@@ -200,17 +176,19 @@ class CSSEngine {
         return null;
     }
 
-    /**
-     * Sorts the CSS directives by their specificity level
-     *
-     * @param css A css vector holding CSSElements, where each element holds CSS selectors as its children
-     * @return a flat vector containing CSS selectors, sorted by specificity
-     */
+    /// Sorts the CSS directives by their specificity level
+    ///
+    /// #### Parameters
+    ///
+    /// - `css`: A css vector holding CSSElements, where each element holds CSS selectors as its children
+    ///
+    /// #### Returns
+    ///
+    /// a flat vector containing CSS selectors, sorted by specificity
     private CSSElement[] sortSelectorsBySpecificity(CSSElement[] css) {
         Vector sortedSelectors = new Vector();
 
-        for (int s = 0; s < css.length; s++) {
-            CSSElement cssRoot = css[s];
+        for (CSSElement cssRoot : css) {
             String cssPageURL = cssRoot.getAttributeById(CSSElement.CSS_PAGEURL);
             DocumentInfo cssDocInfo = null;
             if (cssPageURL != null) {
@@ -219,11 +197,11 @@ class CSSEngine {
             for (int iter = 0; iter < cssRoot.getNumChildren(); iter++) {
                 CSSElement currentSelector = cssRoot.getCSSChildAt(iter);
                 if (cssPageURL != null) { // Since with external CSS pages, the base URL is that of the CSS file and not of the HTML document, we have to convert relative image URLs to absolute URLs
-                    for (int i = 0; i < URL_ATTRIBUTES.length; i++) {
-                        String imageURL = getCSSUrl(currentSelector.getAttributeById(URL_ATTRIBUTES[i]));
+                    for (int attribute : URL_ATTRIBUTES) {
+                        String imageURL = getCSSUrl(currentSelector.getAttributeById(attribute));
                         if (imageURL != null) {
                             imageURL = cssDocInfo.convertURL(imageURL);
-                            currentSelector.setAttribute(currentSelector.getAttributeName(Integer.valueOf(URL_ATTRIBUTES[i])), "url(" + imageURL + ")");
+                            currentSelector.setAttribute(currentSelector.getAttributeName(Integer.valueOf(attribute)), "url(" + imageURL + ")");
                         }
                     }
                 }
@@ -244,16 +222,19 @@ class CSSEngine {
         return css;
     }
 
-    /**
-     * Applies all CSS directives to the given document and HTMLComponent, including external CSS files, embedded CSS segments and inline CSS (Style attribute)
-     * This is called by HTMLComponent after the document was fully parsed and all external CSS have been retrieved.
-     * This method actually initializes a sorted CSS array to be used by the recursive private applyCSS method.
-     *
-     * @param document    The HTML document to apply the CSS on
-     * @param htmlC       The HTMLComponent to apply the CSS on
-     * @param externalCSS A vector containing CSSElelemnts each being the root of external CSS file (1 per file)
-     * @param embeddedCSS A vector containing CSSElelemnts each being the root of embedded CSS segments (1 per segment)
-     */
+    /// Applies all CSS directives to the given document and HTMLComponent, including external CSS files, embedded CSS segments and inline CSS (Style attribute)
+    /// This is called by HTMLComponent after the document was fully parsed and all external CSS have been retrieved.
+    /// This method actually initializes a sorted CSS array to be used by the recursive private applyCSS method.
+    ///
+    /// #### Parameters
+    ///
+    /// - `document`: The HTML document to apply the CSS on
+    ///
+    /// - `htmlC`: The HTMLComponent to apply the CSS on
+    ///
+    /// - `externalCSS`: A vector containing CSSElelemnts each being the root of external CSS file (1 per file)
+    ///
+    /// - `embeddedCSS`: A vector containing CSSElelemnts each being the root of embedded CSS segments (1 per segment)
     void applyCSS(HTMLElement document, HTMLComponent htmlC, Vector externalCSS, Vector embeddedCSS) {
         //long startTime=System.currentTimeMillis();
         //count=0;
@@ -284,13 +265,14 @@ class CSSEngine {
         //System.out.println("Total: "+count+", Time="+(System.currentTimeMillis()-startTime));
     }
 
-    /**
-     * Applies the style attribute in the specified element and all of its descendants (where exists)
-     * This method is used when no external and embedded CSS segments exists, to speed up the process of CSS application
-     *
-     * @param element The element to apply the style to
-     * @param htmlC   The HTMLComponent
-     */
+    /// Applies the style attribute in the specified element and all of its descendants (where exists)
+    /// This method is used when no external and embedded CSS segments exists, to speed up the process of CSS application
+    ///
+    /// #### Parameters
+    ///
+    /// - `element`: The element to apply the style to
+    ///
+    /// - `htmlC`: The HTMLComponent
     private void applyStyleAttributeRecursive(HTMLElement element, HTMLComponent htmlC) {
         applyStyleAttribute(element, htmlC);
         for (int i = 0; i < element.getNumChildren(); i++) {
@@ -299,19 +281,20 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Applies the style attribute in the specified element, if exists
-     *
-     * @param element The element to apply the style to
-     * @param htmlC   The HTMLComponent
-     */
+    /// Applies the style attribute in the specified element, if exists
+    ///
+    /// #### Parameters
+    ///
+    /// - `element`: The element to apply the style to
+    ///
+    /// - `htmlC`: The HTMLComponent
     private void applyStyleAttribute(HTMLElement element, HTMLComponent htmlC) {
         String styleStr = element.getAttributeById(HTMLElement.ATTR_STYLE);
         if (styleStr != null) {
             CSSElement style = null;
             styleStr = "{" + styleStr + "}"; // So it will be parsed correctly
             try {
-                style = CSSParser.getInstance().parseCSS(com.codename1.io.Util.getReader(new ByteArrayInputStream(com.codename1.util.StringUtil.getBytes(styleStr))), htmlC);
+                style = CSSParser.getInstance().parseCSS(com.codename1.io.Util.getReader(new ByteArrayInputStream(com.codename1.util.StringUtil.getBytes(styleStr))));
                 applyStyle(element, style, htmlC);
             } catch (IOException ex) {
                 ex.printStackTrace();
@@ -319,14 +302,17 @@ class CSSEngine {
         }
     }
 
-    /**
-     * A recursive method that tries to match all CSS selectors with the specified element
-     *
-     * @param element         The specific element in the document to apply the CSS on
-     * @param htmlC           The HTMLComponent to apply the CSS on
-     * @param css             An array containing selectors sorted by specificity from all the external CSS files and then the embedded CSS segments
-     * @param nestedSelectors A vector containing nested selectors, or null if none
-     */
+    /// A recursive method that tries to match all CSS selectors with the specified element
+    ///
+    /// #### Parameters
+    ///
+    /// - `element`: The specific element in the document to apply the CSS on
+    ///
+    /// - `htmlC`: The HTMLComponent to apply the CSS on
+    ///
+    /// - `css`: An array containing selectors sorted by specificity from all the external CSS files and then the embedded CSS segments
+    ///
+    /// - `nestedSelectors`: A vector containing nested selectors, or null if none
     private Vector applyCSS(HTMLElement element, HTMLComponent htmlC, CSSElement[] css, Vector nestedSelectors, Vector siblingSelectors) { //Vector styleAttributes
         String id = element.getAttributeById(HTMLElement.ATTR_ID);
         String className = element.getAttributeById(HTMLElement.ATTR_CLASS);
@@ -336,8 +322,7 @@ class CSSEngine {
         if (!HTMLComponent.PROCESS_HTML_MP1_ONLY) { // sibling selectors are not supported in HTML-MP1
             nextSiblingSelectors = new Vector();
         }
-        for (int e = 0; e < css.length; e++) {
-            CSSElement currentSelector = css[e];
+        for (CSSElement currentSelector : css) {
             checkSelector(currentSelector, element, htmlC, className, id, nextNestedSelectors, nextSiblingSelectors);
         }
 
@@ -356,11 +341,11 @@ class CSSEngine {
         }
 
 
-        if (nextNestedSelectors.size() == 0) {
+        if (nextNestedSelectors.isEmpty()) {
             nextNestedSelectors = null;
         }
 
-        if ((!HTMLComponent.PROCESS_HTML_MP1_ONLY) && (nextSiblingSelectors.size() == 0)) {
+        if ((!HTMLComponent.PROCESS_HTML_MP1_ONLY) && (nextSiblingSelectors.isEmpty())) {
             nextSiblingSelectors = null;
         }
 
@@ -378,18 +363,23 @@ class CSSEngine {
         return nextSiblingSelectors;
     }
 
-    /**
-     * Checks if the given selector matches the given element either by its tag name, class name or id.
-     * If there's a match but the selector has children, it means that it is a nested selector, and thus
-     * its only child is added to the nested selectors vector to be checked against the children of this element in the next recursion of applyCSS
-     *
-     * @param currentSelector     The current CSS selector to check
-     * @param element             The element to check
-     * @param htmlC               The HTMLComponent
-     * @param className           The element's class name (Can be derived from element but since this method is called a lot it is extracted before and sent as a parameter)
-     * @param id                  The element's id (Same comment as in className)
-     * @param nextNestedSelectors A vector containing the nested selectors
-     */
+    /// Checks if the given selector matches the given element either by its tag name, class name or id.
+    /// If there's a match but the selector has children, it means that it is a nested selector, and thus
+    /// its only child is added to the nested selectors vector to be checked against the children of this element in the next recursion of applyCSS
+    ///
+    /// #### Parameters
+    ///
+    /// - `currentSelector`: The current CSS selector to check
+    ///
+    /// - `element`: The element to check
+    ///
+    /// - `htmlC`: The HTMLComponent
+    ///
+    /// - `className`: The element's class name (Can be derived from element but since this method is called a lot it is extracted before and sent as a parameter)
+    ///
+    /// - `id`: The element's id (Same comment as in className)
+    ///
+    /// - `nextNestedSelectors`: A vector containing the nested selectors
     private void checkSelector(CSSElement currentSelector, HTMLElement element, HTMLComponent htmlC, String className, String id, Vector nextNestedSelectors, Vector nextSiblingSelectors) {
 
         if (((currentSelector.getSelectorTag() == null) || ((!element.isTextElement()) && (currentSelector.getSelectorTag().equalsIgnoreCase(element.getTagName())))) &&
@@ -400,9 +390,9 @@ class CSSEngine {
             if (currentSelector.getNumChildren() == 0) {
                 if ((element.getTagId() != HTMLElement.TAG_A) ||
                         ((currentSelector.getSelectorPseudoClass() & (CSSElement.PC_LINK + CSSElement.PC_VISITED)) == 0) || // not link/visited (but can be active/focus)
-                        ((element.getUi().size() > 0) && !(element.getUi().firstElement() instanceof HTMLLink)) ||
-                        ((element.getUi().size() > 0) && (!((HTMLLink) element.getUi().firstElement()).linkVisited) && ((currentSelector.getSelectorPseudoClass() & CSSElement.PC_LINK) != 0)) ||
-                        ((element.getUi().size() > 0) && ((HTMLLink) element.getUi().firstElement()).linkVisited) && ((currentSelector.getSelectorPseudoClass() & CSSElement.PC_VISITED) != 0)) {
+                        ((!element.getUi().isEmpty()) && !(element.getUi().firstElement() instanceof HTMLLink)) ||
+                        ((!element.getUi().isEmpty()) && (!((HTMLLink) element.getUi().firstElement()).linkVisited) && ((currentSelector.getSelectorPseudoClass() & CSSElement.PC_LINK) != 0)) ||
+                        ((!element.getUi().isEmpty()) && ((HTMLLink) element.getUi().firstElement()).linkVisited) && ((currentSelector.getSelectorPseudoClass() & CSSElement.PC_VISITED) != 0)) {
                     applyStyle(element, currentSelector, htmlC);
                 }
             } else {
@@ -425,15 +415,19 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Checks if the specified class is contained in the specified text
-     * This is used for elements that have several classes i.e. class="class1 class2"
-     * Note: A simple indexOf could not be used since we need to find whole words and not frgaments of words
-     *
-     * @param selectorClass The text
-     * @param elementClass  The word to find in the text
-     * @return true if the word is found, false otherwise
-     */
+    /// Checks if the specified class is contained in the specified text
+    /// This is used for elements that have several classes i.e. class="class1 class2"
+    /// Note: A simple indexOf could not be used since we need to find whole words and not frgaments of words
+    ///
+    /// #### Parameters
+    ///
+    /// - `selectorClass`: The text
+    ///
+    /// - `elementClass`: The word to find in the text
+    ///
+    /// #### Returns
+    ///
+    /// true if the word is found, false otherwise
     private boolean containsClass(String elementClass, String selectorClass) {
         if ((elementClass == null) || (selectorClass == null)) {
             return false;
@@ -455,15 +449,17 @@ class CSSEngine {
         return (elementClass.indexOf(" " + selectorClass + " ") != -1);
     }
 
-    /**
-     * Applies the given style attributes to the HTML DOM entry
-     *
-     * @param element  The element to apply the style to
-     * @param selector The selector containing the style directives
-     * @param htmlC    The HTMLComponent
-     */
+    /// Applies the given style attributes to the HTML DOM entry
+    ///
+    /// #### Parameters
+    ///
+    /// - `element`: The element to apply the style to
+    ///
+    /// - `selector`: The selector containing the style directives
+    ///
+    /// - `htmlC`: The HTMLComponent
     private void applyStyle(HTMLElement element, CSSElement selector, HTMLComponent htmlC) {
-        if (element.getUi().size() > 0) {
+        if (!element.getUi().isEmpty()) {
             if (!HTMLComponent.PROCESS_HTML_MP1_ONLY) {
                 String reset = selector.getAttributeById(CSSElement.CSS_COUNTER_RESET);
                 if (reset != null) {
@@ -481,7 +477,7 @@ class CSSEngine {
             }
             for (int iter = 0; iter < element.getUi().size(); iter++) {
                 Object o = element.getUi().elementAt(iter);
-                if (o != null && o instanceof Component) {
+                if (o instanceof Component) {
                     final Component cmp = (Component) o;
                     applyStyleToUIElement(cmp, selector, element, htmlC);
                 }
@@ -489,13 +485,17 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Returns a mask of the STYLE_* constants of which CodenameOne styles this selector should be applied to
-     *
-     * @param cmp      The component in question
-     * @param selector The selector
-     * @return a mask of the STYLE_* constants of which CodenameOne styles this selector should be applied to
-     */
+    /// Returns a mask of the STYLE_* constants of which CodenameOne styles this selector should be applied to
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component in question
+    ///
+    /// - `selector`: The selector
+    ///
+    /// #### Returns
+    ///
+    /// a mask of the STYLE_* constants of which CodenameOne styles this selector should be applied to
     private int getApplicableStyles(Component cmp, CSSElement selector) {
         int result = 0;
         if (cmp instanceof HTMLLink) {
@@ -519,13 +519,15 @@ class CSSEngine {
         return result;
     }
 
-    /**
-     * Sets the specified color as the foreground color of the component and all its children
-     *
-     * @param cmp      The component to work on
-     * @param color    The color to set
-     * @param selector The selector with the color directive
-     */
+    /// Sets the specified color as the foreground color of the component and all its children
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component to work on
+    ///
+    /// - `color`: The color to set
+    ///
+    /// - `selector`: The selector with the color directive
     private void setColorRecursive(Component cmp, int color, CSSElement selector) {
         int styles = getApplicableStyles(cmp, selector);
         if ((styles & STYLE_UNSELECTED) != 0) {
@@ -548,20 +550,23 @@ class CSSEngine {
         }
     }
 
-    // TODO - This is a problematic implementation since if a text has been converted to UPPERCASE and then due to a child's style attribute it has to change back to none/capitalize - there's no way to restore the original text.
-    // Also it has a problem with FIXED_WIDTH mode since when uppercasing for example, labels will grow in size which will take some of them out of the screen, The correct way is working on the elements and not the text, and reconstruct the labels
-
-    /**
-     * Sets the font of the component and all its children to the closest font that can be found according to the specified properties
-     *
-     * @param htmlC      The HTMLComponent this component belongs to (For the available bitmap fonts table)
-     * @param cmp        The component to work on
-     * @param fontFamily The font family
-     * @param fontSize   The font size in pixels
-     * @param fontStyle  The font style - either Font.STYLE_PLAIN or Font.STYLE_ITALIC
-     * @param fontWeight The font weight - either Font.STYLE_PLAIN ot Font.STYLE_BOLD
-     * @param selector   The selector with the font directive
-     */
+    /// Sets the font of the component and all its children to the closest font that can be found according to the specified properties
+    ///
+    /// #### Parameters
+    ///
+    /// - `htmlC`: The HTMLComponent this component belongs to (For the available bitmap fonts table)
+    ///
+    /// - `cmp`: The component to work on
+    ///
+    /// - `fontFamily`: The font family
+    ///
+    /// - `fontSize`: The font size in pixels
+    ///
+    /// - `fontStyle`: The font style - either Font.STYLE_PLAIN or Font.STYLE_ITALIC
+    ///
+    /// - `fontWeight`: The font weight - either Font.STYLE_PLAIN ot Font.STYLE_BOLD
+    ///
+    /// - `selector`: The selector with the font directive
     private void setFontRecursive(HTMLComponent htmlC, Component cmp, String fontFamily, int fontSize, int fontStyle, int fontWeight, CSSElement selector) {
         if (cmp instanceof Container) {
             Container cont = (Container) cmp;
@@ -573,15 +578,19 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Usually we don't have to set visibility in a recursive manner, i.e. suffices to set a top level container as invisible and all its contents are invisible.
-     * However, in CSS it is possible that a top level element has visibility:hidden and some child of his has visibility:visible, and then what we do
-     * is use the setVisibleParents to make sure all containers containing this child are visible.
-     * But since other child components still need to be invsibile - we make sure that all are invisible with this method.
-     *
-     * @param cmp     The component to set visibility on
-     * @param visible true to set visible and enabled, false otherwise
-     */
+    // TODO - This is a problematic implementation since if a text has been converted to UPPERCASE and then due to a child's style attribute it has to change back to none/capitalize - there's no way to restore the original text.
+    // Also it has a problem with FIXED_WIDTH mode since when uppercasing for example, labels will grow in size which will take some of them out of the screen, The correct way is working on the elements and not the text, and reconstruct the labels
+
+    /// Usually we don't have to set visibility in a recursive manner, i.e. suffices to set a top level container as invisible and all its contents are invisible.
+    /// However, in CSS it is possible that a top level element has visibility:hidden and some child of his has visibility:visible, and then what we do
+    /// is use the setVisibleParents to make sure all containers containing this child are visible.
+    /// But since other child components still need to be invsibile - we make sure that all are invisible with this method.
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component to set visibility on
+    ///
+    /// - `visible`: true to set visible and enabled, false otherwise
     private void setVisibleRecursive(Component cmp, boolean visible) {
         cmp.setEnabled(visible);
         cmp.setVisible(visible);
@@ -593,12 +602,13 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Sets the specified text transform to the component and all its children
-     *
-     * @param cmp           The component to work on
-     * @param transformType The text transform type, one of the TEXT_TRANSFORM_* constants
-     */
+    /// Sets the specified text transform to the component and all its children
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component to work on
+    ///
+    /// - `transformType`: The text transform type, one of the TEXT_TRANSFORM_* constants
     private void setTextTransformRecursive(Component cmp, int transformType) {
         if (cmp instanceof Container) {
             Container cont = (Container) cmp;
@@ -641,12 +651,13 @@ class CSSEngine {
 
     }
 
-    /**
-     * Sets the alignment of the component and all its children according to the given alignment
-     *
-     * @param cmp   The component to set the alignment on
-     * @param align The alignment - one of left,center,right
-     */
+    /// Sets the alignment of the component and all its children according to the given alignment
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component to set the alignment on
+    ///
+    /// - `align`: The alignment - one of left,center,right
     private void setTextAlignmentRecursive(Component cmp, int align) {
         if (cmp instanceof Container) {
             Container cont = (Container) cmp;
@@ -661,13 +672,14 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Sets the given text indentation to the component and all its children
-     * Note: This doesn't really work well with HTMLComponent.FIXED_WIDTH mode since labels there are not single words but rather the whole line, so they get pushed out of the screen
-     *
-     * @param cmp    The component to set the indentation on
-     * @param indent The indentation in pixels
-     */
+    /// Sets the given text indentation to the component and all its children
+    /// Note: This doesn't really work well with HTMLComponent.FIXED_WIDTH mode since labels there are not single words but rather the whole line, so they get pushed out of the screen
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component to set the indentation on
+    ///
+    /// - `indent`: The indentation in pixels
     private void setTextIndentationRecursive(Component cmp, int indent) {
         if (cmp instanceof Container) {
             Container cont = (Container) cmp;
@@ -682,11 +694,11 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Turns on the visibilty of all ancestors of the given component
-     *
-     * @param cmp The component to work on
-     */
+    /// Turns on the visibilty of all ancestors of the given component
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component to work on
     private void setParentsVisible(Component cmp) {
         Container cont = cmp.getParent();
         while (cont != null) {
@@ -695,13 +707,15 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Replaces an unwrapped text with a wrapped version, while copying the style of the original text.
-     *
-     * @param label   The current label that contains the unwrapped text
-     * @param words   A vector containing one word of the text (without white spaces) in each element
-     * @param element The text element
-     */
+    /// Replaces an unwrapped text with a wrapped version, while copying the style of the original text.
+    ///
+    /// #### Parameters
+    ///
+    /// - `label`: The current label that contains the unwrapped text
+    ///
+    /// - `words`: A vector containing one word of the text (without white spaces) in each element
+    ///
+    /// - `element`: The text element
     private void setWrapText(Label label, Vector words, HTMLElement element, HTMLComponent htmlC) {
         Style selectedStyle = label.getSelectedStyle();
         Style unselectedStyle = label.getUnselectedStyle();
@@ -728,16 +742,17 @@ class CSSEngine {
         label.getParent().revalidate();
     }
 
-    /**
-     * Sets this element and all children to have wrapped text.
-     * In cases where text is already wrapped no change will be made.
-     * This will work only in FIXED_WIDTH mode (Checked before called)
-     * Technically all this logic can be found in HTMLComponent.showText, but since we don't want to get into
-     * the context of this element (i.e. what was the indentation, alignment etc.), we use this algorithm.
-     *
-     * @param element The element to apply text wrapping on
-     * @param htmlC   The HTMLComponent
-     */
+    /// Sets this element and all children to have wrapped text.
+    /// In cases where text is already wrapped no change will be made.
+    /// This will work only in FIXED_WIDTH mode (Checked before called)
+    /// Technically all this logic can be found in HTMLComponent.showText, but since we don't want to get into
+    /// the context of this element (i.e. what was the indentation, alignment etc.), we use this algorithm.
+    ///
+    /// #### Parameters
+    ///
+    /// - `element`: The element to apply text wrapping on
+    ///
+    /// - `htmlC`: The HTMLComponent
     private void setWrapRecursive(HTMLElement element, HTMLComponent htmlC) {
         if (element.isTextElement()) {
             String text = element.getText();
@@ -755,21 +770,19 @@ class CSSEngine {
 
     }
 
-
-    ////////
-    // CSS2 additions - the following are not in the WCSS spec, but rather in the CSS2 spec
-    ///////
-
-    /**
-     * Replaces a wrapped text with an unwrapped version.
-     * This in fact removes all the labels that contains a single word each, and replaces them with one label that contains the whole text.
-     * This way the label is not wrapped.
-     *
-     * @param label   The first label of this text element (can be derived from ui but already fetched before the call)
-     * @param ui      The vector consisting all components (labels) that contain the text's words
-     * @param newText The new text that should replace current components (unwrapped text without extra white spaces)
-     * @param element The text element
-     */
+    /// Replaces a wrapped text with an unwrapped version.
+    /// This in fact removes all the labels that contains a single word each, and replaces them with one label that contains the whole text.
+    /// This way the label is not wrapped.
+    ///
+    /// #### Parameters
+    ///
+    /// - `label`: The first label of this text element (can be derived from ui but already fetched before the call)
+    ///
+    /// - `ui`: The vector consisting all components (labels) that contain the text's words
+    ///
+    /// - `newText`: The new text that should replace current components (unwrapped text without extra white spaces)
+    ///
+    /// - `element`: The text element
     private void setNowrapText(Label label, Vector ui, String newText, HTMLElement element) {
         label.setText(newText);
         for (int i = 1; i < ui.size(); i++) {
@@ -783,15 +796,20 @@ class CSSEngine {
         label.getParent().revalidate();
     }
 
-    /**
-     * Sets this element and all children to have unwrapped text.
-     * In cases where text is already unwrapped no change will be made.
-     * This will work only in FIXED_WIDTH mode (Checked before called)
-     * Technically a lot of this logic can be found in HTMLComponent, but since we don't want to get into
-     * the context of this element (i.e. what was the indentation, alignment etc.), we use this algorithm.
-     *
-     * @param element The element to apply text wrapping on
-     */
+
+    ////////
+    // CSS2 additions - the following are not in the WCSS spec, but rather in the CSS2 spec
+    ///////
+
+    /// Sets this element and all children to have unwrapped text.
+    /// In cases where text is already unwrapped no change will be made.
+    /// This will work only in FIXED_WIDTH mode (Checked before called)
+    /// Technically a lot of this logic can be found in HTMLComponent, but since we don't want to get into
+    /// the context of this element (i.e. what was the indentation, alignment etc.), we use this algorithm.
+    ///
+    /// #### Parameters
+    ///
+    /// - `element`: The element to apply text wrapping on
     private void setNowrapRecursive(final HTMLElement element) {
         //if (element.getId()==HTMLElement.TAG_TEXT) {
         if (element.isTextElement()) {
@@ -829,12 +847,13 @@ class CSSEngine {
 
     }
 
-    /**
-     * Sets the text direction of the component
-     *
-     * @param cmp The component to set
-     * @param rtl true for right-to-left, false for left-to-right
-     */
+    /// Sets the text direction of the component
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component to set
+    ///
+    /// - `rtl`: true for right-to-left, false for left-to-right
     private void setDirectionRecursive(Component cmp, boolean rtl) {
         cmp.setRTL(rtl);
         if (cmp instanceof Container) {
@@ -845,12 +864,13 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Sets the given spacing to all words in this component and its children
-     *
-     * @param cmp     The component to set the spacing on
-     * @param spacing The spacing in pixels
-     */
+    /// Sets the given spacing to all words in this component and its children
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component to set the spacing on
+    ///
+    /// - `spacing`: The spacing in pixels
     private void setWordSpacingRecursive(Component cmp, int spacing) {
         if (cmp instanceof Container) {
             Container cont = (Container) cmp;
@@ -867,12 +887,13 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Sets the given spacing to all words in this component and its children
-     *
-     * @param cmp        The component to set the spacing on
-     * @param halfHeight Half of the line height in pixels (will be added to top and bottom margins to make for a full height)
-     */
+    /// Sets the given spacing to all words in this component and its children
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component to set the spacing on
+    ///
+    /// - `halfHeight`: Half of the line height in pixels (will be added to top and bottom margins to make for a full height)
     private void setLineHeightRecursive(Component cmp, int halfHeight) {
         if (cmp instanceof Container) {
             Container cont = (Container) cmp;
@@ -891,12 +912,13 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Utility method to add a specific text decoration if it does not exist
-     *
-     * @param style      The style to add the decoration to
-     * @param decoration The deocration (One of Style.TEXT_DECORATION_* constants)
-     */
+    /// Utility method to add a specific text decoration if it does not exist
+    ///
+    /// #### Parameters
+    ///
+    /// - `style`: The style to add the decoration to
+    ///
+    /// - `decoration`: The deocration (One of Style.TEXT_DECORATION_* constants)
     private void applyDecorationOnStyle(Style style, int decoration) {
         int curDecoration = style.getTextDecoration();
         if ((curDecoration & decoration) == 0) {
@@ -904,13 +926,15 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Sets the specified decoration to the specified components and all of its Label descendants
-     *
-     * @param cmp        The component to apply the decoration to
-     * @param decoration The deocration (One of Style.TEXT_DECORATION_* constants)
-     * @param selector   The selector with the text direction directive
-     */
+    /// Sets the specified decoration to the specified components and all of its Label descendants
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component to apply the decoration to
+    ///
+    /// - `decoration`: The deocration (One of Style.TEXT_DECORATION_* constants)
+    ///
+    /// - `selector`: The selector with the text direction directive
     private void setTextDecorationRecursive(Component cmp, int decoration, CSSElement selector) {
         if (cmp instanceof Container) {
             Container cont = (Container) cmp;
@@ -931,18 +955,14 @@ class CSSEngine {
         }
     }
 
-
-    ////////
-    // CSS2 additions end
-    ///////
-
-    /**
-     * Removes all text decorations from the specified components and its Label descendants
-     * This will be used for {text-decoration: none}
-     *
-     * @param cmp      The component to remove decorations from
-     * @param selector The selector with the text direction directive
-     */
+    /// Removes all text decorations from the specified components and its Label descendants
+    /// This will be used for {text-decoration: none}
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component to remove decorations from
+    ///
+    /// - `selector`: The selector with the text direction directive
     private void removeTextDecorationRecursive(Component cmp, CSSElement selector) {
         if (cmp instanceof Container) {
             Container cont = (Container) cmp;
@@ -963,12 +983,18 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Changes the quotes marking of a certain block
-     *
-     * @param cmp    The component to change the quotes in
-     * @param quotes an array with 4 strings representing how quotes should look like (primary start,primary end,secondary start,secondary end)
-     */
+
+    ////////
+    // CSS2 additions end
+    ///////
+
+    /// Changes the quotes marking of a certain block
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: The component to change the quotes in
+    ///
+    /// - `quotes`: an array with 4 strings representing how quotes should look like (primary start,primary end,secondary start,secondary end)
     private void setQuotesRecursive(Component cmp, String[] quotes) {
         if (cmp instanceof Container) {
             Container cont = (Container) cmp;
@@ -983,15 +1009,20 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Applies the given CSS directives to the component
-     *
-     * @param ui       The component representing (part of) the element that the style should be applied to
-     * @param selector The style attributes relating to this element
-     * @param element  The element the style should be applied to
-     * @param htmlC    The HTMLComponent to which this element belongs to
-     * @param focus    true if the style should be applied only to the selected state iof the ui (a result of pseudo-class selector a:focus etc.)
-     */
+    /// Applies the given CSS directives to the component
+    ///
+    /// #### Parameters
+    ///
+    /// - `ui`: The component representing (part of) the element that the style should be applied to
+    ///
+    /// - `selector`: The style attributes relating to this element
+    ///
+    /// - `element`: The element the style should be applied to
+    ///
+    /// - `htmlC`: The HTMLComponent to which this element belongs to
+    ///
+    /// - `focus`: true if the style should be applied only to the selected state iof the ui (a result of pseudo-class selector a:focus etc.)
+    @SuppressWarnings("PMD.SwitchStmtsShouldHaveDefault")
     private void applyStyleToUIElement(Component ui, CSSElement selector, HTMLElement element, HTMLComponent htmlC) {
         //count++;
         int styles = getApplicableStyles(ui, selector); // This is relevant only for non recursive types - otherwise we need to recheck everytime since it depends on the specific UI component class
@@ -1405,10 +1436,10 @@ class CSSEngine {
         boolean leftBorder = false; // Used to prevent drawing a border in the middle of two words in the same segment
         boolean rightBorder = false; // Used to prevent drawing a border in the middle of two words in the same segment
         boolean hasBorder = false;
-        if ((borderUi == ui) && (element.getUi().size() > 1)) {
-            if (element.getUi().firstElement() == borderUi) {
+        if ((borderUi == ui) && (element.getUi().size() > 1)) { //NOPMD CompareObjectsWithEquals
+            if (element.getUi().firstElement() == borderUi) { //NOPMD CompareObjectsWithEquals
                 leftBorder = true;
-            } else if (element.getUi().lastElement() == borderUi) {
+            } else if (element.getUi().lastElement() == borderUi) { //NOPMD CompareObjectsWithEquals
                 rightBorder = true;
             }
         } else {
@@ -1671,13 +1702,15 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Sets the alignment of all cells in the table
-     *
-     * @param ui           The component representing the table (a HTMLTable)
-     * @param align        The alignment
-     * @param isHorizontal true for horizontal alignment, false for vertical alignment
-     */
+    /// Sets the alignment of all cells in the table
+    ///
+    /// #### Parameters
+    ///
+    /// - `ui`: The component representing the table (a HTMLTable)
+    ///
+    /// - `align`: The alignment
+    ///
+    /// - `isHorizontal`: true for horizontal alignment, false for vertical alignment
     private void setTableAlignment(Component ui, int align, boolean isHorizontal) {
         HTMLTable table = (HTMLTable) ui;
         HTMLTableModel model = ((HTMLTableModel) table.getModel());
@@ -1685,14 +1718,17 @@ class CSSEngine {
         table.setModel(model);
     }
 
-    /**
-     * Sets the table cell 'ui' to the requested alignment
-     *
-     * @param tdTag        The element representing the table cell (TD/TH tag)
-     * @param ui           The component representing the table (a HTMLTable)
-     * @param align        The alignment
-     * @param isHorizontal true for horizontal alignment, false for vertical alignment
-     */
+    /// Sets the table cell 'ui' to the requested alignment
+    ///
+    /// #### Parameters
+    ///
+    /// - `tdTag`: The element representing the table cell (TD/TH tag)
+    ///
+    /// - `ui`: The component representing the table (a HTMLTable)
+    ///
+    /// - `align`: The alignment
+    ///
+    /// - `isHorizontal`: true for horizontal alignment, false for vertical alignment
     private void setTableCellAlignment(HTMLElement tdTag, Component ui, int align, boolean isHorizontal) {
         HTMLElement trTag = (HTMLElement) tdTag.getParent();
         while ((trTag != null) && (trTag.getTagId() != HTMLElement.TAG_TR)) { // Though in strict XHTML TR can only contain TD/TH - in some HTMLs TR doesn't have to be the direct parent of the tdTag, i.e.: <tr><b><td>...</td>... </b></tr>
@@ -1701,16 +1737,19 @@ class CSSEngine {
         setTableCellAlignmentTR(trTag, ui, align, isHorizontal);
     }
 
-    /**
-     * Sets the table cell 'ui' to the requested alignment
-     * Note that when called directly (on TAG_TR) this is actually called multiple times, each with a different cell of the row as 'ui'.
-     * This happens since TR elements contain all their cells as their UI and as such, applyStyle will call applyToUIElement each time with another cell
-     *
-     * @param trTag        The element representing the table row (TR tag) who is the parent of the cell we want to modify
-     * @param ui           The component representing the table (a HTMLTable)
-     * @param align        The alignment
-     * @param isHorizontal true for horizontal alignment, false for vertical alignment
-     */
+    /// Sets the table cell 'ui' to the requested alignment
+    /// Note that when called directly (on TAG_TR) this is actually called multiple times, each with a different cell of the row as 'ui'.
+    /// This happens since TR elements contain all their cells as their UI and as such, applyStyle will call applyToUIElement each time with another cell
+    ///
+    /// #### Parameters
+    ///
+    /// - `trTag`: The element representing the table row (TR tag) who is the parent of the cell we want to modify
+    ///
+    /// - `ui`: The component representing the table (a HTMLTable)
+    ///
+    /// - `align`: The alignment
+    ///
+    /// - `isHorizontal`: true for horizontal alignment, false for vertical alignment
     private void setTableCellAlignmentTR(HTMLElement trTag, Component ui, int align, boolean isHorizontal) {
         if ((trTag != null) && (trTag.getTagId() == HTMLElement.TAG_TR)) {
             HTMLElement tableTag = (HTMLElement) trTag.getParent();
@@ -1734,15 +1773,20 @@ class CSSEngine {
 
     }
 
-    /**
-     * Tries to assign the given key string as an access key to the specified component
-     * The key string given here may consist of a multiple key assignment, i.e. several keys seperated with space
-     *
-     * @param keyStr The string representing the key (either a character, a unicode escape sequence or a special key name
-     * @param htmlC  The HTMLComponent
-     * @param ui     The component to set the access key on
-     * @return true if successful, false otherwise
-     */
+    /// Tries to assign the given key string as an access key to the specified component
+    /// The key string given here may consist of a multiple key assignment, i.e. several keys seperated with space
+    ///
+    /// #### Parameters
+    ///
+    /// - `keyStr`: The string representing the key (either a character, a unicode escape sequence or a special key name
+    ///
+    /// - `htmlC`: The HTMLComponent
+    ///
+    /// - `ui`: The component to set the access key on
+    ///
+    /// #### Returns
+    ///
+    /// true if successful, false otherwise
     private boolean processAccessKeys(String keyStr, HTMLComponent htmlC, Component ui) {
         int index = keyStr.indexOf(' ');
         boolean isFirstKey = true; // Keeps track of whether this is the first key we are adding (In order to override XHTML accesskey or failed multiple assignments)
@@ -1758,16 +1802,22 @@ class CSSEngine {
         return processAccessKey(keyStr, htmlC, ui, isFirstKey);
     }
 
-    /**
-     * Tries to assign the given key string as an access key to the specified component
-     * The key string given here is a single key
-     *
-     * @param keyStr   The string representing the key (either a character, a unicode escape sequence or a special key name
-     * @param htmlC    The HTMLComponent
-     * @param ui       The component to set the access key on
-     * @param override If true overrides other keys assigned previously for this component
-     * @return true if successful, false otherwise
-     */
+    /// Tries to assign the given key string as an access key to the specified component
+    /// The key string given here is a single key
+    ///
+    /// #### Parameters
+    ///
+    /// - `keyStr`: The string representing the key (either a character, a unicode escape sequence or a special key name
+    ///
+    /// - `htmlC`: The HTMLComponent
+    ///
+    /// - `ui`: The component to set the access key on
+    ///
+    /// - `override`: If true overrides other keys assigned previously for this component
+    ///
+    /// #### Returns
+    ///
+    /// true if successful, false otherwise
     private boolean processAccessKey(String keyStr, HTMLComponent htmlC, Component ui, boolean override) {
         if (keyStr.startsWith("\\")) { // Unicode escape sequence, may be used to denote * and # which technically are illegal as values
             try {
@@ -1793,14 +1843,15 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Returns a border for a specific side of the component
-     *
-     * @param styleAttributes The style attributes element containing the border directives
-     * @param ui              The component we want to set the border on
-     * @param location        One of Component.TOP/BOTTOM/LEFT/RIGHT
-     * @return
-     */
+    /// Returns a border for a specific side of the component
+    ///
+    /// #### Parameters
+    ///
+    /// - `styleAttributes`: The style attributes element containing the border directives
+    ///
+    /// - `ui`: The component we want to set the border on
+    ///
+    /// - `location`: One of Component.TOP/BOTTOM/LEFT/RIGHT
     Border createBorder(CSSElement styleAttributes, Component ui, int location, int styles, int type) {
         int borderStyle = styleAttributes.getAttrVal(BORDER_OUTLINE_PROPERTIES[type][STYLE] + location);
         if ((borderStyle == -1) || (borderStyle == BORDER_STYLE_NONE)) {
@@ -1890,17 +1941,22 @@ class CSSEngine {
         }
     }
 
-    /**
-     * Sets the font of the component to the closest font that can be found according to the specified properties
-     * Note that system fonts will be matched only with system fonts and same goes for bitmap fonts
-     *
-     * @param htmlC      The HTMLComponent this component belongs to (For the available bitmap fonts table)
-     * @param cmp        The component to work on
-     * @param fontFamily The font family
-     * @param fontSize   The font size in pixels
-     * @param fontStyle  The font style - either Font.STYLE_PLAIN or Font.STYLE_ITALIC
-     * @param fontWeight The font weight - either Font.STYLE_PLAIN ot Font.STYLE_BOLD
-     */
+    /// Sets the font of the component to the closest font that can be found according to the specified properties
+    /// Note that system fonts will be matched only with system fonts and same goes for bitmap fonts
+    ///
+    /// #### Parameters
+    ///
+    /// - `htmlC`: The HTMLComponent this component belongs to (For the available bitmap fonts table)
+    ///
+    /// - `cmp`: The component to work on
+    ///
+    /// - `fontFamily`: The font family
+    ///
+    /// - `fontSize`: The font size in pixels
+    ///
+    /// - `fontStyle`: The font style - either Font.STYLE_PLAIN or Font.STYLE_ITALIC
+    ///
+    /// - `fontWeight`: The font weight - either Font.STYLE_PLAIN ot Font.STYLE_BOLD
     private void setMatchingFont(HTMLComponent htmlC, Component cmp, String fontFamily, int fontSize, int fontStyle, int fontWeight, CSSElement selector) {
 
         int styles = getApplicableStyles(cmp, selector);
@@ -2020,16 +2076,15 @@ class CSSEngine {
 
     }
 
-    ///////////////////
-    // Methods relevant to CSS2 only (not WCSS)
-    ///////////////////
-
-    /**
-     * Returns a quote label with the proper client property
-     *
-     * @param open true if this is an opening quote, false otherwise
-     * @return The quote label
-     */
+    /// Returns a quote label with the proper client property
+    ///
+    /// #### Parameters
+    ///
+    /// - `open`: true if this is an opening quote, false otherwise
+    ///
+    /// #### Returns
+    ///
+    /// The quote label
     private Label getQuote(boolean open) {
         Label quoteLabel = new Label("\"");
         quoteLabel.putClientProperty(HTMLComponent.CLIENT_PROPERTY_QUOTE, Integer.valueOf(open ? 0 : 1)); // 0 is open quote, 1 is closed quote (both stand for primary quotes - see HTMLComponent.addQuote)
@@ -2037,15 +2092,25 @@ class CSSEngine {
 
     }
 
-    /**
-     * Evaluates a CSS content property expression and returns the matching label component
-     *
-     * @param htmlC    The HTMLComponent
-     * @param exp      The expression to evaluate
-     * @param element  The element this content property
-     * @param selector The CSS selector that includes the content property (mainly for error messages)
-     * @return A label representing the evaluated expression or null if not found
-     */
+    ///////////////////
+    // Methods relevant to CSS2 only (not WCSS)
+    ///////////////////
+
+    /// Evaluates a CSS content property expression and returns the matching label component
+    ///
+    /// #### Parameters
+    ///
+    /// - `htmlC`: The HTMLComponent
+    ///
+    /// - `exp`: The expression to evaluate
+    ///
+    /// - `element`: The element this content property
+    ///
+    /// - `selector`: The CSS selector that includes the content property (mainly for error messages)
+    ///
+    /// #### Returns
+    ///
+    /// A label representing the evaluated expression or null if not found
     private Label evalContentExpression(HTMLComponent htmlC, String exp, HTMLElement element, CSSElement selector) {
         if (exp.length() != 0) {
             if (exp.startsWith("counter(")) {
@@ -2088,13 +2153,15 @@ class CSSEngine {
         return null;
     }
 
-    /**
-     * Handles a CSS content property
-     *
-     * @param element  The element this content property
-     * @param selector The CSS selector that includes the content property
-     * @param htmlC    The HTMLComponent
-     */
+    /// Handles a CSS content property
+    ///
+    /// #### Parameters
+    ///
+    /// - `element`: The element this content property
+    ///
+    /// - `selector`: The CSS selector that includes the content property
+    ///
+    /// - `htmlC`: The HTMLComponent
     private void handleContentProperty(HTMLElement element, CSSElement selector, HTMLComponent htmlC) {
         boolean after = ((selector.getSelectorPseudoClass() & CSSElement.PC_AFTER) != 0);
         String content = selector.getAttributeById(CSSElement.CSS_CONTENT);
@@ -2208,6 +2275,11 @@ class CSSEngine {
             }
 
         }
+    }
+
+    //int count; //for debugging
+    private static class CSSEngineHolder {
+        private static final CSSEngine INSTANCE = new CSSEngine();
     }
 
 }

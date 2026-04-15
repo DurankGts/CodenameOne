@@ -23,32 +23,36 @@
 
 package com.codename1.properties;
 
-/**
- * This is the char specific version of numeric property
- *
- * @author Shai Almog
- */
+/// This is the char specific version of numeric property
+///
+/// @author Shai Almog
 public class CharProperty<K> extends NumericProperty<Character, K> {
 
-    /**
-     * {@inheritDoc}
-     */
+    /// Creates a char property with the given name.
+    ///
+    /// #### Parameters
+    ///
+    /// - `name`: the property name.
     public CharProperty(String name) {
         super(name, Character.class);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// Creates a char property with the given name and initial value.
+    ///
+    /// #### Parameters
+    ///
+    /// - `name`: the property name.
+    ///
+    /// - `value`: the initial property value.
     public CharProperty(String name, Character value) {
         super(name, Character.class, value);
     }
 
-    /**
-     * Returns the value as a primitive, if the value is null/nullable this will fail...
-     *
-     * @return the numeric value
-     */
+    /// Returns the value as a primitive, if the value is null/nullable this will fail...
+    ///
+    /// #### Returns
+    ///
+    /// the numeric value
     public char getChar() {
         return get().charValue();
     }

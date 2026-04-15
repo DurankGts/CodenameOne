@@ -42,21 +42,15 @@ final class Inflate {
     static final int Z_FULL_FLUSH = 3;
     static final int Z_FINISH = 4;
     static final int INFLATE_ANY = 0x40000000;
-    static final private int MAX_WBITS = 15; // 32K LZ77 window
     // preset dictionary flag in zlib header
     static final private int PRESET_DICT = 0x20;
     static final private int Z_DEFLATED = 8;
     static final private int Z_OK = 0;
     static final private int Z_STREAM_END = 1;
     static final private int Z_NEED_DICT = 2;
-    static final private int Z_ERRNO = -1;
     static final private int Z_STREAM_ERROR = -2;
     static final private int Z_DATA_ERROR = -3;
-    static final private int Z_MEM_ERROR = -4;
     static final private int Z_BUF_ERROR = -5;
-    static final private int Z_VERSION_ERROR = -6;
-    static final private int METHOD = 0;   // waiting for method byte
-    static final private int FLAG = 1;     // waiting for flag byte
     static final private int DICT4 = 2;    // four dictionary check bytes to go
     static final private int DICT3 = 3;    // three dictionary check bytes to go
     static final private int DICT2 = 4;    // two dictionary check bytes to go
@@ -81,6 +75,9 @@ final class Inflate {
     static final private int FLAGS = 23;
     static private final byte[] mark = {(byte) 0, (byte) 0, (byte) 0xff, (byte) 0xff};
     private final ZStream z;
+
+    @SuppressWarnings("PMD.SingularField")
+    private final byte[] crcbuf = new byte[4];
     int mode;                            // current inflate mode
     // mode dependent information
     int method;        // if FLAGS, method byte
@@ -98,9 +95,10 @@ final class Inflate {
     int wbits;            // log2(window size)  (8..15, defaults to 15)
     InfBlocks blocks;     // current inflate_blocks state
     GZIPHeader gheader = null;
+
+    @SuppressWarnings("PMD.SingularField")
     private int flags;
     private int need_bytes = -1;
-    private final byte[] crcbuf = new byte[4];
     private java.io.ByteArrayOutputStream tmp_string = null;
 
     Inflate(ZStream z) {
@@ -108,13 +106,15 @@ final class Inflate {
     }
 
     int inflateReset() {
-        if (z == null) return Z_STREAM_ERROR;
+        if (z == null) {
+            return Z_STREAM_ERROR;
+        }
 
         z.totalIn = z.totalOut = 0;
         z.msg = null;
         this.mode = HEAD;
         this.need_bytes = -1;
-        if(this.blocks != null) {
+        if (this.blocks != null) {
             this.blocks.reset();
         }
         return Z_OK;
@@ -138,15 +138,17 @@ final class Inflate {
         } else if ((w & INFLATE_ANY) != 0) {
             wrap = 4;
             w &= ~INFLATE_ANY;
-            if (w < 48)
+            if (w < 48) {
                 w &= 15;
+            }
         } else if ((w & ~31) != 0) { // for example, DEF_WBITS + 32
             wrap = 4;               // zlib and gzip wrapped data should be accepted.
             w &= 15;
         } else {
             wrap = (w >> 4) + 1;
-            if (w < 48)
+            if (w < 48) {
                 w &= 15;
+            }
         }
 
         if (w < 8 || w > 15) {
@@ -165,15 +167,15 @@ final class Inflate {
         return Z_OK;
     }
 
+    @SuppressWarnings("PMD.UnnecessaryLocalBeforeReturn")
     int inflate(int f) {
-        int hold = 0;
-
         int r;
         int b;
 
         if (z == null || z.nextIn == null) {
-            if (f == Z_FINISH && this.mode == HEAD)
+            if (f == Z_FINISH && this.mode == HEAD) {
                 return Z_OK;
+            }
             return Z_STREAM_ERROR;
         }
 
@@ -202,8 +204,9 @@ final class Inflate {
                         z.adler = new CRC32();
                         checksum(2, this.need);
 
-                        if (gheader == null)
+                        if (gheader == null) {
                             gheader = new GZIPHeader();
+                        }
 
                         this.mode = FLAGS;
                         break;
@@ -244,9 +247,9 @@ final class Inflate {
                         this.mode = BAD;
                         z.msg = "unknown compression method";
                         // since zlib 1.2, it is allowted to inflateSync for this case.
-	  /*
+      /*
           this.marker = 5;       // can't try inflateSync
-	  */
+      */
                         break;
                     }
 
@@ -258,9 +261,9 @@ final class Inflate {
                         this.mode = BAD;
                         z.msg = "invalid window size";
                         // since zlib 1.2, it is allowted to inflateSync for this case.
-	  /*
+      /*
           this.marker = 5;       // can't try inflateSync
-	  */
+      */
                         break;
                     }
 
@@ -273,14 +276,18 @@ final class Inflate {
                     this.mode = DICT4;
                 case DICT4:
 
-                    if (z.availIn == 0) return r;
+                    if (z.availIn == 0) {
+                        return r;
+                    }
                     z.availIn--;
                     z.totalIn++;
                     this.need = ((long) (z.nextIn[z.nextInIndex++] & 0xff) << 24) & 0xff000000L;
                     this.mode = DICT3;
                 case DICT3:
 
-                    if (z.availIn == 0) return r;
+                    if (z.availIn == 0) {
+                        return r;
+                    }
                     r = f;
 
                     z.availIn--;
@@ -289,7 +296,9 @@ final class Inflate {
                     this.mode = DICT2;
                 case DICT2:
 
-                    if (z.availIn == 0) return r;
+                    if (z.availIn == 0) {
+                        return r;
+                    }
                     r = f;
 
                     z.availIn--;
@@ -298,7 +307,9 @@ final class Inflate {
                     this.mode = DICT1;
                 case DICT1:
 
-                    if (z.availIn == 0) return r;
+                    if (z.availIn == 0) {
+                        return r;
+                    }
 
                     z.availIn--;
                     z.totalIn++;
@@ -336,7 +347,9 @@ final class Inflate {
                     this.mode = CHECK4;
                 case CHECK4:
 
-                    if (z.availIn == 0) return r;
+                    if (z.availIn == 0) {
+                        return r;
+                    }
                     r = f;
 
                     z.availIn--;
@@ -345,7 +358,9 @@ final class Inflate {
                     this.mode = CHECK3;
                 case CHECK3:
 
-                    if (z.availIn == 0) return r;
+                    if (z.availIn == 0) {
+                        return r;
+                    }
                     r = f;
 
                     z.availIn--;
@@ -354,7 +369,9 @@ final class Inflate {
                     this.mode = CHECK2;
                 case CHECK2:
 
-                    if (z.availIn == 0) return r;
+                    if (z.availIn == 0) {
+                        return r;
+                    }
                     r = f;
 
                     z.availIn--;
@@ -363,7 +380,9 @@ final class Inflate {
                     this.mode = CHECK1;
                 case CHECK1:
 
-                    if (z.availIn == 0) return r;
+                    if (z.availIn == 0) {
+                        return r;
+                    }
                     r = f;
 
                     z.availIn--;
@@ -384,7 +403,7 @@ final class Inflate {
           this.mode = BAD;
           this.marker = 5;       // can't try inflateSync
           break;
-	  */
+      */
                     } else if (flags != 0 && gheader != null) {
                         gheader.crc = this.need;
                     }
@@ -605,18 +624,20 @@ final class Inflate {
     int inflateSync() {
         int n;       // number of bytes to look at
         int p;       // pointer to bytes
-        int m;       // number of marker bytes found in a row
-        long r, w;   // temporaries to save total_in and total_out
+        long r;   // temporaries to save total_in and total_out
+        long w;
 
         // set up
-        if (z == null)
+        if (z == null) {
             return Z_STREAM_ERROR;
+        }
         if (this.mode != BAD) {
             this.mode = BAD;
             this.marker = 0;
         }
-        if ((n = z.availIn) == 0)
+        if ((n = z.availIn) == 0) { //NOPMD AssignmentInOperand
             return Z_BUF_ERROR;
+        }
 
         p = z.nextInIndex;
         // search
@@ -658,8 +679,9 @@ final class Inflate {
     // decompressing, PPP checks that at the end of input packet, inflate is
     // waiting for these length bytes.
     int inflateSyncPoint() {
-        if (z == null || this.blocks == null)
+        if (z == null || this.blocks == null) {
             return Z_STREAM_ERROR;
+        }
         return this.blocks.syncPoint();
     }
 
@@ -701,7 +723,9 @@ final class Inflate {
             z.availIn--;
             z.totalIn++;
             b = z.nextIn[z.nextInIndex];
-            if (b != 0) tmp_string.write(z.nextIn, z.nextInIndex, 1);
+            if (b != 0) {
+                tmp_string.write(z.nextIn, z.nextInIndex, 1);
+            }
             z.adler.update(z.nextIn, z.nextInIndex, 1);
             z.nextInIndex++;
         } while (b != 0);

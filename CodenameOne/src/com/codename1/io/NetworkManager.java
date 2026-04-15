@@ -25,7 +25,6 @@
 package com.codename1.io;
 
 import com.codename1.annotations.Async;
-import com.codename1.impl.CodenameOneImplementation;
 import com.codename1.ui.CN;
 import com.codename1.ui.Dialog;
 import com.codename1.ui.Display;
@@ -42,98 +41,120 @@ import java.util.Enumeration;
 import java.util.Hashtable;
 import java.util.Vector;
 
-/**
- * <p>Main entry point for managing the connection requests, this is essentially a
- * threaded queue that makes sure to route all connections via the network thread
- * while sending the callbacks through the Codename One EDT.</p>
- *
- * <p>The sample
- * code below fetches a page of data from the nestoria housing listing API.<br>
- * You can see instructions on how to display the data in the {@link com.codename1.components.InfiniteScrollAdapter}
- * class. You can read more about networking in Codename One {@link com.codename1.io here}</p>
- * <script src="https://gist.github.com/codenameone/22efe9e04e2b8986dfc3.js"></script>
- *
- * @author Shai Almog
- */
+/// Main entry point for managing the connection requests, this is essentially a
+/// threaded queue that makes sure to route all connections via the network thread
+/// while sending the callbacks through the Codename One EDT.
+///
+/// The sample
+/// code below fetches a page of data from the nestoria housing listing API.
+///
+/// You can see instructions on how to display the data in the `com.codename1.components.InfiniteScrollAdapter`
+/// class. You can read more about networking in Codename One `here`
+///
+/// ```java
+/// int pageNumber = 1;
+/// java.util.List<Map<String, Object>> fetchPropertyData(String text) {
+///     try {
+///         ConnectionRequest r = new ConnectionRequest();
+///         r.setPost(false);
+///         r.setUrl("http://api.nestoria.co.uk/api");
+///         r.addArgument("pretty", "0");
+///         r.addArgument("action", "search_listings");
+///         r.addArgument("encoding", "json");
+///         r.addArgument("listing_type", "buy");
+///         r.addArgument("page", "" + pageNumber);
+///         pageNumber++;
+///         r.addArgument("country", "uk");
+///         r.addArgument("place_name", text);
+///         NetworkManager.getInstance().addToQueueAndWait(r);
+///         Map result = new JSONParser().parseJSON(new InputStreamReader(new ByteArrayInputStream(r.getResponseData()), "UTF-8"));
+///         Map response = (Map)result.get("response");
+///         return (java.util.List<Map<String, Object>>)response.get("listings");
+///     } catch(Exception err) {
+///         Log.e(err);
+///         return null;
+///     }
+/// }
+/// ```
+///
+/// @author Shai Almog
 public final class NetworkManager {
-    /**
-     * Indicates an unknown access point type
-     */
+    /// Indicates an unknown access point type
     public static final int ACCESS_POINT_TYPE_UNKNOWN = 1;
 
-    /**
-     * Indicates a wlan (802.11b/c/g/n) access point type
-     */
+    /// Indicates a wlan (802.11b/c/g/n) access point type
     public static final int ACCESS_POINT_TYPE_WLAN = 2;
 
-    /**
-     * Indicates an access point based on a cable
-     */
+    /// Indicates an access point based on a cable
     public static final int ACCESS_POINT_TYPE_CABLE = 3;
 
-    /**
-     * Indicates a 3g network access point type
-     */
+    /// Indicates a 3g network access point type
     public static final int ACCESS_POINT_TYPE_NETWORK3G = 4;
 
-    /**
-     * Indicates a 2g network access point type
-     */
+    /// Indicates a 2g network access point type
     public static final int ACCESS_POINT_TYPE_NETWORK2G = 5;
 
 
-    /**
-     * Indicates a corporate routing server access point type (e.g. BIS etc.)
-     */
+    /// Indicates a corporate routing server access point type (e.g. BIS etc.)
     public static final int ACCESS_POINT_TYPE_CORPORATE = 6;
 
     private static final Object LOCK = new Object();
     private static final NetworkManager INSTANCE = new NetworkManager();
     private static String autoDetectURL = "https://www.google.com/";
     private final Vector pending = new Vector();
+    private final Hashtable threadAssignements = new Hashtable();
     private boolean running;
     private int threadCount = 1;
     private NetworkThread[] networkThreads;
     private EventDispatcher errorListeners;
     private EventDispatcher progressListeners;
     private int timeout = 300000;
-    private final Hashtable threadAssignements = new Hashtable();
     private Hashtable userHeaders;
     private boolean autoDetected;
     private int nextConnectionId = 1;
+
     private NetworkManager() {
     }
 
-    /**
-     * This URL is used to check whether an Internet connection is available
-     *
-     * @return the autoDetectURL
-     */
+    /// This URL is used to check whether an Internet connection is available
+    ///
+    /// #### Returns
+    ///
+    /// the autoDetectURL
     public static String getAutoDetectURL() {
         return autoDetectURL;
     }
 
-    /**
-     * This URL is used to check whether an Internet connection is available
-     *
-     * @param aAutoDetectURL the autoDetectURL to set
-     */
+    /// This URL is used to check whether an Internet connection is available
+    ///
+    /// #### Parameters
+    ///
+    /// - `aAutoDetectURL`: the autoDetectURL to set
     public static void setAutoDetectURL(String aAutoDetectURL) {
         autoDetectURL = aAutoDetectURL;
     }
 
-    /**
-     * Callback for native layer to check the certificates of a connection request.
-     *
-     * @param connectionId THe connection ID of the connection request to check.
-     * @return True if the certificates check out, or if the ConnectionRequest is not set
-     * to check certificates.
-     * <p>
-     * Currently this is only used by iOS.
-     * To use this method in other ports, you need to implement the {@link CodenameOneImplementation#checkSSLCertificatesRequiresCallbackFromNative() } to return true.
-     * @see CodenameOneImplementation#checkSSLCertificatesRequiresCallbackFromNative()
-     * @deprecated For internal use only
-     */
+    /// Callback for native layer to check the certificates of a connection request.
+    ///
+    /// #### Parameters
+    ///
+    /// - `connectionId`: THe connection ID of the connection request to check.
+    ///
+    /// #### Returns
+    ///
+    /// @return True if the certificates check out, or if the ConnectionRequest is not set
+    /// to check certificates.
+    ///
+    /// Currently this is only used by iOS.
+    /// To use this method in other ports, you need to implement the `CodenameOneImplementation#checkSSLCertificatesRequiresCallbackFromNative()` to return true.
+    ///
+    /// #### Deprecated
+    ///
+    /// For internal use only
+    ///
+    /// #### See also
+    ///
+    /// - CodenameOneImplementation#checkSSLCertificatesRequiresCallbackFromNative()
     static boolean checkCertificatesNativeCallback(int connectionId) {
         ArrayList<NetworkThread> threads = new ArrayList<NetworkThread>();
         synchronized (LOCK) {
@@ -159,11 +180,11 @@ public final class NetworkManager {
         return true;
     }
 
-    /**
-     * Returns the singleton instance of this class
-     *
-     * @return instance of this class
-     */
+    /// Returns the singleton instance of this class
+    ///
+    /// #### Returns
+    ///
+    /// instance of this class
     public static NetworkManager getInstance() {
         return INSTANCE;
     }
@@ -190,26 +211,29 @@ public final class NetworkManager {
         return false;
     }
 
-    /**
-     * The number of threads
-     *
-     * @return the threadCount
-     */
+    /// The number of threads
+    ///
+    /// #### Returns
+    ///
+    /// the threadCount
     public int getThreadCount() {
         return threadCount;
     }
 
-    /**
-     * Thread count should never be changed when the network is running since it will have no effect.
-     * Increasing the thread count can bring many race conditions and problems to the surface,
-     * furthermore MIDP doesn't require support for more than one network thread hence increasing
-     * the thread count might fail.
-     *
-     * @param threadCount the threadCount to set
-     * @deprecated since the network is always running in Codename One this method is quite confusing
-     * unfortunately fixing it will probably break working code. You should migrate the code to use
-     * {@link #updateThreadCount(int)}
-     */
+    /// Thread count should never be changed when the network is running since it will have no effect.
+    /// Increasing the thread count can bring many race conditions and problems to the surface,
+    /// furthermore MIDP doesn't require support for more than one network thread hence increasing
+    /// the thread count might fail.
+    ///
+    /// #### Parameters
+    ///
+    /// - `threadCount`: the threadCount to set
+    ///
+    /// #### Deprecated
+    ///
+    /// @deprecated since the network is always running in Codename One this method is quite confusing
+    /// unfortunately fixing it will probably break working code. You should migrate the code to use
+    /// `#updateThreadCount(int)`
     public void setThreadCount(int threadCount) {
         // in auto detect mode multiple threads can break the detections
         if (!Util.getImplementation().shouldAutoDetectAccessPoint()) {
@@ -217,11 +241,11 @@ public final class NetworkManager {
         }
     }
 
-    /**
-     * Sets the number of network threads and restarts the network threads
-     *
-     * @param threadCount the new number of threads
-     */
+    /// Sets the number of network threads and restarts the network threads
+    ///
+    /// #### Parameters
+    ///
+    /// - `threadCount`: the new number of threads
     public void updateThreadCount(int threadCount) {
         this.threadCount = threadCount;
         shutdown();
@@ -247,11 +271,9 @@ public final class NetworkManager {
         return new NetworkThread();
     }
 
-    /**
-     * There is no need to invoke this method since the network manager is started
-     * implicitly. It is useful only if you explicitly stop the network manager.
-     * Invoking this method otherwise will just do nothing.
-     */
+    /// There is no need to invoke this method since the network manager is started
+    /// implicitly. It is useful only if you explicitly stop the network manager.
+    /// Invoking this method otherwise will just do nothing.
     public void start() {
         if (networkThreads != null) {
             //throw new IllegalStateException("Network manager already initialized");
@@ -317,16 +339,16 @@ public final class NetworkManager {
         }
     }
 
-    /**
-     * Shuts down the network thread, this will trigger failures if you have network requests
-     *
-     * @deprecated This method is for internal use only
-     */
+    /// Shuts down the network thread, this will trigger failures if you have network requests
+    ///
+    /// #### Deprecated
+    ///
+    /// This method is for internal use only
     public void shutdown() {
         running = false;
         if (networkThreads != null) {
             for (NetworkThread n : networkThreads) {
-                if(n != null) {
+                if (n != null) {
                     n.stopped = true;
                 }
             }
@@ -338,9 +360,7 @@ public final class NetworkManager {
 
     }
 
-    /**
-     * Shuts down the network thread and waits for shutdown to complete
-     */
+    /// Shuts down the network thread and waits for shutdown to complete
     public void shutdownSync() {
         NetworkThread[] n = this.networkThreads;
         if (n != null) {
@@ -363,14 +383,15 @@ public final class NetworkManager {
         pending.addElement(request);
     }
 
-    /**
-     * Adds a header to the global default headers, this header will be implicitly added
-     * to all requests going out from this point onwards. The main use case for this is
-     * for authentication information communication via the header.
-     *
-     * @param key   the key of the header
-     * @param value the value of the header
-     */
+    /// Adds a header to the global default headers, this header will be implicitly added
+    /// to all requests going out from this point onwards. The main use case for this is
+    /// for authentication information communication via the header.
+    ///
+    /// #### Parameters
+    ///
+    /// - `key`: the key of the header
+    ///
+    /// - `value`: the value of the header
     public void addDefaultHeader(String key, String value) {
         if (userHeaders == null) {
             userHeaders = new Hashtable();
@@ -378,14 +399,20 @@ public final class NetworkManager {
         userHeaders.put(key, value);
     }
 
-    /**
-     * Identical to add to queue but returns an AsyncResource object that will resolve to
-     * the ConnectionRequest.
-     *
-     * @param request the request object to add.
-     * @return AsyncResource resolving to the connection request on complete.
-     * @since 7.0
-     */
+    /// Identical to add to queue but returns an AsyncResource object that will resolve to
+    /// the ConnectionRequest.
+    ///
+    /// #### Parameters
+    ///
+    /// - `request`: the request object to add.
+    ///
+    /// #### Returns
+    ///
+    /// AsyncResource resolving to the connection request on complete.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public AsyncResource<ConnectionRequest> addToQueueAsync(final ConnectionRequest request) {
         final AsyncResource<ConnectionRequest> out = new AsyncResource<ConnectionRequest>();
         class WaitingClass implements ActionListener<NetworkEvent> {
@@ -402,7 +429,7 @@ public final class NetworkManager {
                     }
                     return;
                 }
-                if (e.getConnectionRequest() == request) {
+                if (e.getConnectionRequest() == request) { //NOPMD CompareObjectsWithEquals
                     if (e.getProgressType() == NetworkEvent.PROGRESS_TYPE_COMPLETED) {
                         if (request.retrying) {
                             request.retrying = false;
@@ -425,12 +452,12 @@ public final class NetworkManager {
         return out;
     }
 
-    /**
-     * Identical to add to queue but waits until the request is processed in the queue,
-     * this is useful for completely synchronous operations.
-     *
-     * @param request the request object to add
-     */
+    /// Identical to add to queue but waits until the request is processed in the queue,
+    /// this is useful for completely synchronous operations.
+    ///
+    /// #### Parameters
+    ///
+    /// - `request`: the request object to add
     public void addToQueueAndWait(final ConnectionRequest request) {
         class WaitingClass implements Runnable, ActionListener<NetworkEvent> {
             private final boolean edt = CN.isEdt();
@@ -465,7 +492,7 @@ public final class NetworkManager {
                     removeErrorListener(this);
                     return;
                 }
-                if (e.getConnectionRequest() == request) {
+                if (e.getConnectionRequest() == request) { //NOPMD CompareObjectsWithEquals
                     if (e.getProgressType() == NetworkEvent.PROGRESS_TYPE_COMPLETED) {
                         if (request.retrying) {
                             request.retrying = false;
@@ -490,22 +517,22 @@ public final class NetworkManager {
         }
     }
 
-    /**
-     * Adds the given network connection to the queue of execution
-     *
-     * @param request network request for execution
-     */
+    /// Adds the given network connection to the queue of execution
+    ///
+    /// #### Parameters
+    ///
+    /// - `request`: network request for execution
     public void addToQueue(ConnectionRequest request) {
         addToQueue(request, false);
     }
 
-    /**
-     * Kills the given request and waits until the request is killed if it is
-     * being processed by one of the threads. This method must not be invoked from
-     * a network thread!
-     *
-     * @param request
-     */
+    /// Kills the given request and waits until the request is killed if it is
+    /// being processed by one of the threads. This method must not be invoked from
+    /// a network thread!
+    ///
+    /// #### Parameters
+    ///
+    /// - `request`
     public void killAndWait(final ConnectionRequest request) {
         request.kill();
         class KillWaitingClass implements Runnable {
@@ -546,11 +573,11 @@ public final class NetworkManager {
         }
     }
 
-    /**
-     * Adds the given network connection to the queue of execution
-     *
-     * @param request network request for execution
-     */
+    /// Adds the given network connection to the queue of execution
+    ///
+    /// #### Parameters
+    ///
+    /// - `request`: network request for execution
     void addToQueue(@Async.Schedule ConnectionRequest request, boolean retry) {
         Util.getImplementation().addConnectionToQueue(request);
         if (!running) {
@@ -611,21 +638,21 @@ public final class NetworkManager {
         }
     }
 
-    /**
-     * Returns the timeout duration
-     *
-     * @return timeout in milliseconds
-     */
+    /// Returns the timeout duration
+    ///
+    /// #### Returns
+    ///
+    /// timeout in milliseconds
     public int getTimeout() {
         return timeout;
     }
 
-    /**
-     * Sets the timeout in milliseconds for network connections, a timeout may be "faked"
-     * for platforms that don't support the notion of a timeout such as MIDP
-     *
-     * @param t the timeout duration
-     */
+    /// Sets the timeout in milliseconds for network connections, a timeout may be "faked"
+    /// for platforms that don't support the notion of a timeout such as MIDP
+    ///
+    /// #### Parameters
+    ///
+    /// - `t`: the timeout duration
     public void setTimeout(int t) {
         if (Util.getImplementation().isTimeoutSupported()) {
             Util.getImplementation().setTimeout(t);
@@ -634,14 +661,14 @@ public final class NetworkManager {
         }
     }
 
-    /**
-     * Adds a generic listener to a network error that is invoked before the exception is propagated.
-     * Note that this handles also server error codes by default! You can change this default behavior setting to false
-     * ConnectionRequest.setHandleErrorCodesInGlobalErrorHandler(boolean).
-     * Consume the event in order to prevent it from propagating further.
-     *
-     * @param e callback will be invoked with the Exception as the source object
-     */
+    /// Adds a generic listener to a network error that is invoked before the exception is propagated.
+    /// Note that this handles also server error codes by default! You can change this default behavior setting to false
+    /// ConnectionRequest.setHandleErrorCodesInGlobalErrorHandler(boolean).
+    /// Consume the event in order to prevent it from propagating further.
+    ///
+    /// #### Parameters
+    ///
+    /// - `e`: callback will be invoked with the Exception as the source object
     public void addErrorListener(ActionListener<NetworkEvent> e) {
         if (errorListeners == null) {
             errorListeners = new EventDispatcher();
@@ -650,11 +677,11 @@ public final class NetworkManager {
         errorListeners.addListener(e);
     }
 
-    /**
-     * Removes the given error listener
-     *
-     * @param e callback to remove
-     */
+    /// Removes the given error listener
+    ///
+    /// #### Parameters
+    ///
+    /// - `e`: callback to remove
     public void removeErrorListener(ActionListener<NetworkEvent> e) {
         if (errorListeners == null) {
             return;
@@ -663,12 +690,12 @@ public final class NetworkManager {
         errorListeners.removeListener(e);
     }
 
-    /**
-     * Adds a listener to be notified when progress updates
-     *
-     * @param al action listener
-     */
-    public final void addProgressListener(ActionListener<NetworkEvent> al) {
+    /// Adds a listener to be notified when progress updates
+    ///
+    /// #### Parameters
+    ///
+    /// - `al`: action listener
+    public void addProgressListener(ActionListener<NetworkEvent> al) {
         if (progressListeners == null) {
             progressListeners = new EventDispatcher();
             progressListeners.setBlocking(false);
@@ -676,40 +703,41 @@ public final class NetworkManager {
         progressListeners.addListener(al);
     }
 
-    /**
-     * Adds a listener to be notified when progress updates
-     *
-     * @param al action listener
-     */
+    /// Adds a listener to be notified when progress updates
+    ///
+    /// #### Parameters
+    ///
+    /// - `al`: action listener
     public void removeProgressListener(ActionListener<NetworkEvent> al) {
         if (progressListeners == null) {
             return;
         }
         progressListeners.removeListener(al);
         Collection v = progressListeners.getListenerCollection();
-        if (v == null || v.size() == 0) {
+        if (v == null || v.isEmpty()) {
             progressListeners = null;
         }
     }
 
-    /**
-     * Makes sure the given class (subclass of ConnectionRequest) is always assigned
-     * to the given thread number. This is useful for a case of an application that wants
-     * all background downloads to occur on one thread so it doesn't tie up the main
-     * network thread (but doesn't stop like a low priority request would).
-     *
-     * @param requestType the class of the specific connection request
-     * @param offset      the offset of the thread starting from 0 and smaller than thread count
-     */
+    /// Makes sure the given class (subclass of ConnectionRequest) is always assigned
+    /// to the given thread number. This is useful for a case of an application that wants
+    /// all background downloads to occur on one thread so it doesn't tie up the main
+    /// network thread (but doesn't stop like a low priority request would).
+    ///
+    /// #### Parameters
+    ///
+    /// - `requestType`: the class of the specific connection request
+    ///
+    /// - `offset`: the offset of the thread starting from 0 and smaller than thread count
     public void assignToThread(Class requestType, int offset) {
         threadAssignements.put(requestType.getName(), Integer.valueOf(offset));
     }
 
-    /**
-     * This method returns all pending ConnectioRequest connections.
-     *
-     * @return the queue elements
-     */
+    /// This method returns all pending ConnectioRequest connections.
+    ///
+    /// #### Returns
+    ///
+    /// the queue elements
     public Enumeration enumurateQueue() {
         Vector elements = new Vector();
         synchronized (LOCK) {
@@ -721,72 +749,100 @@ public final class NetworkManager {
         return elements.elements();
     }
 
-    /**
-     * Indicates that the network queue is idle
-     *
-     * @return true if no network activity is in progress or pending
-     */
+    /// Indicates that the network queue is idle
+    ///
+    /// #### Returns
+    ///
+    /// true if no network activity is in progress or pending
     public boolean isQueueIdle() {
         return pending == null ||
                 networkThreads == null ||
                 networkThreads[0] == null ||
-                (pending.size() == 0 && networkThreads[0].getCurrentRequest() == null);
+                (pending.isEmpty() && networkThreads[0].getCurrentRequest() == null);
     }
 
-    /**
-     * Indicates whether looking up an access point is supported by this device
-     *
-     * @return true if access point lookup is supported
-     */
+    /// Indicates whether looking up an access point is supported by this device
+    ///
+    /// #### Returns
+    ///
+    /// true if access point lookup is supported
     public boolean isAPSupported() {
         return Util.getImplementation().isAPSupported();
     }
 
-    /**
-     * Returns the ids of the access points available if supported
-     *
-     * @return ids of access points
-     */
+    /// Returns the ids of the access points available if supported
+    ///
+    /// #### Returns
+    ///
+    /// ids of access points
     public String[] getAPIds() {
         return Util.getImplementation().getAPIds();
     }
 
-    /**
-     * Returns the type of the access point
-     *
-     * @param id access point id
-     * @return one of the supported access point types from network manager
-     */
+    /// Returns the type of the access point
+    ///
+    /// #### Parameters
+    ///
+    /// - `id`: access point id
+    ///
+    /// #### Returns
+    ///
+    /// one of the supported access point types from network manager
     public int getAPType(String id) {
         return Util.getImplementation().getAPType(id);
     }
 
-    /**
-     * Returns the user displayable name for the given access point
-     *
-     * @param id the id of the access point
-     * @return the name of the access point
-     */
+    /// Returns the user displayable name for the given access point
+    ///
+    /// #### Parameters
+    ///
+    /// - `id`: the id of the access point
+    ///
+    /// #### Returns
+    ///
+    /// the name of the access point
     public String getAPName(String id) {
         return Util.getImplementation().getAPName(id);
     }
 
-    /**
-     * Returns the id of the current access point
-     *
-     * @return id of the current access point
-     */
+    /// Returns the id of the current access point
+    ///
+    /// #### Returns
+    ///
+    /// id of the current access point
     public String getCurrentAccessPoint() {
         return Util.getImplementation().getCurrentAccessPoint();
     }
 
-    /**
-     * Returns the id of the current access point
-     *
-     * @param id id of the current access point
-     */
+    /// Returns the id of the current access point
+    ///
+    /// #### Parameters
+    ///
+    /// - `id`: id of the current access point
     public void setCurrentAccessPoint(String id) {
         Util.getImplementation().setCurrentAccessPoint(id);
+    }
+
+    /// Indicates whether the current platform supports best-effort VPN detection.
+    ///
+    /// #### Returns
+    ///
+    /// `true` if `#isVPNActive()` is implemented on this platform.
+    public boolean isVPNDetectionSupported() {
+        return Util.getImplementation().isVPNDetectionSupported();
+    }
+
+    /// Best-effort check for whether a VPN appears to be active.
+    ///
+    /// This value should be treated as advisory only. Platform APIs and
+    /// interface-name heuristics can miss some VPN configurations and may also
+    /// report non-VPN tunnels as VPNs.
+    ///
+    /// #### Returns
+    ///
+    /// `true` if a VPN appears to be active on the current connection.
+    public boolean isVPNActive() {
+        return Util.getImplementation().isVPNActive();
     }
 
     class NetworkThread implements Runnable {
@@ -804,7 +860,7 @@ public final class NetworkManager {
         public void join() {
             try {
                 Thread t = threadInstance;
-                if(t != null) {
+                if (t != null) {
                     t.join();
                 }
             } catch (InterruptedException ex) {
@@ -827,20 +883,20 @@ public final class NetworkManager {
         }
 
         private boolean runCurrentRequest(@Async.Execute ConnectionRequest req) {
-            if (threadAssignements.size() > 0) {
-                String n = currentRequest.getClass().getName();
+            if (!threadAssignements.isEmpty()) {
+                String n = req.getClass().getName();
                 Integer threadOffset = (Integer) threadAssignements.get(n);
                 NetworkThread[] networkThreads = NetworkManager.this.networkThreads;
                 if (networkThreads == null) {
                     return false;
                 }
-                if (threadOffset != null && networkThreads[threadOffset.intValue()] != this) {
+                if (threadOffset != null && networkThreads[threadOffset.intValue()] != this) { //NOPMD CompareObjectsWithEquals
                     synchronized (LOCK) {
-                        if (pending.size() > 0) {
-                            pending.insertElementAt(currentRequest, 1);
+                        if (!pending.isEmpty()) {
+                            pending.insertElementAt(req, 1);
                             return false;
                         }
-                        pending.addElement(currentRequest);
+                        pending.addElement(req);
                         LOCK.notifyAll();
                         long end = System.currentTimeMillis() + 30;
                         while (true) {
@@ -868,7 +924,7 @@ public final class NetworkManager {
                 // for higher priority tasks increase the thread priority, for lower
                 // prioirty tasks decrease it. In critical priority reduce the Codename One
                 // rendering thread speed for even faster download
-                switch (currentRequest.getPriority()) {
+                switch (req.getPriority()) {
                     case ConnectionRequest.PRIORITY_CRITICAL:
                         frameRate = Display.getInstance().getFrameRate();
                         Display.getInstance().setFramerate(4);
@@ -890,26 +946,26 @@ public final class NetworkManager {
                 }
 
                 if (progressListeners != null) {
-                    progressListeners.fireActionEvent(new NetworkEvent(currentRequest, NetworkEvent.PROGRESS_TYPE_INITIALIZING));
+                    progressListeners.fireActionEvent(new NetworkEvent(req, NetworkEvent.PROGRESS_TYPE_INITIALIZING));
                 }
-                if (currentRequest.getShowOnInit() != null) {
-                    currentRequest.getShowOnInit().showModeless();
+                if (req.getShowOnInit() != null) {
+                    req.getShowOnInit().showModeless();
                 }
 
-                requestWasCompleted = currentRequest.performOperationComplete();
+                requestWasCompleted = req.performOperationComplete();
             } catch (IOException e) {
-                if (!currentRequest.isFailSilently()) {
-                    if (!handleException(currentRequest, e)) {
-                        currentRequest.handleIOException(e);
+                if (!req.isFailSilently()) {
+                    if (!handleException(req, e)) {
+                        req.handleIOException(e);
                     }
                 } else {
                     // for the record
                     Log.e(e);
                 }
             } catch (RuntimeException er) {
-                if (!currentRequest.isFailSilently()) {
-                    if (!handleException(currentRequest, er)) {
-                        currentRequest.handleRuntimeException(er);
+                if (!req.isFailSilently()) {
+                    if (!handleException(req, er)) {
+                        req.handleRuntimeException(er);
                     }
                 } else {
                     // for the record
@@ -921,15 +977,15 @@ public final class NetworkManager {
                     Display.getInstance().setFramerate(frameRate);
                 }
                 if (requestWasCompleted) {
-                    currentRequest.complete = true;
+                    req.complete = true;
                 }
                 if (progressListeners != null) {
-                    progressListeners.fireActionEvent(new NetworkEvent(currentRequest, NetworkEvent.PROGRESS_TYPE_COMPLETED));
+                    progressListeners.fireActionEvent(new NetworkEvent(req, NetworkEvent.PROGRESS_TYPE_COMPLETED));
                 }
-                if (currentRequest.getDisposeOnCompletion() != null && !currentRequest.isRedirecting()) {
+                if (req.getDisposeOnCompletion() != null && !req.isRedirecting()) {
                     // there may be a race condition where the dialog hasn't yet appeared but the
                     // network request completed
-                    final ConnectionRequest finalReq = currentRequest;
+                    final ConnectionRequest finalReq = req;
                     Display.getInstance().callSerially(new Runnable() {
                         @Override
                         public void run() {
@@ -948,11 +1004,11 @@ public final class NetworkManager {
         public void run() {
             threadInstance = Thread.currentThread();
             while (running && !stopped) {
-                if (pending.size() > 0) {
+                if (!pending.isEmpty()) {
                     // the synchronization here isn't essential, only for good measure
                     synchronized (LOCK) {
                         //double lock to prevent a potential exception
-                        if (pending.size() == 0) {
+                        if (pending.isEmpty()) {
                             continue;
                         }
                         currentRequest = (ConnectionRequest) pending.elementAt(0);
@@ -989,7 +1045,7 @@ public final class NetworkManager {
                             // prevent waiting when there is still a pending request
                             // this can occur with a race condition since the synchronize
                             // scope is limited to prevent blocking on add...
-                            while (pending.size() == 0 && running && !stopped) {
+                            while (pending.isEmpty() && running && !stopped) {
                                 LOCK.wait();
                             }
                         } catch (InterruptedException ex) {
@@ -1075,5 +1131,12 @@ public final class NetworkManager {
             return this == o;
         }
 
+        @Override
+        public int hashCode() {
+            int result = super.hashCode();
+            result = 31 * result + (aps != null ? aps.hashCode() : 0);
+            result = 31 * result + currentAP;
+            return result;
+        }
     }
 }

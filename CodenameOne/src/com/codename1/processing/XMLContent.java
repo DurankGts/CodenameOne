@@ -27,56 +27,50 @@ import com.codename1.xml.XMLParser;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.Reader;
-import java.io.UnsupportedEncodingException;
-
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Vector;
 
-/**
- * A DOM accessor implementation for working with XML content.
- *
- * @author Eric Coolman
- */
+/// A DOM accessor implementation for working with XML content.
+///
+/// @author Eric Coolman
 class XMLContent implements StructuredContent {
     private final Element root;
 
-    /**
-     * Construct from a parsed XML dom
-     *
-     * @param content a parsed XML dom
-     */
+    /// Construct from a parsed XML dom
+    ///
+    /// #### Parameters
+    ///
+    /// - `content`: a parsed XML dom
     public XMLContent(Element content) {
         this.root = content;
     }
 
-    /**
-     * Construct from an XML string
-     *
-     * @param content an XML string
-     */
+    /// Construct from an XML string
+    ///
+    /// #### Parameters
+    ///
+    /// - `content`: an XML string
     public XMLContent(String content) {
         this(wrap(content));
     }
 
-    /**
-     * Construct from an XML inputstream
-     *
-     * @param content XML input stream
-     */
+    /// Construct from an XML inputstream
+    ///
+    /// #### Parameters
+    ///
+    /// - `content`: XML input stream
     public XMLContent(InputStream content) {
         this(new XMLParser().parse(com.codename1.io.Util.getReader(content)));
     }
 
-    /**
-     * Construct from an XML inputstream
-     *
-     * @param content XML reader
-     */
+    /// Construct from an XML inputstream
+    ///
+    /// #### Parameters
+    ///
+    /// - `content`: XML reader
     public XMLContent(Reader content) {
         this(new XMLParser().parse(content));
     }
@@ -85,11 +79,11 @@ class XMLContent implements StructuredContent {
         return com.codename1.io.Util.getReader(new ByteArrayInputStream(com.codename1.util.StringUtil.getBytes(content)));
     }
 
-    /**
-     * Convert the object back to an xml string.
-     *
-     * @return the object as a string
-     */
+    /// Convert the object back to an xml string.
+    ///
+    /// #### Returns
+    ///
+    /// the object as a string
     @Override
     public String toString() {
         if ("ROOT".equals(root.getTagName())) {
@@ -98,12 +92,11 @@ class XMLContent implements StructuredContent {
         return getText();
     }
 
-    /**
-     * Convert from an array of Element objects to an array of StructuredContent objects.
-     *
-     * @param array
-     * @return
-     */
+    /// Convert from an array of Element objects to an array of StructuredContent objects.
+    ///
+    /// #### Parameters
+    ///
+    /// - `array`
     private List asStructuredContentArray(List array) {
         List children;
         if (array instanceof Vector) {
@@ -111,8 +104,8 @@ class XMLContent implements StructuredContent {
         } else {
             children = new ArrayList();
         }
-        for (Iterator elements = array.iterator(); elements.hasNext(); ) {
-            children.add(new XMLContent((Element) elements.next()));
+        for (Object element : array) {
+            children.add(new XMLContent((Element) element));
         }
         return children;
     }

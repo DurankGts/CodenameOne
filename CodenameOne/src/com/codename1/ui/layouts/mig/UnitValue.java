@@ -41,137 +41,71 @@ import java.util.Arrays;
 import java.util.HashMap;
 
 public final class UnitValue {
-    /**
-     * An operation indicating a static value.
-     */
+    /// An operation indicating a static value.
     public static final int STATIC = 100;
-    /**
-     * An operation indicating a addition of two sub units.
-     */
+    /// An operation indicating a addition of two sub units.
     public static final int ADD = 101; // Must have "sub-unit values"
-    /**
-     * An operation indicating a subtraction of two sub units
-     */
+    /// An operation indicating a subtraction of two sub units
     public static final int SUB = 102; // Must have "sub-unit values"
-    /**
-     * An operation indicating a multiplication of two sub units.
-     */
+    /// An operation indicating a multiplication of two sub units.
     public static final int MUL = 103; // Must have "sub-unit values"
-    /**
-     * An operation indicating a division of two sub units.
-     */
+    /// An operation indicating a division of two sub units.
     public static final int DIV = 104; // Must have "sub-unit values"
-    /**
-     * An operation indicating the minimum of two sub units
-     */
+    /// An operation indicating the minimum of two sub units
     public static final int MIN = 105; // Must have "sub-unit values"
-    /**
-     * An operation indicating the maximum of two sub units
-     */
+    /// An operation indicating the maximum of two sub units
     public static final int MAX = 106; // Must have "sub-unit values"
-    /**
-     * An operation indicating the middle value of two sub units
-     */
+    /// An operation indicating the middle value of two sub units
     public static final int MID = 107; // Must have "sub-unit values"
-    /**
-     * A unit indicating pixels.
-     */
+    /// A unit indicating pixels.
     public static final int PIXEL = 0;
-    /**
-     * A unit indicating logical horizontal pixels.
-     */
+    /// A unit indicating logical horizontal pixels.
     public static final int LPX = 1;
-    /**
-     * A unit indicating logical vertical pixels.
-     */
+    /// A unit indicating logical vertical pixels.
     public static final int LPY = 2;
-    /**
-     * A unit indicating millimeters.
-     */
+    /// A unit indicating millimeters.
     public static final int MM = 3;
-    /**
-     * A unit indicating centimeters.
-     */
+    /// A unit indicating centimeters.
     public static final int CM = 4;
-    /**
-     * A unit indicating inches.
-     */
+    /// A unit indicating inches.
     public static final int INCH = 5;
-    /**
-     * A unit indicating percent.
-     */
+    /// A unit indicating percent.
     public static final int PERCENT = 6;
-    /**
-     * A unit indicating points.
-     */
+    /// A unit indicating points.
     public static final int PT = 7;
-    /**
-     * A unit indicating screen percentage width.
-     */
+    /// A unit indicating screen percentage width.
     public static final int SPX = 8;
-    /**
-     * A unit indicating screen percentage height.
-     */
+    /// A unit indicating screen percentage height.
     public static final int SPY = 9;
-    /**
-     * A unit indicating alignment.
-     */
+    /// A unit indicating alignment.
     public static final int ALIGN = 12;
-    /**
-     * A unit indicating minimum size.
-     */
+    /// A unit indicating minimum size.
     public static final int MIN_SIZE = 13;
-    /**
-     * A unit indicating preferred size.
-     */
+    /// A unit indicating preferred size.
     public static final int PREF_SIZE = 14;
-    /**
-     * A unit indicating maximum size.
-     */
+    /// A unit indicating maximum size.
     public static final int MAX_SIZE = 15;
-    /**
-     * A unit indicating botton size.
-     */
+    /// A unit indicating botton size.
     public static final int BUTTON = 16;
-    /**
-     * A unit indicating linking to x.
-     */
+    /// A unit indicating linking to x.
     public static final int LINK_X = 18;   // First link
-    /**
-     * A unit indicating linking to y.
-     */
+    /// A unit indicating linking to y.
     public static final int LINK_Y = 19;
-    /**
-     * A unit indicating linking to width.
-     */
+    /// A unit indicating linking to width.
     public static final int LINK_W = 20;
-    /**
-     * A unit indicating linking to height.
-     */
+    /// A unit indicating linking to height.
     public static final int LINK_H = 21;
-    /**
-     * A unit indicating linking to x2.
-     */
+    /// A unit indicating linking to x2.
     public static final int LINK_X2 = 22;
-    /**
-     * A unit indicating linking to y2.
-     */
+    /// A unit indicating linking to y2.
     public static final int LINK_Y2 = 23;
-    /**
-     * A unit indicating linking to x position on screen.
-     */
+    /// A unit indicating linking to x position on screen.
     public static final int LINK_XPOS = 24;
-    /**
-     * A unit indicating linking to y position on screen.
-     */
+    /// A unit indicating linking to y position on screen.
     public static final int LINK_YPOS = 25;    // Last link
-    /**
-     * A unit indicating a lookup.
-     */
+    /// A unit indicating a lookup.
     public static final int LOOKUP = 26;
-    /**
-     * A unit indicating label alignment.
-     */
+    /// A unit indicating label alignment.
     public static final int LABEL_ALIGN = 27;
     static final UnitValue ZERO = new UnitValue(0, null, PIXEL, true, STATIC, null, null, "0px");
     static final UnitValue TOP = new UnitValue(0, null, PERCENT, false, STATIC, null, null, "top");
@@ -220,13 +154,11 @@ public final class UnitValue {
     private transient String linkId = null; // Should be final, but initializes in a sub method.
 
     // Pixel
-    public UnitValue(float value)  // If hor/ver does not matter.
-    {
+    public UnitValue(float value) { // If hor/ver does not matter.
         this(value, null, PIXEL, true, STATIC, null, null, value + "px");
     }
 
-    public UnitValue(float value, int unit, String createString)  // If hor/ver does not matter.
-    {
+    public UnitValue(float value, int unit, String createString) { // If hor/ver does not matter.
         this(value, null, unit, true, STATIC, null, null, createString);
     }
 
@@ -239,11 +171,13 @@ public final class UnitValue {
     }
 
     private UnitValue(float value, String unitStr, int unit, boolean isHor, int oper, UnitValue sub1, UnitValue sub2, String createString) {
-        if (oper < STATIC || oper > MID)
+        if (oper < STATIC || oper > MID) {
             throw new IllegalArgumentException("Unknown Operation: " + oper);
+        }
 
-        if (oper > STATIC && (sub1 == null || sub2 == null))
+        if (oper > STATIC && (sub1 == null || sub2 == null)) {
             throw new IllegalArgumentException(oper + " Operation may not have null sub-UnitValues.");
+        }
 
         this.value = value;
         this.oper = oper;
@@ -255,91 +189,120 @@ public final class UnitValue {
         LayoutUtil.putCCString(this, createString);    // "this" escapes!! Safe though.
     }
 
-    /**
-     * Adds a global unit converter that can convert from some <code>unit</code> to pixels.
-     * <p>
-     * This converter will be asked before the platform converter so the values for it (e.g. "related" and "unrelated")
-     * can be overridden. It is however not possible to override the built in ones (e.g. "mm", "pixel" or "lp").
-     *
-     * @param conv The converter. Not <code>null</code>.
-     */
+    /// Adds a global unit converter that can convert from some `unit` to pixels.
+    ///
+    /// This converter will be asked before the platform converter so the values for it (e.g. "related" and "unrelated")
+    /// can be overridden. It is however not possible to override the built in ones (e.g. "mm", "pixel" or "lp").
+    ///
+    /// #### Parameters
+    ///
+    /// - `conv`: The converter. Not `null`.
     public synchronized static void addGlobalUnitConverter(UnitConverter conv) {
-        if (conv == null)
+        if (conv == null) {
             throw new NullPointerException();
+        }
         CONVERTERS.add(conv);
     }
 
-    /**
-     * Removed the converter.
-     *
-     * @param unit The converter.
-     * @return If there was a converter found and thus removed.
-     */
+    /// Removed the converter.
+    ///
+    /// #### Parameters
+    ///
+    /// - `unit`: The converter.
+    ///
+    /// #### Returns
+    ///
+    /// If there was a converter found and thus removed.
     public synchronized static boolean removeGlobalUnitConverter(UnitConverter unit) {
         return CONVERTERS.remove(unit);
     }
 
-    /**
-     * Returns the global converters currently registered. The platform converter will not be in this list.
-     *
-     * @return The converters. Never <code>null</code>.
-     */
+    /// Returns the global converters currently registered. The platform converter will not be in this list.
+    ///
+    /// #### Returns
+    ///
+    /// The converters. Never `null`.
     public synchronized static UnitConverter[] getGlobalUnitConverters() {
         return CONVERTERS.toArray(new UnitConverter[CONVERTERS.size()]);
     }
 
-    /**
-     * Returns the current default unit. The default unit is the unit used if no unit is set. E.g. "width 10".
-     *
-     * @return The current default unit.
-     * @see #PIXEL
-     * @see #LPX
-     * @deprecated Use {@link PlatformDefaults#getDefaultHorizontalUnit()} and {@link PlatformDefaults#getDefaultVerticalUnit()} instead.
-     */
+    /// Returns the current default unit. The default unit is the unit used if no unit is set. E.g. "width 10".
+    ///
+    /// #### Returns
+    ///
+    /// The current default unit.
+    ///
+    /// #### Deprecated
+    ///
+    /// Use `PlatformDefaults#getDefaultHorizontalUnit()` and `PlatformDefaults#getDefaultVerticalUnit()` instead.
+    ///
+    /// #### See also
+    ///
+    /// - #PIXEL
+    ///
+    /// - #LPX
     public static int getDefaultUnit() {
         return PlatformDefaults.getDefaultHorizontalUnit();
     }
 
-    /**
-     * Sets the default unit. The default unit is the unit used if no unit is set. E.g. "width 10".
-     *
-     * @param unit The new default unit.
-     * @see #PIXEL
-     * @see #LPX
-     * @deprecated Use {@link PlatformDefaults#setDefaultHorizontalUnit(int)} and {@link PlatformDefaults#setDefaultVerticalUnit(int)} instead.
-     */
+    /// Sets the default unit. The default unit is the unit used if no unit is set. E.g. "width 10".
+    ///
+    /// #### Parameters
+    ///
+    /// - `unit`: The new default unit.
+    ///
+    /// #### Deprecated
+    ///
+    /// Use `PlatformDefaults#setDefaultHorizontalUnit(int)` and `PlatformDefaults#setDefaultVerticalUnit(int)` instead.
+    ///
+    /// #### See also
+    ///
+    /// - #PIXEL
+    ///
+    /// - #LPX
     public static void setDefaultUnit(int unit) {
         PlatformDefaults.setDefaultHorizontalUnit(unit);
         PlatformDefaults.setDefaultVerticalUnit(unit);
     }
 
-    /**
-     * Returns the size in pixels rounded.
-     *
-     * @param refValue The reference value. Normally the size of the parent. For unit {@link #ALIGN} the current size of the component should be sent in.
-     * @param parent   The parent. May be <code>null</code> for testing the validity of the value, but should normally not and are not
-     *                 required to return any usable value if <code>null</code>.
-     * @param comp     The component, if any, that the value is for. Might be <code>null</code> if the value is not
-     *                 connected to any component.
-     * @return The size in pixels.
-     */
+    /// Returns the size in pixels rounded.
+    ///
+    /// #### Parameters
+    ///
+    /// - `refValue`: The reference value. Normally the size of the parent. For unit `#ALIGN` the current size of the component should be sent in.
+    ///
+    /// - `parent`: @param parent   The parent. May be `null` for testing the validity of the value, but should normally not and are not
+    /// required to return any usable value if `null`.
+    ///
+    /// - `comp`: @param comp     The component, if any, that the value is for. Might be `null` if the value is not
+    /// connected to any component.
+    ///
+    /// #### Returns
+    ///
+    /// The size in pixels.
     public int getPixels(float refValue, ContainerWrapper parent, ComponentWrapper comp) {
         return MathUtil.round(getPixelsExact(refValue, parent, comp));
     }
 
-    /**
-     * Returns the size in pixels.
-     *
-     * @param refValue The reference value. Normally the size of the parent. For unit {@link #ALIGN} the current size of the component should be sent in.
-     * @param parent   The parent. May be <code>null</code> for testing the validity of the value, but should normally not and are not
-     *                 required to return any usable value if <code>null</code>.
-     * @param comp     The component, if any, that the value is for. Might be <code>null</code> if the value is not
-     *                 connected to any component.
-     * @return The size in pixels.
-     */
+    /// Returns the size in pixels.
+    ///
+    /// #### Parameters
+    ///
+    /// - `refValue`: The reference value. Normally the size of the parent. For unit `#ALIGN` the current size of the component should be sent in.
+    ///
+    /// - `parent`: @param parent   The parent. May be `null` for testing the validity of the value, but should normally not and are not
+    /// required to return any usable value if `null`.
+    ///
+    /// - `comp`: @param comp     The component, if any, that the value is for. Might be `null` if the value is not
+    /// connected to any component.
+    ///
+    /// #### Returns
+    ///
+    /// The size in pixels.
     public float getPixelsExact(float refValue, ContainerWrapper parent, ComponentWrapper comp) {
-        if (parent == null)
+        if (parent == null) {
             return 1;
+        }
 
         if (oper == STATIC) {
             switch (unit) {
@@ -356,8 +319,9 @@ public final class UnitValue {
                 case PT:
                     float f = SCALE[unit - MM];
                     Float s = isHor ? PlatformDefaults.getHorizontalScaleFactor() : PlatformDefaults.getVerticalScaleFactor();
-                    if (s != null)
+                    if (s != null) {
                         f *= s;
+                    }
 
                     return (isHor ? parent.getHorizontalScreenDPI() : parent.getVerticalScreenDPI()) * value / f;
 
@@ -371,23 +335,27 @@ public final class UnitValue {
                 case ALIGN:
                     Integer st = LinkHandler.getValue(parent.getLayout(), "visual", isHor ? LinkHandler.X : LinkHandler.Y);
                     Integer sz = LinkHandler.getValue(parent.getLayout(), "visual", isHor ? LinkHandler.WIDTH : LinkHandler.HEIGHT);
-                    if (st == null || sz == null)
+                    if (st == null || sz == null) {
                         return 0;
+                    }
                     return value * (Math.max(0, sz.intValue()) - refValue) + st;
 
                 case MIN_SIZE:
-                    if (comp == null)
+                    if (comp == null) {
                         return 0;
+                    }
                     return isHor ? comp.getMinimumWidth(comp.getHeight()) : comp.getMinimumHeight(comp.getWidth());
 
                 case PREF_SIZE:
-                    if (comp == null)
+                    if (comp == null) {
                         return 0;
+                    }
                     return isHor ? comp.getPreferredWidth(comp.getHeight()) : comp.getPreferredHeight(comp.getWidth());
 
                 case MAX_SIZE:
-                    if (comp == null)
+                    if (comp == null) {
                         return 0;
+                    }
                     return isHor ? comp.getMaximumWidth(comp.getHeight()) : comp.getMaximumHeight(comp.getWidth());
 
                 case BUTTON:
@@ -402,27 +370,31 @@ public final class UnitValue {
                 case LINK_XPOS:
                 case LINK_YPOS:
                     Integer v = LinkHandler.getValue(parent.getLayout(), getLinkTargetId(), unit - (unit >= LINK_XPOS ? LINK_XPOS : LINK_X));
-                    if (v == null)
+                    if (v == null) {
                         return 0;
+                    }
 
-                    if (unit == LINK_XPOS)
+                    if (unit == LINK_XPOS) {
                         return parent.getScreenLocationX() + v;
-                    if (unit == LINK_YPOS)
+                    }
+                    if (unit == LINK_YPOS) {
                         return parent.getScreenLocationY() + v;
+                    }
 
                     return v;
 
                 case LOOKUP:
                     float res = lookup(refValue, parent, comp);
-                    if (res != UnitConverter.UNABLE)
+                    if (res != UnitConverter.UNABLE) {
                         return res;
+                    }
 
                 case LABEL_ALIGN:
                     return PlatformDefaults.getLabelAlignPercentage() * refValue;
 
-                case IDENTITY:
+                default:
+                    throw new IllegalArgumentException("Unknown/illegal unit: " + unit + ", unitStr: " + unitStr);
             }
-            throw new IllegalArgumentException("Unknown/illegal unit: " + unit + ", unitStr: " + unitStr);
         }
 
         if (subUnits != null && subUnits.length == 2) {
@@ -443,43 +415,51 @@ public final class UnitValue {
                     return r1 > r2 ? r1 : r2;
                 case MID:
                     return (r1 + r2) * 0.5f;
+                default:
+                    throw new IllegalArgumentException("Subunit: Unknown Oper: " + oper);
             }
         }
 
-        throw new IllegalArgumentException("Internal: Unknown Oper: " + oper);
+        throw new IllegalArgumentException("Internal: invalid subunits: " + Arrays.toString(subUnits));
     }
 
     private float lookup(float refValue, ContainerWrapper parent, ComponentWrapper comp) {
         float res = UnitConverter.UNABLE;
         for (int i = CONVERTERS.size() - 1; i >= 0; i--) {
             res = CONVERTERS.get(i).convertToPixels(value, unitStr, isHor, refValue, parent, comp);
-            if (res != UnitConverter.UNABLE)
+            if (res != UnitConverter.UNABLE) {
                 return res;
+            }
         }
         return PlatformDefaults.convertToPixels(value, unitStr, isHor, refValue, parent, comp);
     }
 
     private int parseUnitString() {
         int len = unitStr.length();
-        if (len == 0)
+        if (len == 0) {
             return isHor ? PlatformDefaults.getDefaultHorizontalUnit() : PlatformDefaults.getDefaultVerticalUnit();
+        }
 
         Integer u = UNIT_MAP.get(unitStr);
         if (u != null) {
-            if (!isHor && (u == BUTTON || u == LABEL_ALIGN))
+            if (!isHor && (u == BUTTON || u == LABEL_ALIGN)) {
                 throw new IllegalArgumentException("Not valid in vertical contexts: '" + unitStr + "'");
+            }
 
             return u;
         }
 
-        if ("lp".equals(unitStr))
+        if ("lp".equals(unitStr)) {
             return isHor ? LPX : LPY;
+        }
 
-        if ("sp".equals(unitStr))
+        if ("sp".equals(unitStr)) {
             return isHor ? SPX : SPY;
+        }
 
-        if (lookup(0, null, null) != UnitConverter.UNABLE)    // To test so we can fail fast
+        if (lookup(0, null, null) != UnitConverter.UNABLE) {   // To test so we can fail fast
             return LOOKUP;
+        }
 
         // Only link left. E.g. "otherID.width"
 
@@ -488,22 +468,30 @@ public final class UnitValue {
             linkId = unitStr.substring(0, pIx);
             String e = unitStr.substring(pIx + 1);
 
-            if ("x".equals(e))
+            if ("x".equals(e)) {
                 return LINK_X;
-            if ("y".equals(e))
+            }
+            if ("y".equals(e)) {
                 return LINK_Y;
-            if ("w".equals(e) || "width".equals(e))
+            }
+            if ("w".equals(e) || "width".equals(e)) {
                 return LINK_W;
-            if ("h".equals(e) || "height".equals(e))
+            }
+            if ("h".equals(e) || "height".equals(e)) {
                 return LINK_H;
-            if ("x2".equals(e))
+            }
+            if ("x2".equals(e)) {
                 return LINK_X2;
-            if ("y2".equals(e))
+            }
+            if ("y2".equals(e)) {
                 return LINK_Y2;
-            if ("xpos".equals(e))
+            }
+            if ("xpos".equals(e)) {
                 return LINK_XPOS;
-            if ("ypos".equals(e))
+            }
+            if ("ypos".equals(e)) {
                 return LINK_YPOS;
+            }
         }
 
         throw new IllegalArgumentException("Unknown keyword: " + unitStr);
@@ -540,16 +528,18 @@ public final class UnitValue {
             case LABEL_ALIGN:
                 return false;
 
-            case IDENTITY:
+            //case IDENTITY:
+            default:
+                throw new IllegalArgumentException("Unknown/illegal unit: " + unit + ", unitStr: " + unitStr);
         }
-        throw new IllegalArgumentException("Unknown/illegal unit: " + unit + ", unitStr: " + unitStr);
     }
 
     boolean isAbsoluteDeep() {
         if (subUnits != null) {
             for (UnitValue subUnit : subUnits) {
-                if (subUnit.isAbsoluteDeep())
+                if (subUnit.isAbsoluteDeep()) {
                     return true;
+                }
             }
         }
         return isAbsolute();
@@ -562,8 +552,9 @@ public final class UnitValue {
     boolean isLinkedDeep() {
         if (subUnits != null) {
             for (UnitValue subUnit : subUnits) {
-                if (subUnit.isLinkedDeep())
+                if (subUnit.isLinkedDeep()) {
                     return true;
+                }
             }
         }
         return isLinked();
@@ -610,12 +601,12 @@ public final class UnitValue {
         return getClass().getName() + ". Value=" + value + ", unit=" + unit + ", unitString: " + unitStr + ", oper=" + oper + ", isHor: " + isHor;
     }
 
-    /**
-     * Returns the creation string for this object. Note that {@link LayoutUtil#setDesignTime(ContainerWrapper, boolean)} must be
-     * set to <code>true</code> for the creation strings to be stored.
-     *
-     * @return The constraint string or <code>null</code> if none is registered.
-     */
+    /// Returns the creation string for this object. Note that `boolean)` must be
+    /// set to `true` for the creation strings to be stored.
+    ///
+    /// #### Returns
+    ///
+    /// The constraint string or `null` if none is registered.
     public String getConstraintString() {
         return LayoutUtil.getCCString(this);
     }

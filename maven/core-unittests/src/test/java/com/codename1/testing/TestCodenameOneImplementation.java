@@ -93,6 +93,7 @@ public class TestCodenameOneImplementation extends CodenameOneImplementation {
     private Dimension desktopSize = new Dimension(displayWidth, displayHeight);
     private Dimension lastWindowSize;
     private Rectangle windowBounds = new Rectangle(0, 0, displayWidth, displayHeight);
+    private Rectangle displaySafeArea = null;
     private int deviceDensity = Display.DENSITY_MEDIUM;
     private boolean portrait = true;
     private boolean tablet = false;
@@ -115,6 +116,10 @@ public class TestCodenameOneImplementation extends CodenameOneImplementation {
     private final Map<String, Integer> accessPointTypes = new HashMap<>();
     private final Map<String, String> accessPointNames = new HashMap<>();
     private String currentAccessPoint;
+    private boolean vpnDetectionSupported;
+    private boolean vpnActive;
+    private boolean callDetectionSupported;
+    private boolean inCall;
     private LocationManager locationManager;
     private L10NManager localizationManager;
     private ImageIO imageIO;
@@ -1059,6 +1064,10 @@ public class TestCodenameOneImplementation extends CodenameOneImplementation {
         accessPointTypes.clear();
         accessPointNames.clear();
         currentAccessPoint = null;
+        vpnDetectionSupported = false;
+        vpnActive = false;
+        callDetectionSupported = false;
+        inCall = false;
         startRemoteControlInvocations = 0;
         stopRemoteControlInvocations = 0;
         nativeTitle = false;
@@ -1088,6 +1097,7 @@ public class TestCodenameOneImplementation extends CodenameOneImplementation {
         displayHeight = 1920;
         desktopSize = new Dimension(displayWidth, displayHeight);
         windowBounds = new Rectangle(0, 0, displayWidth, displayHeight);
+        displaySafeArea = null;
         lastWindowSize = null;
         nativeTitle = false;
         softkeyCount = 2;
@@ -1118,6 +1128,27 @@ public class TestCodenameOneImplementation extends CodenameOneImplementation {
         this.displayHeight = height;
     }
 
+    /**
+     * Sets a custom display safe area to simulate devices with notches or safe area insets.
+     * Pass {@code null} to revert to the default behavior (full display area).
+     */
+    public void setDisplaySafeArea(Rectangle safeArea) {
+        this.displaySafeArea = safeArea;
+    }
+
+    @Override
+    public Rectangle getDisplaySafeArea(Rectangle rect) {
+        if (displaySafeArea != null) {
+            if (rect == null) {
+                rect = new Rectangle();
+            }
+            rect.setBounds(displaySafeArea.getX(), displaySafeArea.getY(),
+                    displaySafeArea.getWidth(), displaySafeArea.getHeight());
+            return rect;
+        }
+        return super.getDisplaySafeArea(rect);
+    }
+
     public void setDeviceDensity(int density) {
         this.deviceDensity = density;
     }
@@ -1144,6 +1175,17 @@ public class TestCodenameOneImplementation extends CodenameOneImplementation {
         if (names != null) {
             this.accessPointNames.putAll(names);
         }
+    }
+
+
+    public void setVPNState(boolean detectionSupported, boolean active) {
+        this.vpnDetectionSupported = detectionSupported;
+        this.vpnActive = active;
+    }
+
+    public void setCallState(boolean detectionSupported, boolean active) {
+        this.callDetectionSupported = detectionSupported;
+        this.inCall = active;
     }
 
     @Override
@@ -2721,6 +2763,26 @@ public class TestCodenameOneImplementation extends CodenameOneImplementation {
     @Override
     public int convertToPixels(int dipCount, boolean horizontal) {
         return dipCount;
+    }
+
+    @Override
+    public boolean isVPNDetectionSupported() {
+        return vpnDetectionSupported;
+    }
+
+    @Override
+    public boolean isVPNActive() {
+        return vpnActive;
+    }
+
+    @Override
+    public boolean isCallDetectionSupported() {
+        return callDetectionSupported;
+    }
+
+    @Override
+    public boolean isInCall() {
+        return inCall;
     }
 
     @Override

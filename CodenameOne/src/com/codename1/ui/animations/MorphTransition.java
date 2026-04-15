@@ -33,16 +33,14 @@ import com.codename1.ui.geom.Dimension;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * A transition inspired by the Android L release morph activity effect allowing
- * a set of components in one form/container to morph into another in a different
- * container/form.
- *
- * @author Shai Almog
- */
+/// A transition inspired by the Android L release morph activity effect allowing
+/// a set of components in one form/container to morph into another in a different
+/// container/form.
+///
+/// @author Shai Almog
 public final class MorphTransition extends Transition {
-    private int duration;
     private final HashMap<String, String> fromTo = new HashMap<String, String>();
+    private int duration;
     private CC[] fromToComponents;
     private Motion animationMotion;
     private boolean finished;
@@ -50,13 +48,16 @@ public final class MorphTransition extends Transition {
     private MorphTransition() {
     }
 
-    /**
-     * Creates a transition with the given duration, this transition should be modified with the
-     * builder methods such as morph
-     *
-     * @param duration the duration of the transition
-     * @return a new Morph transition instance
-     */
+    /// Creates a transition with the given duration, this transition should be modified with the
+    /// builder methods such as morph
+    ///
+    /// #### Parameters
+    ///
+    /// - `duration`: the duration of the transition
+    ///
+    /// #### Returns
+    ///
+    /// a new Morph transition instance
     public static MorphTransition create(int duration) {
         MorphTransition mt = new MorphTransition();
         mt.duration = duration;
@@ -81,9 +82,7 @@ public final class MorphTransition extends Transition {
         return null;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public Transition copy(boolean reverse) {
         MorphTransition m = create(duration);
@@ -97,36 +96,41 @@ public final class MorphTransition extends Transition {
         return m;
     }
 
-    /**
-     * Morphs the component with the given source name in the source container hierarchy
-     * to the component with the same name in the destination hierarchy
-     *
-     * @param cmp the compoennt name
-     * @return this so morph operations can be chained as MorphTransition t = MorphTransition.create(300).morph("a").("c");
-     */
+    /// Morphs the component with the given source name in the source container hierarchy
+    /// to the component with the same name in the destination hierarchy
+    ///
+    /// #### Parameters
+    ///
+    /// - `cmp`: the compoennt name
+    ///
+    /// #### Returns
+    ///
+    /// this so morph operations can be chained as MorphTransition t = MorphTransition.create(300).morph("a").("c");
     public MorphTransition morph(String cmp) {
         fromTo.put(cmp, cmp);
         return this;
     }
 
-    /**
-     * Morphs the component with the given source name in the source container hierarchy
-     * to the component with the given name in the destination hierarchy
-     *
-     * @param source
-     * @param to
-     * @return this so morph operations can be chained as MorphTransition t = MorphTransition.create(300).morph("a", "b").("c", "d");
-     */
+    /// Morphs the component with the given source name in the source container hierarchy
+    /// to the component with the given name in the destination hierarchy
+    ///
+    /// #### Parameters
+    ///
+    /// - `source`
+    ///
+    /// - `to`
+    ///
+    /// #### Returns
+    ///
+    /// this so morph operations can be chained as MorphTransition t = MorphTransition.create(300).morph("a", "b").("c", "d");
     public MorphTransition morph(String source, String to) {
         fromTo.put(source, to);
         return this;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
-    public final void initTransition() {
+    public void initTransition() {
         animationMotion = Motion.createEaseInOutMotion(0, 255, duration);
         animationMotion.start();
         Container s = (Container) getSource();
@@ -174,9 +178,7 @@ public final class MorphTransition extends Transition {
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public boolean animate() {
         if (!finished) {
@@ -185,7 +187,7 @@ public final class MorphTransition extends Transition {
                 finished = true;
 
                 // restore forms to orignial states
-                if(fromToComponents != null) {
+                if (fromToComponents != null) {
                     for (CC c : fromToComponents) {
                         if (c == null) {
                             continue;
@@ -205,7 +207,7 @@ public final class MorphTransition extends Transition {
 
                 return true;
             }
-            if(fromToComponents != null) {
+            if (fromToComponents != null) {
                 for (CC c : fromToComponents) {
                     if (c == null) {
                         continue;
@@ -231,14 +233,12 @@ public final class MorphTransition extends Transition {
         return false;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void paint(Graphics g) {
         int oldAlpha = g.getAlpha();
         int alpha = 0;
-        if(animationMotion != null) {
+        if (animationMotion != null) {
             alpha = animationMotion.getValue();
         }
         if (alpha < 255) {
@@ -265,6 +265,7 @@ public final class MorphTransition extends Transition {
         Motion yMotion;
         Motion wMotion;
         Motion hMotion;
+
         public CC(Component source, Component dest, int duration) {
             this.source = source;
             this.dest = dest;

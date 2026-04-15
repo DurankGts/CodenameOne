@@ -32,34 +32,32 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 
-/**
- * This class provides a similar API to {@code java.io.File} making it almost into a "drop in" replacement.
- * It is placed in a different package because it is incompatible to {@code java.io.File} by definition.  It is useful
- * in getting some simple code to work without too many changes
- *
- * @author Shai Almog
- */
+/// This class provides a similar API to `java.io.File` making it almost into a "drop in" replacement.
+/// It is placed in a different package because it is incompatible to `java.io.File` by definition.  It is useful
+/// in getting some simple code to work without too many changes
+///
+/// @author Shai Almog
 public class File {
     public static final char separatorChar = '/';
-    public static final java.lang.String separator = "/";
+    public static final String separator = "/";
     private final String path;
 
-    /**
-     * Creates a new File object from the given URI
-     *
-     * @param uri
-     */
+    /// Creates a new File object from the given URI
+    ///
+    /// #### Parameters
+    ///
+    /// - `uri`
     public File(URI uri) {
         this("file:/" + uri.getPath());
     }
 
-    /**
-     * Creates a new file object with given path. Paths that do not begin with the "file:" prefix
-     * will automatically be prefixed with the app home path.
-     *
-     * @param path The path of the file.  Relative or absolute.
-     */
-    public File(java.lang.String path) {
+    /// Creates a new file object with given path. Paths that do not begin with the "file:" prefix
+    /// will automatically be prefixed with the app home path.
+    ///
+    /// #### Parameters
+    ///
+    /// - `path`: The path of the file.  Relative or absolute.
+    public File(String path) {
         if (!path.startsWith("file:")) {
             this.path = FileSystemStorage.getInstance().getAppHomePath() + path;
         } else {
@@ -67,13 +65,14 @@ public class File {
         }
     }
 
-    /**
-     * Creates a new file object in a given directory.
-     *
-     * @param dir  The parent directory path.
-     * @param file The file name
-     */
-    public File(java.lang.String dir, java.lang.String file) {
+    /// Creates a new file object in a given directory.
+    ///
+    /// #### Parameters
+    ///
+    /// - `dir`: The parent directory path.
+    ///
+    /// - `file`: The file name
+    public File(String dir, String file) {
         if (!dir.startsWith("file:")) {
             dir = FileSystemStorage.getInstance().getAppHomePath() + dir;
         }
@@ -84,13 +83,14 @@ public class File {
         }
     }
 
-    /**
-     * Creates a new file in the given parent directory, and subpath.
-     *
-     * @param parent The parent directory.
-     * @param path   The subpath, beginning with the parent directory.
-     */
-    public File(File parent, java.lang.String path) {
+    /// Creates a new file in the given parent directory, and subpath.
+    ///
+    /// #### Parameters
+    ///
+    /// - `parent`: The parent directory.
+    ///
+    /// - `path`: The subpath, beginning with the parent directory.
+    public File(File parent, String path) {
         if (!parent.path.endsWith("/")) {
             this.path = parent.path + "/" + path;
         } else {
@@ -98,47 +98,50 @@ public class File {
         }
     }
 
-    /**
-     * List the file system roots.
-     *
-     * @return
-     */
+    /// List the file system roots.
     public static File[] listRoots() {
         return new File[]{
                 new File(FileSystemStorage.getInstance().getAppHomePath())
         };
     }
 
-    /**
-     * Creates a temporary file.
-     *
-     * @param prefix The file name prefix.
-     * @param suffix The file name suffix
-     * @return The resulting temporary file.
-     * @throws java.io.IOException
-     */
-    public static File createTempFile(java.lang.String prefix, java.lang.String suffix) throws java.io.IOException {
+    /// Creates a temporary file.
+    ///
+    /// #### Parameters
+    ///
+    /// - `prefix`: The file name prefix.
+    ///
+    /// - `suffix`: The file name suffix
+    ///
+    /// #### Returns
+    ///
+    /// The resulting temporary file.
+    ///
+    /// #### Throws
+    ///
+    /// - `IOException`
+    public static File createTempFile(String prefix, String suffix) throws IOException {
         String p = FileSystemStorage.getInstance().getAppHomePath() + "/temp/";
         FileSystemStorage.getInstance().mkdir(p);
         return new File(p + prefix + System.currentTimeMillis() + suffix);
 
     }
 
-    /**
-     * Returns the file name.
-     *
-     * @return The file name.
-     */
-    public java.lang.String getName() {
+    /// Returns the file name.
+    ///
+    /// #### Returns
+    ///
+    /// The file name.
+    public String getName() {
         return path.substring(path.lastIndexOf('/') + 1);
     }
 
-    /**
-     * Gets the parent directory path.
-     *
-     * @return The parent directory path.
-     */
-    public java.lang.String getParent() {
+    /// Gets the parent directory path.
+    ///
+    /// #### Returns
+    ///
+    /// The parent directory path.
+    public String getParent() {
 
         if ("file://".equals(path) || "file:///".equals(path) || path.length() == 0) {
             return null;
@@ -156,11 +159,7 @@ public class File {
 
     }
 
-    /**
-     * Returns the file object for the parent directory.
-     *
-     * @return
-     */
+    /// Returns the file object for the parent directory.
     public File getParentFile() {
         String parentPath = getParent();
         if (parentPath == null) {
@@ -169,126 +168,97 @@ public class File {
         return new File(parentPath);
     }
 
-    /**
-     * Gets the path to the file.
-     *
-     * @return
-     */
-    public java.lang.String getPath() {
+    /// Gets the path to the file.
+    public String getPath() {
         return path;
     }
 
-    /**
-     * Checks if the path is absolute.  This always returns {@literal true} as all File objects
-     * use absolute paths - even if they were created with relative paths.  Relative paths are automatically
-     * prefixed with the app home directory path.
-     *
-     * @return
-     */
+    /// Checks if the path is absolute.  This always returns true as all File objects
+    /// use absolute paths - even if they were created with relative paths.  Relative paths are automatically
+    /// prefixed with the app home directory path.
     public boolean isAbsolute() {
         return true;
     }
 
-    /**
-     * Gets the absolute path of the file as a string,
-     *
-     * @return
-     */
-    public java.lang.String getAbsolutePath() {
+    /// Gets the absolute path of the file as a string,
+    public String getAbsolutePath() {
         return path;
     }
 
-    /**
-     * Gets the absolute file - which is always itself, since {@link #isAbsolute() } always returns true.
-     *
-     * @return The same file object.
-     */
+    /// Gets the absolute file - which is always itself, since `#isAbsolute()` always returns true.
+    ///
+    /// #### Returns
+    ///
+    /// The same file object.
     public File getAbsoluteFile() {
         return this;
     }
 
-    /**
-     * Checks if the file described by this object exists on the file system.
-     *
-     * @return
-     */
+    /// Checks if the file described by this object exists on the file system.
     public boolean exists() {
         return FileSystemStorage.getInstance().exists(path);
     }
 
-    /**
-     * Checks if this file is a directory.
-     *
-     * @return
-     */
+    /// Checks if this file is a directory.
     public boolean isDirectory() {
         return FileSystemStorage.getInstance().isDirectory(path);
     }
 
-    /**
-     * Checks if this file object represents a regular file.
-     *
-     * @return
-     */
+    /// Checks if this file object represents a regular file.
     public boolean isFile() {
         return !isDirectory();
     }
 
-    /**
-     * Checks if this is a hidden file.
-     *
-     * @return
-     */
+    /// Checks if this is a hidden file.
     public boolean isHidden() {
         return FileSystemStorage.getInstance().isHidden(path);
     }
 
-    /**
-     * Gets the last modified time as a unix timestamp in milliseconds.
-     *
-     * @return
-     */
+    /// Gets the last modified time as a unix timestamp in milliseconds.
     public long lastModified() {
         return FileSystemStorage.getInstance().getLastModified(path);
     }
 
-    /**
-     * Gets the file size in bytes.
-     *
-     * @return The file size in bytes.
-     */
+    /// Gets the file size in bytes.
+    ///
+    /// #### Returns
+    ///
+    /// The file size in bytes.
     public long length() {
         return FileSystemStorage.getInstance().getLength(path);
     }
 
-    /**
-     * Creates this file as a new blank file in the file system.
-     *
-     * @return True if it succeeds.
-     * @throws java.io.IOException
-     */
-    public boolean createNewFile() throws java.io.IOException {
-        OutputStream os = FileSystemStorage.getInstance().openOutputStream(path);
-        os.close();
+    /// Creates this file as a new blank file in the file system.
+    ///
+    /// #### Returns
+    ///
+    /// True if it succeeds.
+    ///
+    /// #### Throws
+    ///
+    /// - `IOException`
+    public boolean createNewFile() throws IOException {
+        OutputStream os = null; //NOPMD CloseResource
+        try {
+            os = FileSystemStorage.getInstance().openOutputStream(path);
+        } finally {
+            Util.cleanup(os);
+        }
         return exists();
     }
 
-    /**
-     * Deletes the file described by this object on the file system.
-     *
-     * @return True if delete succeeds.
-     */
+    /// Deletes the file described by this object on the file system.
+    ///
+    /// #### Returns
+    ///
+    /// True if delete succeeds.
     public boolean delete() {
         FileSystemStorage.getInstance().delete(path);
         return !FileSystemStorage.getInstance().exists(path);
     }
 
-    /**
-     * Returns the list of child files of this directory.
-     *
-     * @return
-     */
-    public java.lang.String[] list() {
+    /// Returns the list of child files of this directory.
+    public String[] list() {
         try {
             String[] result = FileSystemStorage.getInstance().listFiles(path);
             for (int iter = 0; iter < result.length; iter++) {
@@ -306,13 +276,12 @@ public class File {
         }
     }
 
-    /**
-     * Returns list of child files of this directory
-     *
-     * @param filter
-     * @return
-     */
-    public java.lang.String[] list(FilenameFilter filter) {
+    /// Returns list of child files of this directory
+    ///
+    /// #### Parameters
+    ///
+    /// - `filter`
+    public String[] list(FilenameFilter filter) {
         String[] arr = list();
         if (arr.length > 0) {
             ArrayList<String> result = new ArrayList<String>();
@@ -328,11 +297,7 @@ public class File {
         return arr;
     }
 
-    /**
-     * Gets a list of child files of this directory.
-     *
-     * @return
-     */
+    /// Gets a list of child files of this directory.
     public File[] listFiles() {
         String[] r = list();
         File[] files = new File[r.length];
@@ -342,12 +307,11 @@ public class File {
         return files;
     }
 
-    /**
-     * Gets a list of child files of this directory, filtered using the provided filter.
-     *
-     * @param ff The filter to use.
-     * @return
-     */
+    /// Gets a list of child files of this directory, filtered using the provided filter.
+    ///
+    /// #### Parameters
+    ///
+    /// - `ff`: The filter to use.
     public File[] listFiles(FilenameFilter ff) {
         String[] r = list(ff);
         File[] files = new File[r.length];
@@ -357,12 +321,11 @@ public class File {
         return files;
     }
 
-    /**
-     * Gets a list of child files of this directory, filtering them using the provided filter.
-     *
-     * @param ff The filter to use to filter output.
-     * @return
-     */
+    /// Gets a list of child files of this directory, filtering them using the provided filter.
+    ///
+    /// #### Parameters
+    ///
+    /// - `ff`: The filter to use to filter output.
     public File[] listFiles(FileFilter ff) {
         File[] arr = listFiles();
         if (arr.length > 0) {
@@ -379,21 +342,21 @@ public class File {
         return arr;
     }
 
-    /**
-     * Attempts to make the directory described by this object.
-     *
-     * @return True on success.
-     */
+    /// Attempts to make the directory described by this object.
+    ///
+    /// #### Returns
+    ///
+    /// True on success.
     public boolean mkdir() {
         FileSystemStorage.getInstance().mkdir(path);
         return exists() && isDirectory();
     }
 
-    /**
-     * Attempts to make the directory (and all parent directories) of this object.
-     *
-     * @return True on success.
-     */
+    /// Attempts to make the directory (and all parent directories) of this object.
+    ///
+    /// #### Returns
+    ///
+    /// True on success.
     public boolean mkdirs() {
         File parentFile = getParentFile();
         if (parentFile != null && !parentFile.exists()) {
@@ -405,61 +368,47 @@ public class File {
         return mkdir();
     }
 
-    /**
-     * Renames the file to the provided file object.
-     *
-     * @param f The file object that we are renaming the file to.
-     * @return True on success.
-     */
+    /// Renames the file to the provided file object.
+    ///
+    /// #### Parameters
+    ///
+    /// - `f`: The file object that we are renaming the file to.
+    ///
+    /// #### Returns
+    ///
+    /// True on success.
     public boolean renameTo(File f) {
         FileSystemStorage.getInstance().rename(path, f.getName());
         return f.exists();
     }
 
-    /**
-     * Checks if this file is executable.
-     *
-     * @return
-     */
+    /// Checks if this file is executable.
     public boolean canExecute() {
         return Display.getInstance().canExecute(path);
     }
 
-    /**
-     * Returns the total space on the root file system.
-     *
-     * @return
-     */
+    /// Returns the total space on the root file system.
     public long getTotalSpace() {
         return FileSystemStorage.getInstance().getRootSizeBytes(FileSystemStorage.getInstance().getRoots()[0]);
     }
 
-    /**
-     * Gets the free space on the root file system.
-     *
-     * @return
-     */
+    /// Gets the free space on the root file system.
     public long getFreeSpace() {
         return FileSystemStorage.getInstance().getRootAvailableSpace(FileSystemStorage.getInstance().getRoots()[0]);
     }
 
-    /**
-     * Gets the usable space on this file system.
-     *
-     * @return
-     */
+    /// Gets the usable space on this file system.
     public long getUsableSpace() {
         return getFreeSpace();
     }
 
-    /**
-     * Checks if the given object refers to the same file.
-     *
-     * @param o
-     * @return
-     */
+    /// Checks if the given object refers to the same file.
+    ///
+    /// #### Parameters
+    ///
+    /// - `o`
     @Override
-    public boolean equals(java.lang.Object o) {
+    public boolean equals(Object o) {
         return o instanceof File && ((File) o).path.equals(path);
     }
 
@@ -469,30 +418,30 @@ public class File {
     }
 
     @Override
-    public java.lang.String toString() {
+    public String toString() {
         return path;
     }
 
-    /**
-     * Converts this file to a URL.
-     *
-     * @return
-     * @throws MalformedURLException
-     */
+    /// Converts this file to a URL.
+    ///
+    /// #### Throws
+    ///
+    /// - `MalformedURLException`
     public URL toURL() throws MalformedURLException {
         try {
             return new URL(toURI());
         } catch (URISyntaxException ex) {
-            throw new MalformedURLException("Invalid URL format: " + ex.getMessage());
+            MalformedURLException err = new MalformedURLException("Invalid URL format: " + ex.getMessage());
+            err.initCause(ex);
+            throw err;
         }
     }
 
-    /**
-     * Converts this file to a URI.
-     *
-     * @return
-     * @throws URISyntaxException
-     */
+    /// Converts this file to a URI.
+    ///
+    /// #### Throws
+    ///
+    /// - `URISyntaxException`
     public URI toURI() throws URISyntaxException {
         String path = getAbsolutePath();
         path = path.substring(6);
@@ -506,30 +455,33 @@ public class File {
 
     }
 
-    /**
-     * Interface to filter filenames.
-     */
+    /// Interface to filter filenames.
     public interface FilenameFilter {
-        /**
-         * Checks if the given file should be included in results.
-         *
-         * @param f    The parent directory of the file to check.
-         * @param name The file name.
-         * @return True if the file should be included in results.
-         */
+        /// Checks if the given file should be included in results.
+        ///
+        /// #### Parameters
+        ///
+        /// - `f`: The parent directory of the file to check.
+        ///
+        /// - `name`: The file name.
+        ///
+        /// #### Returns
+        ///
+        /// True if the file should be included in results.
         boolean accept(File f, String name);
     }
 
-    /**
-     * Interface for filtering files.
-     */
+    /// Interface for filtering files.
     public interface FileFilter {
-        /**
-         * Returns {@literal true} if the file should be included in results.
-         *
-         * @param f The file to check
-         * @return True to include.  False to not include in results.
-         */
+        /// Returns true if the file should be included in results.
+        ///
+        /// #### Parameters
+        ///
+        /// - `f`: The file to check
+        ///
+        /// #### Returns
+        ///
+        /// True to include.  False to not include in results.
         boolean accept(File f);
     }
 }

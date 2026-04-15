@@ -24,6 +24,8 @@
 package com.codename1.tools.translator;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.*;
 
 import org.objectweb.asm.AnnotationVisitor;
@@ -46,17 +48,23 @@ import com.codename1.tools.translator.bytecodes.LabelInstruction;
  * @author Shai Almog
  */
 public class Parser extends ClassVisitor {
+    private static final String DISABLE_DEBUG_INFO_ANNOTATION = "Lcom/codename1/annotations/DisableDebugInfo;";
+    private static final String DISABLE_NULL_AND_ARRAY_BOUNDS_CHECKS_ANNOTATION =
+            "Lcom/codename1/annotations/DisableNullChecksAndArrayBoundsChecks;";
+    private static final String CONCRETE_ANNOTATION = "Lcom/codename1/annotations/Concrete;";
     private ByteCodeClass cls;
     private String clsName;
     private static String[] nativeSources;
-    private static List<ByteCodeClass> classes = new ArrayList<ByteCodeClass>();
-    private static MethodDependencyGraph dependencyGraph = new MethodDependencyGraph();
+    private static List<ByteCodeClass> classes = new ArrayList<>();
+    private static final MethodDependencyGraph dependencyGraph = new MethodDependencyGraph();
     private int lambdaCounter;
+    private int stringConcatCounter;
     public static void cleanup() {
         nativeSources = null;
         classes.clear();
         dependencyGraph.clear();
         BytecodeMethod.setDependencyGraph(null);
+        ByteCodeClass.cleanup();
         LabelInstruction.cleanup();
     }
     public static void parse(File sourceFile) throws Exception {
@@ -64,10 +72,10 @@ public class Parser extends ClassVisitor {
             System.out.println("Parsing: " + sourceFile.getAbsolutePath());
         }
         BytecodeMethod.setDependencyGraph(dependencyGraph);
-        ClassReader r = new ClassReader(new FileInputStream(sourceFile));
-        /*if(ByteCodeTranslator.verbose) {
-            System.out.println("Class: " + r.getClassName() + " derives from: " + r.getSuperName() + " interfaces: " + Arrays.asList(r.getInterfaces()));
-        }*/
+        ClassReader r;
+        try (InputStream in = Files.newInputStream(sourceFile.toPath())) {
+            r = new ClassReader(in);
+        }
         Parser p = new Parser();
         
         p.clsName = r.getClassName().replace('/', '_').replace('$', '_');
@@ -106,7 +114,7 @@ public class Parser extends ClassVisitor {
         }
     }
 
-    private static ArrayList<String> constantPool = new ArrayList<String>();
+    private static final ArrayList<String> constantPool = new ArrayList<>();
     
     public static ByteCodeClass getClassObject(String name) {
         for(ByteCodeClass cls : classes) {
@@ -134,7 +142,7 @@ public class Parser extends ClassVisitor {
     private static void generateClassAndMethodIndexHeader(File outputDirectory) throws Exception {
         int classOffset = 0;
         int methodOffset = 0;
-        ArrayList<BytecodeMethod> methods = new ArrayList<BytecodeMethod>();
+        ArrayList<BytecodeMethod> methods = new ArrayList<>();
         for(ByteCodeClass bc : classes) {
             bc.setClassOffset(classOffset);
             classOffset++;
@@ -161,7 +169,6 @@ public class Parser extends ClassVisitor {
             }
             first = false;
             bldM.append(addToConstantPool(bc.getClsName().replace('_', '.')));
-            bldM.append("");
         }
         bldM.append("};\n\n");
         
@@ -203,13 +210,6 @@ public class Parser extends ClassVisitor {
             bld.append(arrayId);
             bld.append("\n");
             arrayId++;
-
-            /*bld.append("#define cn1_array_4_id_");
-            bld.append(bc.getClsName());
-            bld.append(" ");
-            bld.append(arrayId);
-            bld.append("\n");
-            arrayId++;*/
         }
 
         bld.append("\n\n");
@@ -225,16 +225,12 @@ public class Parser extends ClassVisitor {
             }
             first = false;
             bldM.append(addToConstantPool(m.getMethodName()));
-            bldM.append("");
         }
         bldM.append("};\n\n");
         
-        ArrayList<Integer> instances = new ArrayList<Integer>();
+        ArrayList<Integer> instances = new ArrayList<>();
         int counter = 0;
         for(ByteCodeClass bc : classes) {
-            /*bld.append("extern int classInstanceOfArr");
-            bld.append(counter);
-            bld.append("[];\n");*/
             bldM.append("int classInstanceOfArr");
             bldM.append(counter);
             bldM.append("[] = {");
@@ -253,8 +249,8 @@ public class Parser extends ClassVisitor {
         bldM.append(classes.size());
         bldM.append("] = {");
         first = true;
-        counter = 0;
-        for(ByteCodeClass bc : classes) {
+        int classCount = classes.size();
+        for(counter = 0 ; counter < classCount ; counter++) {
             if(first) {
                 bldM.append("\n    ");
             } else {
@@ -263,7 +259,6 @@ public class Parser extends ClassVisitor {
             first = false;
             bldM.append("classInstanceOfArr");
             bldM.append(counter);
-            counter++;
         }
         bldM.append("};\n\n");
         
@@ -330,10 +325,10 @@ public class Parser extends ClassVisitor {
         bld.append("\n\n#endif // __CN1_CLASS_METHOD_INDEX_H__\n");        
         
         FileOutputStream fos = new FileOutputStream(new File(outputDirectory, "cn1_class_method_index.h"));
-        fos.write(bld.toString().getBytes("UTF-8"));
+        fos.write(bld.toString().getBytes(StandardCharsets.UTF_8));
         fos.close();
         fos = new FileOutputStream(new File(outputDirectory, "cn1_class_method_index.m"));
-        fos.write(bldM.toString().getBytes("UTF-8"));
+        fos.write(bldM.toString().getBytes(StandardCharsets.UTF_8));
         fos.close();
     }
     
@@ -378,7 +373,9 @@ public class Parser extends ClassVisitor {
     }
     
     public static void writeOutput(File outputDirectory) throws Exception {
-        System.out.println("outputDirectory is: " + outputDirectory.getAbsolutePath() );
+        if(ByteCodeTranslator.verbose) {
+            System.out.println("outputDirectory is: " + outputDirectory.getAbsolutePath() );
+        }
         if(ByteCodeClass.getMainClass()==null){
 			System.out.println("Error main class is not defined. The main class name is expected to have a public static void main(String[]) method and it is assumed to reside in the com.package.name directory");
 			System.exit(1);
@@ -386,16 +383,16 @@ public class Parser extends ClassVisitor {
         String file = "Unknown File";
         try {
             for(ByteCodeClass bc : classes) {
-                // special case for object
+                // special case for an object
                 if(bc.getClsName().equals("java_lang_Object")) {
                     continue;
                 }
                 file = bc.getClsName();
                 bc.setBaseClassObject(getClassByName(bc.getBaseClass()));
-                List<ByteCodeClass> lst = new ArrayList<ByteCodeClass>();
+                List<ByteCodeClass> lst = new ArrayList<>();
                 for(String s : bc.getBaseInterfaces()) {
-					ByteCodeClass bcode=getClassByName(s);
-					if(bcode==null){
+					ByteCodeClass byteCode = getClassByName(s);
+					if(byteCode == null){
 					  System.out.println("Error while working with the class: " + s+" file:"+file+" no class definition");
 					} else {
 						lst.add(getClassByName(s));
@@ -416,7 +413,7 @@ public class Parser extends ClassVisitor {
 
             // load the native sources (including user native code)
             // We need to load native sources before we clear any unmarked classes
-            // because native source may be the only thing referencing a class,
+            // because a native source may be the only thing referencing a class,
             // and the class may be purged before it even has a shot.
             readNativeFiles(outputDirectory);
 
@@ -425,9 +422,9 @@ public class Parser extends ClassVisitor {
                 bc.updateAllDependencies();
             }
             ByteCodeClass.markDependencies(classes, nativeSources);
-            Set<ByteCodeClass> unmarked = new HashSet<ByteCodeClass>(classes);
+            Set<ByteCodeClass> unmarked = new HashSet<>(classes);
             classes = ByteCodeClass.clearUnmarked(classes);
-            unmarked.removeAll(classes);
+            classes.forEach(unmarked::remove);
             int neliminated = 0;
             for (ByteCodeClass removedClass : unmarked) {
                 removedClass.setEliminated(true);
@@ -436,48 +433,53 @@ public class Parser extends ClassVisitor {
 
             // loop over methods and start eliminating the body of unused methods
             if (BytecodeMethod.optimizerOn) {
-                System.out.println("Optimizer On: Removing unused methods and classes...");
+                if(ByteCodeTranslator.verbose) {
+                    System.out.println("Optimizer On: Removing unused methods and classes...");
+                }
                 Date now = new Date();
                 neliminated += eliminateUnusedMethods();
                 Date later = new Date();
                 long dif = later.getTime()-now.getTime();
-                System.out.println("unusued Method cull removed "+neliminated+" methods in "+(dif/1000)+" seconds");
+                if(ByteCodeTranslator.verbose) {
+                    System.out.println("unused Method cull removed "+neliminated+" methods in "+(dif/1000)+" seconds");
+                }
             }
 
-            generateClassAndMethodIndexHeader(outputDirectory);
+            if (ByteCodeTranslator.output == ByteCodeTranslator.OutputType.OUTPUT_TYPE_JAVASCRIPT) {
+                JavascriptBundleWriter.write(outputDirectory, classes);
+            } else {
+                generateClassAndMethodIndexHeader(outputDirectory);
 
-            boolean concatenate = "true".equals(System.getProperty("concatenateFiles", "false"));
-            ConcatenatingFileOutputStream cos = concatenate ? new ConcatenatingFileOutputStream(outputDirectory) : null;
+                boolean concatenate = "true".equals(System.getProperty("concatenateFiles", "false"));
+                ConcatenatingFileOutputStream cos = concatenate ? new ConcatenatingFileOutputStream(outputDirectory) : null;
 
-            for(ByteCodeClass bc : classes) {
-                file = bc.getClsName();
-                writeFile(bc, outputDirectory, cos);
+                for(ByteCodeClass bc : classes) {
+                    file = bc.getClsName();
+                    writeFile(bc, outputDirectory, cos);
+                }
+                if (cos != null) cos.realClose();
             }
-            if (cos != null) cos.realClose();
-
         } catch(Throwable t) {
             System.out.println("Error while working with the class: " + file);
             t.printStackTrace();
             if(t instanceof Exception) {
                 throw (Exception)t;
             }
-            if(t instanceof RuntimeException) {
-                throw (RuntimeException)t;
-            }
         }
         finally { cleanup(); }
     }
     
     private static void readNativeFiles(File outputDirectory) throws IOException {
-        File[] mFiles = outputDirectory.listFiles(new FileFilter() {
-            @Override
-            public boolean accept(File file) {
-                return file.getName().endsWith(".m") || file.getName().endsWith("." + ByteCodeTranslator.output.extension());
-            }
-        });
+        File[] mFiles = outputDirectory.listFiles(file ->
+                file.getName().endsWith(".m") || file.getName().endsWith("." + ByteCodeTranslator.output.extension()));
+        if(mFiles == null) {
+            return;
+        }
         nativeSources = new String[mFiles.length];
         int size = 0;
-        System.out.println(""+mFiles.length +" native files");
+        if(ByteCodeTranslator.verbose) {
+            System.out.println(mFiles.length + " native files");
+        }
         for(int iter = 0 ; iter < mFiles.length ; iter++) { 
         	FileInputStream fi = new FileInputStream(mFiles[iter]);
             DataInputStream di = new DataInputStream(fi);
@@ -486,10 +488,11 @@ public class Parser extends ClassVisitor {
             byte[] dat = new byte[len];
             di.readFully(dat);
             fi.close();
-            nativeSources[iter] = new String(dat, "UTF-8");
+            nativeSources[iter] = new String(dat, StandardCharsets.UTF_8);
         }
-        System.out.println("Native files total "+(size/1024)+"K");
-        
+        if(ByteCodeTranslator.verbose) {
+            System.out.println("Native files total "+(size/1024)+"K");
+        }
     }
     
     private static int eliminateUnusedMethods() {
@@ -512,8 +515,10 @@ public class Parser extends ClassVisitor {
             for(BytecodeMethod mtd : bc.getMethods()) {
                 if(mtd.isEliminated() || mtd.isMain() || mtd.getMethodName().equals("__CLINIT__") || mtd.getMethodName().equals("finalize") || mtd.isNative()) {
                     if (!mtd.isEliminated() && mtd.getMethodName().contains("yield")) {
-                        System.out.println("Not eliminating method ");
-                        System.out.println("main="+mtd.isMain()+", isNative="+mtd.isNative());
+                        if(ByteCodeTranslator.verbose) {
+                            System.out.println("Not eliminating method ");
+                            System.out.println("main="+mtd.isMain()+", isNative="+mtd.isNative());
+                        }
                     }
                     continue;
                 }
@@ -576,7 +581,9 @@ public class Parser extends ClassVisitor {
     }
 
     private static int cullClasses(boolean found, int depth) {
-        System.out.println("cullClasses()");
+        if(ByteCodeTranslator.verbose) {
+            System.out.println("cullClasses()");
+        }
         if(found && depth < 4) {
             for(ByteCodeClass bc : classes) {
                 bc.updateAllDependencies();
@@ -584,20 +591,12 @@ public class Parser extends ClassVisitor {
 
             ByteCodeClass.markDependencies(classes, nativeSources);
             List<ByteCodeClass> tmp = ByteCodeClass.clearUnmarked(classes);
-            /*if(ByteCodeTranslator.verbose) {
-            System.out.println("Classes removed from: " + classCount + " to " + classes.size());
-            for(ByteCodeClass bc : classes) {
-            if(!tmp.contains(bc)) {
-            System.out.println("Removed class: " + bc.getClsName());
-            }
-            }
-            }*/
 
             // 2nd pass to mark classes as eliminated so that we can propagate down to each
             // method of the class to mark it eliminated so that virtual methods
             // aren't included later on when writing virtual methods
-            Set<ByteCodeClass> removedClasses = new HashSet<ByteCodeClass>(classes);
-            removedClasses.removeAll(tmp);
+            Set<ByteCodeClass> removedClasses = new HashSet<>(classes);
+            tmp.forEach(removedClasses::remove);
             int nfound = 0;
             for (ByteCodeClass cls : removedClasses) {
                 nfound += cls.setEliminated(true);
@@ -635,23 +634,26 @@ public class Parser extends ClassVisitor {
         OutputStream outMain =
                 writeBufferInstead != null && ByteCodeTranslator.output == ByteCodeTranslator.OutputType.OUTPUT_TYPE_IOS ?
                         writeBufferInstead :
-                        new FileOutputStream(new File(outputDir, cls.getClsName() + "." + ByteCodeTranslator.output.extension()));
+                        Files.newOutputStream(new File(outputDir, cls.getClsName() + "." + ByteCodeTranslator.output.extension()).toPath());
 
         if (outMain instanceof ConcatenatingFileOutputStream) {
             ((ConcatenatingFileOutputStream)outMain).beginNextFile(cls.getClsName());
         }
         if(ByteCodeTranslator.output == ByteCodeTranslator.OutputType.OUTPUT_TYPE_CSHARP) {
-            outMain.write(cls.generateCSharpCode().getBytes());
+            outMain.write(cls.generateCSharpCode().getBytes(StandardCharsets.UTF_8));
+            outMain.close();
+        } else if (ByteCodeTranslator.output == ByteCodeTranslator.OutputType.OUTPUT_TYPE_JAVASCRIPT) {
+            outMain.write(cls.generateJavascriptCode(classes).getBytes(StandardCharsets.UTF_8));
             outMain.close();
         } else {
-            outMain.write(cls.generateCCode(classes).getBytes());
+            outMain.write(cls.generateCCode(classes).getBytes(StandardCharsets.UTF_8));
             outMain.close();
 
             // we also need to write the header file for C outputs
             String headerName = cls.getClsName() + ".h";
-            FileOutputStream outHeader = new FileOutputStream(new File(outputDir, headerName));
-            outHeader.write(cls.generateCHeader().getBytes());
-            outHeader.close();
+            try(FileOutputStream outHeader = new FileOutputStream(new File(outputDir, headerName))) {
+                outHeader.write(cls.generateCHeader().getBytes(StandardCharsets.UTF_8));
+            }
         }
     }
     
@@ -668,8 +670,7 @@ public class Parser extends ClassVisitor {
     public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
         BytecodeMethod mtd = new BytecodeMethod(clsName, access, name, desc, signature, exceptions);
         cls.addMethod(mtd);
-        JSRInlinerAdapter a = new JSRInlinerAdapter(new MethodVisitorWrapper(super.visitMethod(access, name, desc, signature, exceptions), mtd), access, name, desc, signature, exceptions);
-        return a; 
+        return new JSRInlinerAdapter(new MethodVisitorWrapper(super.visitMethod(access, name, desc, signature, exceptions), mtd), access, name, desc, signature, exceptions);
     }
 
     @Override
@@ -699,6 +700,17 @@ public class Parser extends ClassVisitor {
 
     @Override
     public AnnotationVisitor visitAnnotation(String desc, boolean visible) {
+        if (CONCRETE_ANNOTATION.equals(desc)) {
+            return new AnnotationVisitorWrapper(super.visitAnnotation(desc, visible)) {
+                @Override
+                public void visit(String name, Object value) {
+                    if ("name".equals(name) && value instanceof String) {
+                        cls.setConcreteClass(((String)value).replace('.', '/'));
+                    }
+                    super.visit(name, value);
+                }
+            };
+        }
         return new AnnotationVisitorWrapper(super.visitAnnotation(desc, visible));
     }
 
@@ -743,7 +755,7 @@ public class Parser extends ClassVisitor {
     }    
     
     class MethodVisitorWrapper extends MethodVisitor {
-        private BytecodeMethod mtd;
+        private final BytecodeMethod mtd;
         public MethodVisitorWrapper(MethodVisitor mv, BytecodeMethod mtd) {
             super(Opcodes.ASM9, mv);
             this.mtd = mtd;
@@ -843,6 +855,82 @@ public class Parser extends ClassVisitor {
 
         @Override
         public void visitInvokeDynamicInsn(String name, String desc, Handle bsm, Object... bsmArgs) {
+            if ("java/lang/invoke/StringConcatFactory".equals(bsm.getOwner()) &&
+                ("makeConcatWithConstants".equals(bsm.getName()) || "makeConcat".equals(bsm.getName()))) {
+
+                Type invokedType = Type.getMethodType(desc);
+                if (!Type.getType(String.class).equals(invokedType.getReturnType())) {
+                    super.visitInvokeDynamicInsn(name, desc, bsm, bsmArgs);
+                    return;
+                }
+
+                String helperName = "cn1$concat$" + (stringConcatCounter++);
+                BytecodeMethod helper = new BytecodeMethod(clsName, Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC, helperName, desc, null, null);
+                cls.addMethod(helper);
+
+                helper.addTypeInstruction(Opcodes.NEW, "java/lang/StringBuilder");
+                helper.addInstruction(Opcodes.DUP);
+                helper.addInvoke(Opcodes.INVOKESPECIAL, "java/lang/StringBuilder", "<init>", "()V", false);
+
+                Type[] argTypes = invokedType.getArgumentTypes();
+                int maxLocal = 0;
+                for (Type t : argTypes) {
+                    maxLocal += t.getSize();
+                }
+
+                int localIndex = 0;
+                int argIndex = 0;
+                if ("makeConcat".equals(bsm.getName())) {
+                    for (Type argType : argTypes) {
+                        appendConcatArgument(helper, argType, localIndex);
+                        localIndex += argType.getSize();
+                    }
+                } else {
+                    String recipe = bsmArgs != null && bsmArgs.length > 0 ? String.valueOf(bsmArgs[0]) : "";
+                    List<String> constants = new ArrayList<>();
+                    if (bsmArgs != null) {
+                        for (int i = 1; i < bsmArgs.length; i++) {
+                            constants.add(String.valueOf(bsmArgs[i]));
+                        }
+                    }
+                    int constantIndex = 0;
+                    StringBuilder literal = new StringBuilder();
+                    for (int i = 0; i < recipe.length(); i++) {
+                        char ch = recipe.charAt(i);
+                        if (ch == '\u0001') {
+                            appendConcatLiteral(helper, literal);
+                            literal.setLength(0);
+                            if (argIndex < argTypes.length) {
+                                Type argType = argTypes[argIndex++];
+                                appendConcatArgument(helper, argType, localIndex);
+                                localIndex += argType.getSize();
+                            }
+                        } else if (ch == '\u0002') {
+                            appendConcatLiteral(helper, literal);
+                            literal.setLength(0);
+                            if (constantIndex < constants.size()) {
+                                appendConcatLiteral(helper, constants.get(constantIndex++));
+                            }
+                        } else {
+                            literal.append(ch);
+                        }
+                    }
+                    appendConcatLiteral(helper, literal);
+                    while (argIndex < argTypes.length) {
+                        Type argType = argTypes[argIndex++];
+                        appendConcatArgument(helper, argType, localIndex);
+                        localIndex += argType.getSize();
+                    }
+                }
+
+                helper.addInvoke(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "toString", "()Ljava/lang/String;", false);
+                helper.addInstruction(Opcodes.ARETURN);
+                helper.setMaxes(16, maxLocal + 2);
+
+                mtd.addInvoke(Opcodes.INVOKESTATIC, clsName, helperName, desc, false);
+                return;
+            }
+
             if ("java/lang/invoke/LambdaMetafactory".equals(bsm.getOwner()) &&
                 ("metafactory".equals(bsm.getName()) || "altMetafactory".equals(bsm.getName()))) {
 
@@ -907,12 +995,11 @@ public class Parser extends ClassVisitor {
                 // 5. Implement the interface method
                 Type samMethodType = (Type) bsmArgs[0];
                 Handle implMethod = (Handle) bsmArgs[1];
-                Type instantiatedMethodType = (Type) bsmArgs[2];
 
-                String samMethodName = name; // Name from invokedynamic
+                // Name from invokedynamic
                 String samMethodDesc = samMethodType.getDescriptor(); // Signature from BSM arg 0
 
-                BytecodeMethod interfaceMethod = new BytecodeMethod(lambdaClassName, Opcodes.ACC_PUBLIC, samMethodName, samMethodDesc, null, null);
+                BytecodeMethod interfaceMethod = new BytecodeMethod(lambdaClassName, Opcodes.ACC_PUBLIC, name, samMethodDesc, null, null);
                 lambdaClass.addMethod(interfaceMethod);
 
                 // Method Body:
@@ -950,9 +1037,12 @@ public class Parser extends ClassVisitor {
                     case Opcodes.H_INVOKESTATIC: invokeOpcode = Opcodes.INVOKESTATIC; break;
                     case Opcodes.H_INVOKEVIRTUAL: invokeOpcode = Opcodes.INVOKEVIRTUAL; break;
                     case Opcodes.H_INVOKEINTERFACE: invokeOpcode = Opcodes.INVOKEINTERFACE; break;
-                    case Opcodes.H_INVOKESPECIAL: invokeOpcode = Opcodes.INVOKESPECIAL; break;
-                    case Opcodes.H_NEWINVOKESPECIAL: invokeOpcode = Opcodes.INVOKESPECIAL; break;
-                    default: invokeOpcode = Opcodes.INVOKESTATIC; // Fallback
+                    case Opcodes.H_INVOKESPECIAL:
+                    case Opcodes.H_NEWINVOKESPECIAL:
+                        invokeOpcode = Opcodes.INVOKESPECIAL; break;
+                    default:
+                        invokeOpcode = Opcodes.INVOKESTATIC;
+                        break;// Fallback
                 }
 
                 if (isCtorRef) {
@@ -969,7 +1059,7 @@ public class Parser extends ClassVisitor {
 
                 // 6. Add static factory method
                 String factoryMethodName = "lambda$factory";
-                String factoryDesc = desc; // The desc of invokedynamic is (CapturedArgs)Interface.
+                // The desc of invokedynamic is (CapturedArgs)Interface.
 
                 // We want factory to be (CapturedArgs)LambdaClass (to match NEW output but wrapped)
                 // Actually, replacing invokedynamic with INVOKESTATIC means the return type on stack should match
@@ -1010,15 +1100,57 @@ public class Parser extends ClassVisitor {
             super.visitInvokeDynamicInsn(name, desc, bsm, bsmArgs); 
         }
 
+        private void appendConcatLiteral(BytecodeMethod targetMethod, CharSequence literal) {
+            if (literal == null || literal.length() == 0) {
+                return;
+            }
+            targetMethod.addLdc(literal.toString());
+            targetMethod.addInvoke(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false);
+        }
+
+        private void appendConcatArgument(BytecodeMethod targetMethod, Type argType, int localIndex) {
+            targetMethod.addVariableOperation(argType.getOpcode(Opcodes.ILOAD), localIndex);
+            String appendDesc;
+            switch (argType.getSort()) {
+                case Type.BOOLEAN:
+                    appendDesc = "(Z)Ljava/lang/StringBuilder;";
+                    break;
+                case Type.CHAR:
+                    appendDesc = "(C)Ljava/lang/StringBuilder;";
+                    break;
+                case Type.BYTE:
+                case Type.SHORT:
+                case Type.INT:
+                    appendDesc = "(I)Ljava/lang/StringBuilder;";
+                    break;
+                case Type.LONG:
+                    appendDesc = "(J)Ljava/lang/StringBuilder;";
+                    break;
+                case Type.FLOAT:
+                    appendDesc = "(F)Ljava/lang/StringBuilder;";
+                    break;
+                case Type.DOUBLE:
+                    appendDesc = "(D)Ljava/lang/StringBuilder;";
+                    break;
+                case Type.OBJECT:
+                    if ("java/lang/String".equals(argType.getInternalName())) {
+                        appendDesc = "(Ljava/lang/String;)Ljava/lang/StringBuilder;";
+                    } else {
+                        appendDesc = "(Ljava/lang/Object;)Ljava/lang/StringBuilder;";
+                    }
+                    break;
+                case Type.ARRAY:
+                default:
+                    appendDesc = "(Ljava/lang/Object;)Ljava/lang/StringBuilder;";
+                    break;
+            }
+            targetMethod.addInvoke(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", appendDesc, false);
+        }
+
         @Override
         public void visitMethodInsn(int opcode, String owner, String name, String desc, boolean itf) {
             mtd.addInvoke(opcode, owner, name, desc, itf);
             super.visitMethodInsn(opcode, owner, name, desc, itf); 
-        }
-
-        @Override
-        public void visitMethodInsn(int opcode, String owner, String name, String desc) {
-            super.visitMethodInsn(opcode, owner, name, desc); 
         }
 
         @Override
@@ -1080,6 +1212,11 @@ public class Parser extends ClassVisitor {
 
         @Override
         public AnnotationVisitor visitAnnotation(String desc, boolean visible) {
+            if (DISABLE_DEBUG_INFO_ANNOTATION.equals(desc)) {
+                mtd.setDisableDebugInfo(true);
+            } else if (DISABLE_NULL_AND_ARRAY_BOUNDS_CHECKS_ANNOTATION.equals(desc)) {
+                mtd.setDisableNullAndArrayBoundsChecks(true);
+            }
             if (mv == null) return null;
             return new AnnotationVisitorWrapper(super.visitAnnotation(desc, visible)); 
         }
@@ -1098,7 +1235,7 @@ public class Parser extends ClassVisitor {
         
     }
     
-    class FieldVisitorWrapper extends FieldVisitor {
+    static class FieldVisitorWrapper extends FieldVisitor {
 
         public FieldVisitorWrapper(FieldVisitor fv) {
             super(Opcodes.ASM9, fv);
@@ -1126,7 +1263,7 @@ public class Parser extends ClassVisitor {
         
     }
     
-    class AnnotationVisitorWrapper extends AnnotationVisitor {
+    static class AnnotationVisitorWrapper extends AnnotationVisitor {
 
         public AnnotationVisitorWrapper(AnnotationVisitor av) {
             super(Opcodes.ASM9, av);

@@ -202,14 +202,9 @@ final class InfTree {
     static final int BMAX = 15;         // maximum bit length of any code
     static final private int MANY = 1440;
     static final private int Z_OK = 0;
-    static final private int Z_STREAM_END = 1;
-    static final private int Z_NEED_DICT = 2;
-    static final private int Z_ERRNO = -1;
-    static final private int Z_STREAM_ERROR = -2;
     static final private int Z_DATA_ERROR = -3;
     static final private int Z_MEM_ERROR = -4;
     static final private int Z_BUF_ERROR = -5;
-    static final private int Z_VERSION_ERROR = -6;
     int[] hn = null;  // hufts used in space
     int[] v = null;   // work area for huftBuild
     int[] c = null;   // bit length count table
@@ -218,10 +213,10 @@ final class InfTree {
     int[] x = null;   // bit offsets, then code stack
 
     static int inflateTreesFixed(int[] bl,  //literal desired/actual bit depth
-                                   int[] bd,  //distance desired/actual bit depth
-                                   int[][] tl,//literal/length tree result
-                                   int[][] td,//distance tree result
-                                   ZStream z  //for memory allocation
+                                 int[] bd,  //distance desired/actual bit depth
+                                 int[][] tl, //literal/length tree result
+                                 int[][] td, //distance tree result
+                                 ZStream z  //for memory allocation
     ) {
         bl[0] = fixed_bl;
         bd[0] = fixed_bd;
@@ -231,16 +226,16 @@ final class InfTree {
     }
 
     private int huftBuild(int[] b, // code lengths in bits (all assumed <= BMAX)
-                           int bindex,
-                           int n,   // number of codes (assumed <= 288)
-                           int s,   // number of simple-valued codes (0..s-1)
-                           int[] d, // list of base values for non-simple codes
-                           int[] e, // list of extra bits for non-simple codes
-                           int[] t, // result: starting table
-                           int[] m, // maximum lookup bits, returns actual
-                           int[] hp,// space for trees
-                           int[] hn,// hufts used in space
-                           int[] v  // working area: values in order of bit length
+                          int bindex,
+                          int n,   // number of codes (assumed <= 288)
+                          int s,   // number of simple-valued codes (0..s-1)
+                          int[] d, // list of base values for non-simple codes
+                          int[] e, // list of extra bits for non-simple codes
+                          int[] t, // result: starting table
+                          int[] m, // maximum lookup bits, returns actual
+                          int[] hp, // space for trees
+                          int[] hn, // hufts used in space
+                          int[] v  // working area: values in order of bit length
     ) {
         // Given a list of code lengths and a maximum table size, make a set of
         // tables to decode that set of codes.  Return Z_OK on success, Z_BUF_ERROR
@@ -282,14 +277,19 @@ final class InfTree {
 
         // Find minimum and maximum length, bound *m by those
         l = m[0];
-        for (j = 1; j <= BMAX; j++)
-            if (c[j] != 0) break;
+        for (j = 1; j <= BMAX; j++) {
+            if (c[j] != 0) {
+                break;
+            }
+        }
         k = j;                        // minimum code length
         if (l < j) {
             l = j;
         }
         for (i = BMAX; i != 0; i--) {
-            if (c[i] != 0) break;
+            if (c[i] != 0) {
+                break;
+            }
         }
         g = i;                        // maximum code length
         if (l > i) {
@@ -299,11 +299,11 @@ final class InfTree {
 
         // Adjust last length count to fill out codes, if needed
         for (y = 1 << j; j < i; j++, y <<= 1) {
-            if ((y -= c[j]) < 0) {
+            if ((y -= c[j]) < 0) { //NOPMD AssignmentInOperand
                 return Z_DATA_ERROR;
             }
         }
-        if ((y -= c[i]) < 0) {
+        if ((y -= c[i]) < 0) { //NOPMD AssignmentInOperand
             return Z_DATA_ERROR;
         }
         c[i] += y;
@@ -322,7 +322,7 @@ final class InfTree {
         i = 0;
         p = 0;
         do {
-            if ((j = b[bindex + p]) != 0) {
+            if ((j = b[bindex + p]) != 0) { //NOPMD AssignmentInOperand
                 v[x[j]++] = i;
             }
             p++;
@@ -351,14 +351,15 @@ final class InfTree {
                     // compute minimum size table less than or equal to l bits
                     z = g - w;
                     z = (z > l) ? l : z;        // table size upper limit
-                    if ((f = 1 << (j = k - w)) > a + 1) {     // try a k-w bit table
+                    if ((f = 1 << (j = k - w)) > a + 1) {     // try a k-w bit table //NOPMD AssignmentInOperand
                         // too few codes for k-w bit table
                         f -= a + 1;               // deduct codes from patterns left
                         xp = k;
                         if (j < z) {
                             while (++j < z) {        // try smaller tables up to z bits
-                                if ((f <<= 1) <= c[++xp])
+                                if ((f <<= 1) <= c[++xp]) { //NOPMD AssignmentInOperand
                                     break;              // enough codes to use up j bits
+                                }
                                 f -= c[xp];           // else deduct codes from patterns
                             }
                         }
@@ -423,10 +424,10 @@ final class InfTree {
     }
 
     int inflateTreesBits(int[] c,  // 19 code lengths
-                           int[] bb, // bits tree desired/actual depth
-                           int[] tb, // bits tree result
-                           int[] hp, // space for trees
-                           ZStream z // for messages
+                         int[] bb, // bits tree desired/actual depth
+                         int[] tb, // bits tree result
+                         int[] hp, // space for trees
+                         ZStream z // for messages
     ) {
         int result;
         initWorkArea(19);
@@ -443,14 +444,14 @@ final class InfTree {
     }
 
     int inflateTreesDynamic(int nl,   // number of literal/length codes
-                              int nd,   // number of distance codes
-                              int[] c,  // that many (total) code lengths
-                              int[] bl, // literal desired/actual bit depth
-                              int[] bd, // distance desired/actual bit depth
-                              int[] tl, // literal/length tree result
-                              int[] td, // distance tree result
-                              int[] hp, // space for trees
-                              ZStream z // for messages
+                            int nd,   // number of distance codes
+                            int[] c,  // that many (total) code lengths
+                            int[] bl, // literal desired/actual bit depth
+                            int[] bd, // distance desired/actual bit depth
+                            int[] tl, // literal/length tree result
+                            int[] td, // distance tree result
+                            int[] hp, // space for trees
+                            ZStream z // for messages
     ) {
         int result;
 

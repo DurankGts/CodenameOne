@@ -33,16 +33,11 @@ package com.codename1.ui.layouts.mig;
  *         Date: 2006-sep-08
  */
 
-import com.codename1.ui.Component;
 import com.codename1.ui.Container;
 
-/**
- *
- */
+///
 final class CodenameOneMiGContainerWrapper extends CodenameOneMiGComponentWrapper implements ContainerWrapper {
-    /**
-     * Debug color for cell outline.
-     */
+    /// Debug color for cell outline.
     //private static final Color DB_CELL_OUTLINE = new Color(255, 0, 0);
     public CodenameOneMiGContainerWrapper(Container c) {
         super(c);
@@ -52,8 +47,9 @@ final class CodenameOneMiGContainerWrapper extends CodenameOneMiGComponentWrappe
     public ComponentWrapper[] getComponents() {
         Container c = (Container) getComponent();
         ComponentWrapper[] cws = new ComponentWrapper[c.getComponentCount()];
-        for (int i = 0; i < cws.length; i++)
+        for (int i = 0; i < cws.length; i++) {
             cws[i] = new CodenameOneMiGComponentWrapper(c.getComponentAt(i));
+        }
         return cws;
     }
 
@@ -75,13 +71,13 @@ final class CodenameOneMiGContainerWrapper extends CodenameOneMiGComponentWrappe
     @Override
     public void paintDebugCell(int x, int y, int width, int height) {
         // TODO: this can probably be done using glasspane
-		/*Graphics2D g = (Graphics2D) c.getGraphics();
-		if (g == null)
-			return;
+        /*Graphics2D g = (Graphics2D) c.getGraphics();
+        if (g == null)
+            return;
 
-		g.setStroke(new BasicStroke(1f, BasicStroke.CAP_SQUARE, BasicStroke.JOIN_MITER, 10f, new float[] {2f, 3f}, 0));
-		g.setPaint(DB_CELL_OUTLINE);
-		g.drawRect(x, y, width - 1, height - 1);*/
+        g.setStroke(new BasicStroke(1f, BasicStroke.CAP_SQUARE, BasicStroke.JOIN_MITER, 10f, new float[] {2f, 3f}, 0));
+        g.setPaint(DB_CELL_OUTLINE);
+        g.drawRect(x, y, width - 1, height - 1);*/
     }
 
     @Override

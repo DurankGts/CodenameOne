@@ -37,7 +37,6 @@ public class DeflaterOutputStream extends FilterOutputStream {
 
     protected static final int DEFAULT_BUFSIZE = 512;
     protected final Deflater deflater;
-    private final byte[] buf1 = new byte[1];
     protected byte[] buffer;
     protected boolean mydeflater = false;
     private boolean closed = false;
@@ -78,8 +77,7 @@ public class DeflaterOutputStream extends FilterOutputStream {
 
     @Override
     public void write(int b) throws IOException {
-        buf1[0] = (byte) (b & 0xff);
-        write(buf1, 0, 1);
+        write(new byte[] {(byte) (b & 0xff)}, 0, 1);
     }
 
     @Override
@@ -89,13 +87,15 @@ public class DeflaterOutputStream extends FilterOutputStream {
         } else if (off < 0 || len < 0 || off + len > b.length) {
             throw new IndexOutOfBoundsException();
         } else if (len == 0) {
+            return;
         } else {
             int flush = syncFlush ? JZlib.Z_SYNC_FLUSH : JZlib.Z_NO_FLUSH;
             deflater.setInput(b, off, len, true);
             while (deflater.availIn > 0) {
                 int err = deflate(flush);
-                if (err == JZlib.Z_STREAM_END)
+                if (err == JZlib.Z_STREAM_END) {
                     break;
+                }
             }
         }
     }
@@ -113,8 +113,9 @@ public class DeflaterOutputStream extends FilterOutputStream {
             if (mydeflater) {
                 deflater.end();
             }
-            if (close_out)
+            if (close_out) {
                 out.close();
+            }
             closed = true;
         }
     }
@@ -146,10 +147,12 @@ public class DeflaterOutputStream extends FilterOutputStream {
         if (syncFlush && !deflater.finished()) {
             while (true) {
                 int err = deflate(JZlib.Z_SYNC_FLUSH);
-                if (deflater.nextOutIndex < buffer.length)
+                if (deflater.nextOutIndex < buffer.length) {
                     break;
-                if (err == JZlib.Z_STREAM_END)
+                }
+                if (err == JZlib.Z_STREAM_END) {
                     break;
+                }
             }
         }
         out.flush();

@@ -38,9 +38,7 @@ import java.util.HashMap;
  *         Date: 2006-sep-08
  */
 
-/**
- *
- */
+///
 public final class LinkHandler {
     public static final int X = 0;
     public static final int Y = 1;
@@ -62,7 +60,7 @@ public final class LinkHandler {
 
         for (int i = LAYOUTS.size() - 1; i >= 0; i--) {
             Object l = Display.getInstance().extractHardRef(LAYOUTS.get(i));
-            if (ret == null && l == layout) {
+            if (ret == null && l == layout) { //NOPMD CompareObjectsWithEquals
                 int[] rect = VALUES_TEMP.get(i).get(key);
                 if (cont && rect != null && rect[type] != LayoutUtil.NOT_SET) {
                     ret = Integer.valueOf(rect[type]);
@@ -82,17 +80,25 @@ public final class LinkHandler {
         return ret;
     }
 
-    /**
-     * Sets a key that can be linked to from any component.
-     *
-     * @param layout The MigLayout instance
-     * @param key    The key to link to. This is the same as the ID in a component constraint.
-     * @param x      x
-     * @param y      y
-     * @param width  Width
-     * @param height Height
-     * @return If the value was changed
-     */
+    /// Sets a key that can be linked to from any component.
+    ///
+    /// #### Parameters
+    ///
+    /// - `layout`: The MigLayout instance
+    ///
+    /// - `key`: The key to link to. This is the same as the ID in a component constraint.
+    ///
+    /// - `x`: x
+    ///
+    /// - `y`: y
+    ///
+    /// - `width`: Width
+    ///
+    /// - `height`: Height
+    ///
+    /// #### Returns
+    ///
+    /// If the value was changed
     public synchronized static boolean setBounds(Object layout, String key, int x, int y, int width, int height) {
         return setBounds(layout, key, x, y, width, height, false, false);
     }
@@ -100,7 +106,7 @@ public final class LinkHandler {
     synchronized static boolean setBounds(Object layout, String key, int x, int y, int width, int height, boolean temporary, boolean incCur) {
         for (int i = LAYOUTS.size() - 1; i >= 0; i--) {
             Object l = Display.getInstance().extractHardRef(LAYOUTS.get(i));
-            if (l == layout) {
+            if (l == layout) { //NOPMD CompareObjectsWithEquals
                 HashMap<String, int[]> map = (temporary ? VALUES_TEMP : VALUES).get(i);
                 int[] old = map.get(key);
 
@@ -155,24 +161,26 @@ public final class LinkHandler {
         int[] bounds = new int[]{x, y, width, height, x + width, y + height};
 
         HashMap<String, int[]> values = new HashMap<String, int[]>(4);
-        if (temporary)
+        if (temporary) {
             values.put(key, bounds);
+        }
         VALUES_TEMP.add(values);
 
         values = new HashMap<String, int[]>(4);
-        if (!temporary)
+        if (!temporary) {
             values.put(key, bounds);
+        }
         VALUES.add(values);
 
         return true;
     }
 
-    /**
-     * This method clear any weak references right away instead of waiting for the GC. This might be advantageous
-     * if lots of layout are created and disposed of quickly to keep memory consumption down.
-     *
-     * @since 3.7.4
-     */
+    /// This method clear any weak references right away instead of waiting for the GC. This might be advantageous
+    /// if lots of layout are created and disposed of quickly to keep memory consumption down.
+    ///
+    /// #### Since
+    ///
+    /// 3.7.4
     public synchronized static void clearWeakReferencesNow() {
         LAYOUTS.clear();
     }
@@ -180,8 +188,9 @@ public final class LinkHandler {
     public synchronized static boolean clearBounds(Object layout, String key) {
         for (int i = LAYOUTS.size() - 1; i >= 0; i--) {
             Object l = Display.getInstance().extractHardRef(LAYOUTS.get(i));
-            if (l == layout)
+            if (l == layout) { //NOPMD CompareObjectsWithEquals
                 return VALUES.get(i).remove(key) != null;
+            }
         }
         return false;
     }
@@ -189,7 +198,7 @@ public final class LinkHandler {
     synchronized static void clearTemporaryBounds(Object layout) {
         for (int i = LAYOUTS.size() - 1; i >= 0; i--) {
             Object l = Display.getInstance().extractHardRef(LAYOUTS.get(i));
-            if (l == layout) {
+            if (l == layout) { //NOPMD CompareObjectsWithEquals
                 VALUES_TEMP.get(i).clear();
                 return;
             }

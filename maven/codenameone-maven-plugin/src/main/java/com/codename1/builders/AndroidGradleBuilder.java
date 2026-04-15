@@ -41,11 +41,15 @@ import java.awt.image.ImageFilter;
 import java.awt.image.ImageProducer;
 import java.awt.image.RGBImageFilter;
 import java.io.*;
+import java.lang.reflect.Method;
 
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
 
+import java.nio.file.Files;
 import java.util.ArrayList;
 
 import java.util.HashMap;
@@ -78,8 +82,6 @@ import org.xeustechnologies.jtar.TarOutputStream;
 public class AndroidGradleBuilder extends Executor {
 
     private float MIN_GRADLE_VERSION=6;
-
-    private float MIN_JDK_VERSION=8;
 
     private String gradleDistributionUrl = "https://services.gradle.org/distributions/gradle-6.8.3-bin.zip";
 
@@ -404,7 +406,7 @@ public class AndroidGradleBuilder extends Executor {
     private boolean shouldIncludeGoogleImpl;
 
     static {
-        isMac = System.getProperty("os.name").toLowerCase().indexOf("mac") > -1;
+        isMac = System.getProperty("os.name").toLowerCase().contains("mac");
     }
 
     public void setAndroidPortSrcJar(File androidPortSrcJar) {
@@ -429,8 +431,7 @@ public class AndroidGradleBuilder extends Executor {
     }
 
     private String getGradleVersion(String gradleExe) throws Exception {
-        Map<String,String> env = defaultEnvironment;
-        env.put("JAVA_HOME", getGradleJavaHome());
+        defaultEnvironment.put("JAVA_HOME", getGradleJavaHome());
 
         String result = execString(new File(System.getProperty("user.dir")), gradleExe, "--version");
         Scanner scanner = new Scanner(result);
@@ -689,7 +690,7 @@ public class AndroidGradleBuilder extends Executor {
 
         buildToolsVersionInt = maxBuildToolsVersionInt;
 
-        this.buildToolsVersion = request.getArg("android.buildToolsVersion", ""+maxBuildToolsVersion);
+        this.buildToolsVersion = request.getArg("android.buildToolsVersion", maxBuildToolsVersion);
         String buildToolsVersionIntStr = this.buildToolsVersion;
         if (buildToolsVersionIntStr.indexOf(".") > 1) {
             buildToolsVersionIntStr = buildToolsVersionIntStr.substring(0, buildToolsVersionIntStr.indexOf("."));
@@ -904,7 +905,6 @@ public class AndroidGradleBuilder extends Executor {
         }
 
         File androidToolsDir = new File(androidSDKDir, "tools");
-        File androidCommand = new File(androidToolsDir, "android" + bat);
         File projectDir = new File(tmpFile, request.getMainClass());
         gradleProjectDirectory = projectDir;
 
@@ -1550,7 +1550,7 @@ public class AndroidGradleBuilder extends Executor {
                     + "    }\n"
                     + "}";
             try {
-                createFile(headphonesFile, stubSourceCode.getBytes());
+                createFile(headphonesFile, stubSourceCode.getBytes(StandardCharsets.UTF_8));
             } catch (IOException ex) {
                 throw new BuildException("Failed to create HeadSetReceiver class", ex);
             }
@@ -1736,7 +1736,8 @@ public class AndroidGradleBuilder extends Executor {
                     replaceInFile(androidBrowserComponentCallback, "//import android.webkit.JavascriptInterface;", "import android.webkit.JavascriptInterface;");
                     replaceInFile(androidBrowserComponentCallback, "//@JavascriptInterface", "@JavascriptInterface");
                 } catch (Exception e) {
-                    //swallow this and continue.
+                    // Swallow this and continue.
+                    log("Non-fatal exception encountered when processing AndroidBrowserComponentCallback.java: " + e);
                 }
             }
         }
@@ -1755,6 +1756,27 @@ public class AndroidGradleBuilder extends Executor {
         drawableXXhdpiDir.mkdirs();
         File drawableXXXhdpiDir = new File(resDir, "drawable-xxxhdpi");
         drawableXXXhdpiDir.mkdirs();
+        boolean enableAdaptiveIcons = request.getArg("android.enableAdaptiveIcons", "false").equals("true");
+        File mipmapMdpiDir = null;
+        File mipmapHdpiDir = null;
+        File mipmapXhdpiDir = null;
+        File mipmapXXhdpiDir = null;
+        File mipmapXXXhdpiDir = null;
+        File mipmapAnydpiV26Dir = null;
+        if (enableAdaptiveIcons) {
+            mipmapMdpiDir = new File(resDir, "mipmap-mdpi");
+            mipmapMdpiDir.mkdirs();
+            mipmapHdpiDir = new File(resDir, "mipmap-hdpi");
+            mipmapHdpiDir.mkdirs();
+            mipmapXhdpiDir = new File(resDir, "mipmap-xhdpi");
+            mipmapXhdpiDir.mkdirs();
+            mipmapXXhdpiDir = new File(resDir, "mipmap-xxhdpi");
+            mipmapXXhdpiDir.mkdirs();
+            mipmapXXXhdpiDir = new File(resDir, "mipmap-xxxhdpi");
+            mipmapXXXhdpiDir.mkdirs();
+            mipmapAnydpiV26Dir = new File(resDir, "mipmap-anydpi-v26");
+            mipmapAnydpiV26Dir.mkdirs();
+        }
 
         try {
             BufferedImage iconImage = ImageIO.read(new ByteArrayInputStream(request.getIcon()));
@@ -1765,6 +1787,65 @@ public class AndroidGradleBuilder extends Executor {
             createIconFile(new File(drawableXhdpiDir, "icon.png"), iconImage, 96, 96);
             createIconFile(new File(drawableXXhdpiDir, "icon.png"), iconImage, 144, 144);
             createIconFile(new File(drawableXXXhdpiDir, "icon.png"), iconImage, 192, 192);
+
+            if (enableAdaptiveIcons) {
+                createIconFile(new File(mipmapMdpiDir, "ic_launcher.png"), iconImage, 48, 48);
+                createIconFile(new File(mipmapHdpiDir, "ic_launcher.png"), iconImage, 72, 72);
+                createIconFile(new File(mipmapXhdpiDir, "ic_launcher.png"), iconImage, 96, 96);
+                createIconFile(new File(mipmapXXhdpiDir, "ic_launcher.png"), iconImage, 144, 144);
+                createIconFile(new File(mipmapXXXhdpiDir, "ic_launcher.png"), iconImage, 192, 192);
+
+                createIconFile(new File(mipmapMdpiDir, "ic_launcher_foreground.png"), iconImage, 108, 108);
+                createIconFile(new File(mipmapHdpiDir, "ic_launcher_foreground.png"), iconImage, 162, 162);
+                createIconFile(new File(mipmapXhdpiDir, "ic_launcher_foreground.png"), iconImage, 216, 216);
+                createIconFile(new File(mipmapXXhdpiDir, "ic_launcher_foreground.png"), iconImage, 324, 324);
+                createIconFile(new File(mipmapXXXhdpiDir, "ic_launcher_foreground.png"), iconImage, 432, 432);
+
+                String adaptiveIconBackgroundImage = request.getArg("android.adaptiveIconBackgroundImage", "").trim();
+                String adaptiveIconBackgroundRef;
+                if (adaptiveIconBackgroundImage.length() > 0) {
+                    File adaptiveBackgroundFile = new File(adaptiveIconBackgroundImage);
+                    if (!adaptiveBackgroundFile.isAbsolute()) {
+                        adaptiveBackgroundFile = new File(assetsDir, adaptiveIconBackgroundImage);
+                    }
+                    if (!adaptiveBackgroundFile.exists()) {
+                        throw new BuildException("android.adaptiveIconBackgroundImage must reference an existing image file. Tried: " + adaptiveBackgroundFile.getAbsolutePath());
+                    }
+                    BufferedImage adaptiveBackground = ImageIO.read(adaptiveBackgroundFile);
+                    if (adaptiveBackground == null) {
+                        throw new BuildException("android.adaptiveIconBackgroundImage is not a readable image file: " + adaptiveBackgroundFile.getAbsolutePath());
+                    }
+                    createIconFile(new File(mipmapMdpiDir, "ic_launcher_background.png"), adaptiveBackground, 108, 108);
+                    createIconFile(new File(mipmapHdpiDir, "ic_launcher_background.png"), adaptiveBackground, 162, 162);
+                    createIconFile(new File(mipmapXhdpiDir, "ic_launcher_background.png"), adaptiveBackground, 216, 216);
+                    createIconFile(new File(mipmapXXhdpiDir, "ic_launcher_background.png"), adaptiveBackground, 324, 324);
+                    createIconFile(new File(mipmapXXXhdpiDir, "ic_launcher_background.png"), adaptiveBackground, 432, 432);
+                    adaptiveIconBackgroundRef = "@mipmap/ic_launcher_background";
+                } else {
+                    String adaptiveIconBackground = request.getArg("android.adaptiveIconBackground", "#ffffff");
+                    String iconBackgroundColors = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+                            + "<resources>\n"
+                            + "    <color name=\"ic_launcher_background\">" + adaptiveIconBackground + "</color>\n"
+                            + "</resources>\n";
+                    try (OutputStream output = Files.newOutputStream(new File(valsDir, "ic_launcher_background.xml").toPath())) {
+                        output.write(iconBackgroundColors.getBytes(StandardCharsets.UTF_8));
+                    }
+                    adaptiveIconBackgroundRef = "@color/ic_launcher_background";
+                }
+
+                String adaptiveIconXml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+                        + "<adaptive-icon xmlns:android=\"http://schemas.android.com/apk/res/android\">\n"
+                        + "    <background android:drawable=\"" + adaptiveIconBackgroundRef + "\" />\n"
+                        + "    <foreground android:drawable=\"@mipmap/ic_launcher_foreground\" />\n"
+                        + "</adaptive-icon>\n";
+
+                try (OutputStream output = Files.newOutputStream(new File(mipmapAnydpiV26Dir, "ic_launcher.xml").toPath())) {
+                    output.write(adaptiveIconXml.getBytes(StandardCharsets.UTF_8));
+                }
+                try (OutputStream output = Files.newOutputStream(new File(mipmapAnydpiV26Dir, "ic_launcher_round.xml").toPath())) {
+                    output.write(adaptiveIconXml.getBytes(StandardCharsets.UTF_8));
+                }
+            }
 
             File notifFile = new File(assetsDir, "ic_stat_notify.png");
             if (notifFile.exists()) {
@@ -1817,10 +1898,9 @@ public class AndroidGradleBuilder extends Executor {
                 + "</resources>";
 
         try {
-            OutputStream stringsSourceStream = new FileOutputStream(stringsFile);
-            stringsSourceStream.write(stringsFileContent.getBytes());
+            OutputStream stringsSourceStream = Files.newOutputStream(stringsFile.toPath());
+            stringsSourceStream.write(stringsFileContent.getBytes(StandardCharsets.UTF_8));
             stringsSourceStream.close();
-
 
             String locales = request.getArg("android.locales", null);
             if (locales != null && locales.length() > 0) {
@@ -1828,8 +1908,8 @@ public class AndroidGradleBuilder extends Executor {
                     File currentValuesDir = new File(valsDir.getParent(), "values-" + loc);
                     currentValuesDir.mkdirs();
                     File currentStringsFile = new File(currentValuesDir, "strings.xml");
-                    stringsSourceStream = new FileOutputStream(currentStringsFile);
-                    stringsSourceStream.write(stringsFileContent.getBytes());
+                    stringsSourceStream = Files.newOutputStream(currentStringsFile.toPath());
+                    stringsSourceStream.write(stringsFileContent.getBytes(StandardCharsets.UTF_8));
                     stringsSourceStream.close();
                 }
             }
@@ -1880,11 +1960,11 @@ public class AndroidGradleBuilder extends Executor {
 
         try {
             OutputStream stylesSourceStream = new FileOutputStream(stylesFile);
-            stylesSourceStream.write(stylesFileContent.getBytes());
+            stylesSourceStream.write(stylesFileContent.getBytes(StandardCharsets.UTF_8));
             stylesSourceStream.close();
 
             String theme = request.getArg("android.theme", "Light");
-            if (theme.length() > 0 && theme.equalsIgnoreCase("Dark")) {
+            if (theme.equalsIgnoreCase("Dark")) {
                 theme = "";
             } else {
                 theme = "." + theme;
@@ -1905,7 +1985,7 @@ public class AndroidGradleBuilder extends Executor {
 
 
             OutputStream styles11SourceStream = new FileOutputStream(styles11File);
-            styles11SourceStream.write(styles11FileContent.getBytes());
+            styles11SourceStream.write(styles11FileContent.getBytes(StandardCharsets.UTF_8));
             styles11SourceStream.close();
 
             File styles21File = new File(vals21Dir, "styles.xml");
@@ -1924,7 +2004,7 @@ public class AndroidGradleBuilder extends Executor {
 
 
             OutputStream styles21SourceStream = new FileOutputStream(styles21File);
-            styles21SourceStream.write(styles21FileContent.getBytes());
+            styles21SourceStream.write(styles21FileContent.getBytes(StandardCharsets.UTF_8));
             styles21SourceStream.close();
         } catch (IOException ex) {
             error("Failed to generate style files", ex);
@@ -1942,7 +2022,7 @@ public class AndroidGradleBuilder extends Executor {
                     + mopubBannerXML
                     + "</RelativeLayout>\n";
             OutputStream layoutSourceStream = new FileOutputStream(layoutFile);
-            layoutSourceStream.write(layoutFileContent.getBytes());
+            layoutSourceStream.write(layoutFileContent.getBytes(StandardCharsets.UTF_8));
             layoutSourceStream.close();
 
             String customLayout = request.getArg("android.cusom_layout1", null);
@@ -1950,7 +2030,7 @@ public class AndroidGradleBuilder extends Executor {
             while (customLayout != null) {
                 File customFile = new File(layoutDir, "cusom_layout" + counter + ".xml");
                 layoutSourceStream = new FileOutputStream(customFile);
-                layoutSourceStream.write(customLayout.getBytes());
+                layoutSourceStream.write(customLayout.getBytes(StandardCharsets.UTF_8));
                 layoutSourceStream.close();
 
                 counter++;
@@ -1979,7 +2059,7 @@ public class AndroidGradleBuilder extends Executor {
                 try {
                     JSONParser parser = new JSONParser();
 
-                    Map<String, Object> parsedJson = parser.parseJSON(new FileReader(googleServicesJson));
+                    Map<String, Object> parsedJson = parser.parseJSON(new InputStreamReader(new FileInputStream(googleServicesJson), StandardCharsets.UTF_8));
 
                     Map projectInfo = (Map) parsedJson.get("project_info");
                     gcmSenderId = (String) projectInfo.get("project_number");
@@ -2241,8 +2321,13 @@ public class AndroidGradleBuilder extends Executor {
         if (!applicationAttr.contains("android:label")) {
             applicationNode += " android:label=\"" + xmlizedDisplayName + "\" ";
         }
-        if (!applicationAttr.contains("android:icon")) {
+        if (enableAdaptiveIcons && !applicationAttr.contains("android:icon")) {
+            applicationNode += " android:icon=\"@mipmap/ic_launcher\" ";
+        } else if (!applicationAttr.contains("android:icon")) {
             applicationNode += " android:icon=\"@drawable/icon\" ";
+        }
+        if (enableAdaptiveIcons && !applicationAttr.contains("android:roundIcon")) {
+            applicationNode += " android:roundIcon=\"@mipmap/ic_launcher_round\" ";
         }
         if (request.getArg("android.multidex", "true").equals("true") && Integer.parseInt(minSDK) < 21) {
             debug("Setting Application node to MultiDexApplication because minSDK="+minSDK+" < 21");
@@ -2279,7 +2364,7 @@ public class AndroidGradleBuilder extends Executor {
             try {
                 OutputStream filePathsStream = new FileOutputStream(filePathsFile);
 
-                filePathsStream.write(filePathsContent.getBytes());
+                filePathsStream.write(filePathsContent.getBytes(StandardCharsets.UTF_8));
                 filePathsStream.close();
             } catch (IOException ex) {
                 throw new BuildException("Failed to write file path providers file", ex);
@@ -2384,7 +2469,7 @@ public class AndroidGradleBuilder extends Executor {
                 + "</manifest>\n";
         try {
             OutputStream manifestSourceStream = new FileOutputStream(manifestFile);
-            manifestSourceStream.write(manifestSource.getBytes());
+            manifestSourceStream.write(manifestSource.getBytes(StandardCharsets.UTF_8));
             manifestSourceStream.close();
         } catch (IOException ex) {
             throw new BuildException("Failed to write manifest file", ex);
@@ -2629,7 +2714,7 @@ public class AndroidGradleBuilder extends Executor {
                     + "\n\n"
                     + "public class " + request.getMainClass() + "Stub extends " + request.getArg("android.customActivity", "CodenameOneActivity") + "{\n";
             stubSourceCode += decodeFunction();
-            stubSourceCode += "    public static final String BUILD_KEY = \"" + xorEncode(getBuildKey()) + "\";\n"
+            stubSourceCode += "    public static final String BUILD_KEY = \"LOCAL_BUILD\";\n"
                     + "    public static final String PACKAGE_NAME = \"" + request.getPackageName() + "\";\n"
                     + "    public static final String BUILT_BY_USER = \"" + xorEncode(request.getUserName()) + "\";\n"
                     + "    public static final String LICENSE_KEY = \"" + xorEncode(licenseKey) + "\";\n"
@@ -2973,7 +3058,7 @@ public class AndroidGradleBuilder extends Executor {
                     + "     public static final String C2DM_MESSAGE_EXTRA = \"message\";\n"
                     + "     public static final String C2DM_MESSAGE_IMAGE = \"image\";\n"
                     + "     public static final String C2DM_MESSAGE_CATEGORY = \"category\";\n"
-                    + "     public static final String BUILD_KEY = \"" + xorEncode(getBuildKey()) + "\"\n;"
+                    + "     public static final String BUILD_KEY = \"LOCAL_BUILD\"\n;"
                     + "     public static final String PACKAGE_NAME = \"" + request.getPackageName() + "\"\n;"
                     + "     public static final String BUILT_BY_USER = \"" + xorEncode(request.getUserName()) + "\"\n;"
                     + "	private static String KEY = \"c2dmPref\";\n"
@@ -3210,11 +3295,11 @@ public class AndroidGradleBuilder extends Executor {
             if (pushPermission) {
                 try {
                     OutputStream pushSourceStream = new FileOutputStream(pushFileSourceFile);
-                    pushSourceStream.write(pushReceiverSourceCode.getBytes());
+                    pushSourceStream.write(pushReceiverSourceCode.getBytes(StandardCharsets.UTF_8));
                     pushSourceStream.close();
 
                     OutputStream pushServiceSourceStream = new FileOutputStream(pushServiceFileSourceFile);
-                    pushServiceSourceStream.write(pushServiceSourceCode.getBytes());
+                    pushServiceSourceStream.write(pushServiceSourceCode.getBytes(StandardCharsets.UTF_8));
                     pushServiceSourceStream.close();
                 } catch (IOException ex) {
                     throw new BuildException("Failed to generate push file", ex);
@@ -3260,7 +3345,7 @@ public class AndroidGradleBuilder extends Executor {
         }
         try {
             OutputStream stubSourceStream = new FileOutputStream(stubFileSourceFile);
-            stubSourceStream.write(stubSourceCode.getBytes());
+            stubSourceStream.write(stubSourceCode.getBytes(StandardCharsets.UTF_8));
             stubSourceStream.close();
         } catch (IOException ex) {
             throw new BuildException("Failed to write stub source file", ex);
@@ -3374,7 +3459,7 @@ public class AndroidGradleBuilder extends Executor {
         proguardConfigOverrideFile.delete();
         if (request.getArg("android.enableProguard", "true").equals("true")) {
             try {
-                createFile(proguardConfigOverrideFile, proguardConfigOverride.getBytes());
+                createFile(proguardConfigOverrideFile, proguardConfigOverride.getBytes(StandardCharsets.UTF_8));
             } catch (IOException ex) {
                 throw new BuildException("Failed to create proguard config file", ex);
             }
@@ -3520,13 +3605,37 @@ public class AndroidGradleBuilder extends Executor {
                 gradleDependency = "classpath 'com.android.tools.build:gradle:8.1.0'\n";
             }
         }
+        boolean hasKotlinSources = hasSourceFileWithExtension(new File(projectDir, "src/main/java"), ".kt");
+        String kotlinVersion = request.getArg("requireKotlinStdlib", "").trim();
+        if (hasKotlinSources && kotlinVersion.length() == 0) {
+            kotlinVersion = useGradle8 ? "1.9.22" : "1.7.22";
+        }
+        String kotlinPluginApply = "";
+        String kotlinRuntimeDependency = "";
+        if (hasKotlinSources) {
+            if (!request.getArg("android.topDependency", "").contains("kotlin-gradle-plugin")) {
+                gradleDependency += "classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:" + kotlinVersion + "'\n";
+            }
+            kotlinPluginApply = "apply plugin: 'kotlin-android'\n";
+            String gradleDeps = request.getArg("android.gradleDep", "");
+            if (!additionalDependencies.contains("org.jetbrains.kotlin:kotlin-stdlib")
+                    && !gradleDeps.contains("org.jetbrains.kotlin:kotlin-stdlib")) {
+                kotlinRuntimeDependency = "    implementation 'org.jetbrains.kotlin:kotlin-stdlib:" + kotlinVersion + "'\n";
+            }
+        }
         gradleDependency += request.getArg("android.topDependency", "");
 
         String compileSdkVersion = "'android-21'";
 
-        String java8P2 = "";
-        if(useJava8SourceLevel) {
-            java8P2 = "    compileOptions {\n" +
+        int projectJavaVersion = parseVersionStringAsInt(request.getArg("java.version", "8"));
+        String javaCompileOptions = "";
+        if (projectJavaVersion >= 17 && useGradle8) {
+            javaCompileOptions = "    compileOptions {\n" +
+                    "        sourceCompatibility JavaVersion.toVersion(17)\n" +
+                    "        targetCompatibility JavaVersion.toVersion(17)\n" +
+                    "    }\n";
+        } else if(useJava8SourceLevel) {
+            javaCompileOptions = "    compileOptions {\n" +
                     "        sourceCompatibility JavaVersion.VERSION_1_8\n" +
                     "        targetCompatibility JavaVersion.VERSION_1_8\n" +
                     "    }\n";
@@ -3608,6 +3717,14 @@ public class AndroidGradleBuilder extends Executor {
             compileSdkVersion = "34";
             supportLibVersion = "28";
         }
+        if (buildToolsVersion.startsWith("35")) {
+            compileSdkVersion = "35";
+            supportLibVersion = "28";
+        }
+        if (buildToolsVersion.startsWith("36")) {
+            compileSdkVersion = "36";
+            supportLibVersion = "28";
+        }
         jcenter =
                 "      google()\n" +
                         "     jcenter()\n" +
@@ -3644,6 +3761,7 @@ public class AndroidGradleBuilder extends Executor {
         }
 
         String gradleProps = "apply plugin: 'com.android.application'\n"
+                + kotlinPluginApply
                 + request.getArg("android.gradlePlugin", "")
                 + "\n"
                 + "buildscript {\n"
@@ -3679,7 +3797,7 @@ public class AndroidGradleBuilder extends Executor {
                 + multidex
                 + request.getArg("android.xgradle_default_config", "")
                 + "    }\n"
-                + java8P2
+                + javaCompileOptions
                 + "    sourceSets {\n"
                 + "        main {\n"
                 + "            aidl.srcDirs = ['src/main/java']\n"
@@ -3727,6 +3845,7 @@ public class AndroidGradleBuilder extends Executor {
                 + "dependencies {\n"
                 + "    "+compile+" fileTree(dir: 'libs', include: ['*.jar'])\n"
                 + request.getArg("android.supportv4Dep",supportV4Default) + "\n"
+                + kotlinRuntimeDependency
                 + addNewlineIfMissing(additionalDependencies)
                 + addNewlineIfMissing(request.getArg("android.gradleDep", ""))
                 + addNewlineIfMissing(aarDependencies)
@@ -3740,7 +3859,7 @@ public class AndroidGradleBuilder extends Executor {
 
         try {
             OutputStream gradleStream = new FileOutputStream(gradleFile);
-            gradleStream.write(gradleProps.getBytes());
+            gradleStream.write(gradleProps.getBytes(StandardCharsets.UTF_8));
             gradleStream.close();
         } catch (IOException ex) {
             throw new BuildException("Failed to write gradle properties to "+gradleFile, ex);
@@ -3774,7 +3893,7 @@ public class AndroidGradleBuilder extends Executor {
         File rootGradleFile = new File(studioProjectDir, "build.gradle");
         try {
             OutputStream gradleStream = new FileOutputStream(rootGradleFile);
-            gradleStream.write(rootGradleProps.getBytes());
+            gradleStream.write(rootGradleProps.getBytes(StandardCharsets.UTF_8));
             gradleStream.close();
         } catch (IOException ex) {
             throw new BuildException("Failed to write root gradle properties to "+rootGradleFile, ex);
@@ -3801,6 +3920,11 @@ public class AndroidGradleBuilder extends Executor {
         if (useAndroidX) {
             gradlePropertiesObject.setProperty("android.useAndroidX", "true");
             gradlePropertiesObject.setProperty("android.enableJetifier", "true");
+        }
+        Integer compileSdkInt = parseSdkInt(compileSdkVersion);
+        if (compileSdkInt != null && compileSdkInt >= 35) {
+            gradlePropertiesObject.setProperty("android.suppressUnsupportedCompileSdk", String.valueOf(compileSdkInt));
+            gradlePropertiesObject.setProperty("android.experimental.androidTest.useUnifiedTestPlatform", "false");
         }
 
         // Configure R8 optimization mode to prevent reflection issues
@@ -3869,6 +3993,76 @@ public class AndroidGradleBuilder extends Executor {
         return s;
     }
 
+
+    @Override
+    protected String registerNativeImplementationsAndCreateStubs(ClassLoader parentClassLoader, File stubDir, File... classesDirectory) throws MalformedURLException, IOException {
+        Class[] discoveredNativeInterfaces = findNativeInterfaces(parentClassLoader, classesDirectory);
+        String registerNativeFunctions = "";
+        if (discoveredNativeInterfaces != null && discoveredNativeInterfaces.length > 0) {
+            for (Class n : discoveredNativeInterfaces) {
+                registerNativeFunctions += "        NativeLookup.register(" + n.getName() + ".class, "
+                        + n.getName() + "Stub.class" + ");\n";
+            }
+        }
+
+        if (discoveredNativeInterfaces != null && discoveredNativeInterfaces.length > 0) {
+            for (Class currentNative : discoveredNativeInterfaces) {
+                File folder = new File(stubDir, currentNative.getPackage().getName().replace('.', File.separatorChar));
+                folder.mkdirs();
+                File javaFile = new File(folder, currentNative.getSimpleName() + "Stub.java");
+
+                String javaImplSourceFile = "package " + currentNative.getPackage().getName() + ";\n\n"
+                        + "import com.codename1.ui.PeerComponent;\n\n"
+                        + "public class " + currentNative.getSimpleName() + "Stub implements " + currentNative.getSimpleName() + "{\n"
+                        + "    private " + currentNative.getSimpleName() + getImplSuffix() + " impl = new " + currentNative.getSimpleName() + getImplSuffix() + "();\n\n";
+
+                for (Method m : currentNative.getMethods()) {
+                    String name = m.getName();
+                    if (name.equals("hashCode") || name.equals("equals") || name.equals("toString")) {
+                        continue;
+                    }
+
+                    Class returnType = m.getReturnType();
+
+                    javaImplSourceFile += "    public " + returnType.getSimpleName() + " " + name + "(";
+                    Class[] params = m.getParameterTypes();
+                    String args = "";
+                    if (params != null && params.length > 0) {
+                        for (int iter = 0; iter < params.length; iter++) {
+                            if (iter > 0) {
+                                javaImplSourceFile += ", ";
+                                args += ", ";
+                            }
+                            javaImplSourceFile += params[iter].getSimpleName() + " param" + iter;
+                            if (params[iter].getName().equals("com.codename1.ui.PeerComponent")) {
+                                args += convertPeerComponentToNative("param" + iter);
+                            } else {
+                                args += "param" + iter;
+                            }
+                        }
+                    }
+                    javaImplSourceFile += ") {\n";
+                    if (Void.class == returnType || Void.TYPE == returnType) {
+                        javaImplSourceFile += "        impl." + name + "(" + args + ");\n    }\n\n";
+                    } else {
+                        if (returnType.getName().equals("com.codename1.ui.PeerComponent")) {
+                            javaImplSourceFile += "        return " + generatePeerComponentCreationCode("impl." + name + "(" + args + ")") + ";\n    }\n\n";
+                        } else {
+                            javaImplSourceFile += "        return impl." + name + "(" + args + ");\n    }\n\n";
+                        }
+                    }
+                }
+
+                javaImplSourceFile += "}\n";
+
+                try (FileOutputStream out = new FileOutputStream(javaFile)) {
+                    out.write(javaImplSourceFile.getBytes(StandardCharsets.UTF_8));
+                }
+            }
+        }
+
+        return registerNativeFunctions;
+    }
 
     @Override
     protected String generatePeerComponentCreationCode(String methodCallString) {
@@ -3973,7 +4167,7 @@ public class AndroidGradleBuilder extends Executor {
                         destFile = new File(d, "local.properties");
                         destFile.getParentFile().mkdirs();
                         FileOutputStream fos = new FileOutputStream(destFile);
-                        fos.write(sdkPathProperties.getBytes());
+                        fos.write(sdkPathProperties.getBytes(StandardCharsets.UTF_8));
                         fos.close();
                         addedSDKDir = true;
                     }
@@ -3989,7 +4183,7 @@ public class AndroidGradleBuilder extends Executor {
                     destFile = new File(dir, entry.getName());
                     destFile.getParentFile().mkdirs();
                     FileOutputStream fos = new FileOutputStream(destFile);
-                    fos.write(sdkPathProperties.getBytes());
+                    fos.write(sdkPathProperties.getBytes(StandardCharsets.UTF_8));
                     fos.close();
                     continue;
                 }
@@ -4040,7 +4234,7 @@ public class AndroidGradleBuilder extends Executor {
             FileOutputStream projectProps = new FileOutputStream(new File(dir, "project.properties"));
             String props = "android.library=true\n"
                     + "target=android-14";
-            projectProps.write(props.getBytes());
+            projectProps.write(props.getBytes(StandardCharsets.UTF_8));
             projectProps.close();
 
         } catch (Exception e) {
@@ -4197,7 +4391,7 @@ public class AndroidGradleBuilder extends Executor {
                 if (entryName.endsWith(".class")) {
                     destFile = new File(classesDir, entryName);
                 } else {
-                    if (entryName.endsWith(".java") || entryName.endsWith(".m") || entryName.endsWith(".h")) {
+                    if (entryName.endsWith(".java") || entryName.endsWith(".kt") || entryName.endsWith(".swift") || entryName.endsWith(".m") || entryName.endsWith(".h")) {
                         destFile = new File(sourceDir, entryName);
                     } else {
                         if (entryName.endsWith(".jar") || entryName.endsWith(".a") || entryName.endsWith(".dylib") || entryName.endsWith(".andlib") || entryName.endsWith(".aar")) {
@@ -4419,10 +4613,9 @@ public class AndroidGradleBuilder extends Executor {
     private void replaceInFile(File file, Map<String,String> replacements) throws IOException {
         String contents = readFileToString(file);
         contents = replace(contents, replacements);
-        FileWriter fios = new FileWriter(file);
+        Writer fios = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8);
         fios.write(contents);
         fios.close();
-
     }
     private  Map<String,String> androidXArtifactMapping;
     private  Map<String,String> loadAndroidXArtifactMapping() throws IOException {
@@ -4535,6 +4728,40 @@ public class AndroidGradleBuilder extends Executor {
                 playServiceVersions.put(playServiceKey, playServiceValue);
             }
         }
+    }
+
+    private Integer parseSdkInt(String value) {
+        if (value == null) {
+            return null;
+        }
+        String digits = value.replaceAll("\\D", "");
+        if (digits.isEmpty()) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(digits);
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private boolean hasSourceFileWithExtension(File dir, String extension) {
+        if (dir == null || !dir.exists()) {
+            return false;
+        }
+        if (dir.isFile()) {
+            return dir.getName().endsWith(extension);
+        }
+        File[] children = dir.listFiles();
+        if (children == null) {
+            return false;
+        }
+        for (File child : children) {
+            if (hasSourceFileWithExtension(child, extension)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void stripKotlin(File dummyClassesDir) {

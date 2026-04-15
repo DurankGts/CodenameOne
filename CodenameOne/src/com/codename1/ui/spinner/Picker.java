@@ -54,33 +54,44 @@ import com.codename1.ui.plaf.UIManager;
 
 import java.util.Calendar;
 import java.util.Date;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.ListIterator;
 
 import static com.codename1.ui.ComponentSelector.$;
 
-/**
- * <p>{@code Picker} is a component and API that allows either popping up a spinner or
- * using the native picker API when applicable. This is quite important for some
- * platforms where the native spinner behavior is very hard to replicate.</p>
- *
- * <script src="https://gist.github.com/codenameone/5e437d82812dfcbdf092.js"></script>
- * <img src="https://www.codenameone.com/img/developer-guide/components-picker.png" alt="Picker UI" />
- * <img src="https://www.codenameone.com/img/developer-guide/components-picker-date-time-on-simulator.png" alt="Date And Time Picker On the simulator" />
- * <img src="https://www.codenameone.com/img/developer-guide/components-picker-date-android.png" alt="Android native date picker" />
- * <img src="https://www.codenameone.com/img/developer-guide/components-picker-strings-android.png" alt="Android native String picker" />
- * <img src="https://www.codenameone.com/img/developer-guide/components-picker-time-android.png" alt="Android native time picker" />
- * <img src="https://www.codenameone.com/img/developer-guide/components-picker-duration-android.png" alt="Android duration picker" />
- * <img src="https://www.codenameone.com/img/developer-guide/components-picker-duration-hours-android.png" alt="Android duration hours picker" />
- * <img src="https://www.codenameone.com/img/developer-guide/components-picker-time-android.png" alt="Android duration minutes picker" />
- *
- * @author Shai Almog
- */
+/// `Picker` is a component and API that allows either popping up a spinner or
+/// using the native picker API when applicable. This is quite important for some
+/// platforms where the native spinner behavior is very hard to replicate.
+///
+/// ```java
+/// Form hi = new Form("Picker", new BoxLayout(BoxLayout.Y_AXIS));
+/// Picker datePicker = new Picker();
+/// datePicker.setType(Display.PICKER_TYPE_DATE);
+/// Picker dateTimePicker = new Picker();
+/// dateTimePicker.setType(Display.PICKER_TYPE_DATE_AND_TIME);
+/// Picker timePicker = new Picker();
+/// timePicker.setType(Display.PICKER_TYPE_TIME);
+/// Picker stringPicker = new Picker();
+/// stringPicker.setType(Display.PICKER_TYPE_STRINGS);
+///
+/// datePicker.setDate(new Date());
+/// dateTimePicker.setDate(new Date());
+/// timePicker.setTime(10 * 60); // 10:00AM = Minutes since midnight
+/// stringPicker.setStrings("A Game of Thrones", "A Clash Of Kings", "A Storm Of Swords", "A Feast For Crows",
+///         "A Dance With Dragons", "The Winds of Winter", "A Dream of Spring");
+/// stringPicker.setSelectedString("A Game of Thrones");
+///
+/// hi.add(datePicker).add(dateTimePicker).add(timePicker).add(stringPicker);
+/// hi.show();
+/// ```
+///
+/// @author Shai Almog
 public class Picker extends Button {
 
-    /**
-     * Whether useLightweightPopup should default to true, this can be set via
-     * the theme constant {@code lightweightPickerBool}
-     */
+    /// Whether useLightweightPopup should default to true, this can be set via
+    /// the theme constant `lightweightPickerBool`
     private static boolean defaultUseLightweightPopup;
     private static boolean defaultLightweightModeSet;
     private int type = Display.PICKER_TYPE_DATE;
@@ -94,24 +105,44 @@ public class Picker extends Button {
     private int minuteStep = 5;
     private int minHour = -1;
     private int maxHour = -1;
-    private Date startDate, endDate;
+    private Date startDate;
+    private Date endDate;
     private VirtualInputDevice currentInput;
 
     // Variables to store the form's previous margins before showing
     // the popup dialog so that we can restore them when the popup is disposed.
     private byte[] tmpContentPaneMarginUnit;
     private float tmpContentPaneBottomMargin;
-    /**
-     * Flag to indicate that the picker should prefer lightweight components
-     * rather than native components.
-     */
+    /// Flag to indicate that the picker should prefer lightweight components
+    /// rather than native components.
     private boolean useLightweightPopup;
     private Runnable stopEditingCallback;
     private boolean suppressPaint;
+    private final ArrayList<LightweightPopupButton> lightweightPopupButtons = new ArrayList<LightweightPopupButton>();
 
-    /**
-     * Default constructor
-     */
+    /// Placement options for custom lightweight popup buttons.
+    public static final class LightweightPopupButtonPlacement {
+        /// Place the custom button in the top button row between the `Cancel` and `Done` groups.
+        public static final int BETWEEN_CANCEL_AND_DONE = 0;
+        /// Place the custom button row directly above the spinner wheels.
+        public static final int ABOVE_SPINNER = 1;
+        /// Place the custom button row directly below the spinner wheels.
+        public static final int BELOW_SPINNER = 2;
+    }
+
+    private static final class LightweightPopupButton {
+        private final String text;
+        private final Runnable action;
+        private final int placement;
+
+        private LightweightPopupButton(String text, Runnable action, int placement) {
+            this.text = text;
+            this.action = action;
+            this.placement = placement;
+        }
+    }
+
+    /// Default constructor
     public Picker() {
         setUIIDFinal("Picker");
         setPreferredTabIndex(0);
@@ -206,8 +237,6 @@ public class Picker extends Button {
                             }
                             break;
                         }
-                        default:
-                            break;
                         case Display.PICKER_TYPE_CALENDAR:
                             showInteractionDialog();
                             evt.consume();
@@ -322,7 +351,8 @@ public class Picker extends Button {
                             }
                             break;
                         }
-
+                        default:
+                            break;
                     }
                     updateValue();
                 }
@@ -555,8 +585,21 @@ public class Picker extends Button {
                         .setBgTransparency(0)
                         .setMargin(0)
                         .setPaddingMillimeters(3f, 0);
-                //wrapper.add(BorderLayout.CENTER, spinnerC);
-                dlg.getContentPane().add(BorderLayout.CENTER, wrapper);
+                Container topCustomButtons = createLightweightPopupButtonRow(spinner, LightweightPopupButtonPlacement.ABOVE_SPINNER, isTablet);
+                Container bottomCustomButtons = createLightweightPopupButtonRow(spinner, LightweightPopupButtonPlacement.BELOW_SPINNER, isTablet);
+                if (topCustomButtons != null || bottomCustomButtons != null) {
+                    Container spinnerSection = new Container(new BorderLayout());
+                    spinnerSection.add(BorderLayout.CENTER, wrapper);
+                    if (topCustomButtons != null) {
+                        spinnerSection.add(BorderLayout.NORTH, topCustomButtons);
+                    }
+                    if (bottomCustomButtons != null) {
+                        spinnerSection.add(BorderLayout.SOUTH, bottomCustomButtons);
+                    }
+                    dlg.getContentPane().add(BorderLayout.CENTER, spinnerSection);
+                } else {
+                    dlg.getContentPane().add(BorderLayout.CENTER, wrapper);
+                }
 
 
                 Button doneButton = new Button("Done", isTablet ? "PickerButtonTablet" : "PickerButton");
@@ -639,7 +682,8 @@ public class Picker extends Button {
                     west.add(nextButton);
                 }
 
-                Container buttonBar = BorderLayout.centerEastWest(null, doneButton, west);
+                Container centerButtons = createLightweightPopupButtonRow(spinner, LightweightPopupButtonPlacement.BETWEEN_CANCEL_AND_DONE, isTablet);
+                Container buttonBar = BorderLayout.centerEastWest(centerButtons, doneButton, west);
                 buttonBar.setUIID(isTablet ? "PickerButtonBarTablet" : "PickerButtonBar");
                 dlg.getContentPane().add(BorderLayout.NORTH, buttonBar);
 
@@ -678,7 +722,7 @@ public class Picker extends Button {
                         @Override
                         public void run() {
                             dlg.show(top, bottom, left, right);
-                            padContentPane(top, bottom, left, right);
+                            padContentPane(top);
                         }
 
                     });
@@ -712,34 +756,104 @@ public class Picker extends Button {
         updateValue();
     }
 
-    /**
-     * Whether useLightweightPopup should default to true, this can be set via
-     * the theme constant {@code lightweightPickerBool}
-     *
-     * @return the defaultUseLightweightPopup
-     */
+    private Container createLightweightPopupButtonRow(final InternalPickerWidget spinner, int placement, boolean isTablet) {
+        Container row = null;
+        for (LightweightPopupButton entry : lightweightPopupButtons) {
+            if (entry.placement != placement) {
+                continue;
+            }
+            if (row == null) {
+                row = new Container(BoxLayout.x());
+                row.setUIID(isTablet ? "PickerButtonBarTablet" : "PickerButtonBar");
+                $(row).selectAllStyles().setMargin(0).setPadding(0).setBorder(Border.createEmpty()).setBgTransparency(0);
+            }
+            final LightweightPopupButton popupButton = entry;
+            Button button = new Button(popupButton.text, isTablet ? "PickerButtonTablet" : "PickerButton");
+            button.addActionListener(new ActionListener() {
+                @Override
+                public void actionPerformed(ActionEvent evt) {
+                    if (popupButton.action != null) {
+                        popupButton.action.run();
+                    }
+                    spinner.setValue(value);
+                    updateValue();
+                }
+            });
+            row.add(button);
+        }
+        return row;
+    }
+
+    /// Adds a custom button to the lightweight picker popup in the default placement
+    /// between the `Cancel` and `Done` areas.
+    ///
+    /// #### Parameters
+    ///
+    /// - `text`: Button label.
+    /// - `action`: Action to run when the button is pressed.
+    public void addLightweightPopupButton(String text, Runnable action) {
+        addLightweightPopupButton(text, action, LightweightPopupButtonPlacement.BETWEEN_CANCEL_AND_DONE);
+    }
+
+    /// Adds a custom button to the lightweight picker popup.
+    ///
+    /// #### Parameters
+    ///
+    /// - `text`: Button label.
+    /// - `action`: Action to run when the button is pressed.
+    /// - `placement`: One of `LightweightPopupButtonPlacement#BETWEEN_CANCEL_AND_DONE`,
+    ///   `LightweightPopupButtonPlacement#ABOVE_SPINNER`, or `LightweightPopupButtonPlacement#BELOW_SPINNER`.
+    public void addLightweightPopupButton(String text, Runnable action, int placement) {
+        lightweightPopupButtons.add(new LightweightPopupButton(text, action, placement));
+    }
+
+    /// Removes all custom lightweight popup buttons that were previously added with
+    /// `#addLightweightPopupButton`.
+    public void clearLightweightPopupButtons() {
+        lightweightPopupButtons.clear();
+    }
+
+    /// Returns an immutable list of custom button labels currently configured for
+    /// the lightweight popup.
+    public List<String> getLightweightPopupButtonLabels() {
+        ArrayList<String> out = new ArrayList<String>();
+        for (LightweightPopupButton b : lightweightPopupButtons) {
+            out.add(b.text);
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    /// Whether useLightweightPopup should default to true, this can be set via
+    /// the theme constant `lightweightPickerBool`
+    ///
+    /// #### Returns
+    ///
+    /// the defaultUseLightweightPopup
     public static boolean isDefaultUseLightweightPopup() {
         return defaultUseLightweightPopup;
     }
 
-    /**
-     * Whether useLightweightPopup should default to true, this can be set via
-     * the theme constant {@code lightweightPickerBool}
-     *
-     * @param aDefaultUseLightweightPopup the defaultUseLightweightPopup to set
-     */
+    /// Whether useLightweightPopup should default to true, this can be set via
+    /// the theme constant `lightweightPickerBool`
+    ///
+    /// #### Parameters
+    ///
+    /// - `aDefaultUseLightweightPopup`: the defaultUseLightweightPopup to set
     public static void setDefaultUseLightweightPopup(
             boolean aDefaultUseLightweightPopup) {
         defaultLightweightModeSet = true;
         defaultUseLightweightPopup = aDefaultUseLightweightPopup;
     }
 
-    /**
-     * Checks if the given type is supported in LightWeight mode.
-     *
-     * @param type The type.  Expects one of the Display.PICKER_XXX constants.
-     * @return True if the given type is supported in lightweight mode.
-     */
+    /// Checks if the given type is supported in LightWeight mode.
+    ///
+    /// #### Parameters
+    ///
+    /// - `type`: The type.  Expects one of the Display.PICKER_XXX constants.
+    ///
+    /// #### Returns
+    ///
+    /// True if the given type is supported in lightweight mode.
     private static boolean isLightweightModeSupportedForType(int type) {
         switch (type) {
             case Display.PICKER_TYPE_STRINGS:
@@ -757,16 +871,24 @@ public class Picker extends Button {
         return false;
     }
 
-    /**
-     * Sets the hour range for this picker.  Only applicable for types {@link Display#PICKER_TYPE_DATE_AND_TIME} and {@link Display#PICKER_TYPE_TIME}.
-     * Also, only applicable to lightweight picker (i.e. {@link #isUseLightweightPopup() } == {@literal true}.
-     *
-     * @param min The minimum hour to display (0-24) or -1 for no limit.
-     * @param max The maximum hour to display (0-24) or -1 for no limit
-     * @see #getMinHour()
-     * @see #getMaxHour()
-     * @since 6.0
-     */
+    /// Sets the hour range for this picker.  Only applicable for types `Display#PICKER_TYPE_DATE_AND_TIME` and `Display#PICKER_TYPE_TIME`.
+    /// Also, only applicable to lightweight picker (i.e. `#isUseLightweightPopup()` == true.
+    ///
+    /// #### Parameters
+    ///
+    /// - `min`: The minimum hour to display (0-24) or -1 for no limit.
+    ///
+    /// - `max`: The maximum hour to display (0-24) or -1 for no limit
+    ///
+    /// #### Since
+    ///
+    /// 6.0
+    ///
+    /// #### See also
+    ///
+    /// - #getMinHour()
+    ///
+    /// - #getMaxHour()
     public void setHourRange(int min, int max) {
         if (showMeridiem && min >= 0 && min <= 24 && max > min) {
             setShowMeridiem(false);
@@ -775,120 +897,161 @@ public class Picker extends Button {
         maxHour = max;
     }
 
-    /**
-     * Gets the minimum hour to show for time and datetime pickers.  Only applicable for types {@link Display#PICKER_TYPE_DATE_AND_TIME} and {@link Display#PICKER_TYPE_TIME}.
-     * Also, only applicable to lightweight picker (i.e. {@link #isUseLightweightPopup() } == {@literal true}.
-     *
-     * @return The minimum hour.  0-24, or -1 for no limit.
-     * @see #getMaxHour()
-     * @see #setHourRange(int, int)
-     * @since 6.0
-     */
+    /// Gets the minimum hour to show for time and datetime pickers.  Only applicable for types `Display#PICKER_TYPE_DATE_AND_TIME` and `Display#PICKER_TYPE_TIME`.
+    /// Also, only applicable to lightweight picker (i.e. `#isUseLightweightPopup()` == true.
+    ///
+    /// #### Returns
+    ///
+    /// The minimum hour.  0-24, or -1 for no limit.
+    ///
+    /// #### Since
+    ///
+    /// 6.0
+    ///
+    /// #### See also
+    ///
+    /// - #getMaxHour()
+    ///
+    /// - #setHourRange(int, int)
     public int getMinHour() {
         return minHour;
     }
 
-    /**
-     * Gets the minimum hour to show for time and datetime pickers.  Only applicable for types {@link Display#PICKER_TYPE_DATE_AND_TIME} and {@link Display#PICKER_TYPE_TIME}.
-     * Also, only applicable to lightweight picker (i.e. {@link #isUseLightweightPopup() } == {@literal true}.
-     *
-     * @return The minimum hour.  0-24, or -1 for no limit.
-     * @see #getMinHour()
-     * @see #setHourRange(int, int)
-     * @since 6.0
-     */
+    /// Gets the minimum hour to show for time and datetime pickers.  Only applicable for types `Display#PICKER_TYPE_DATE_AND_TIME` and `Display#PICKER_TYPE_TIME`.
+    /// Also, only applicable to lightweight picker (i.e. `#isUseLightweightPopup()` == true.
+    ///
+    /// #### Returns
+    ///
+    /// The minimum hour.  0-24, or -1 for no limit.
+    ///
+    /// #### Since
+    ///
+    /// 6.0
+    ///
+    /// #### See also
+    ///
+    /// - #getMinHour()
+    ///
+    /// - #setHourRange(int, int)
     public int getMaxHour() {
         return maxHour;
     }
 
-    /**
-     * Gets the start date of the picker. Only applicable for types {@link Display#PICKER_TYPE_DATE_AND_TIME} and {@link Display#PICKER_TYPE_DATE}.
-     * Also, only applicable to lightweight picker (i.e. {@link #isUseLightweightPopup() } == {@literal true}.
-     *
-     * @return The start date or null if there is none set.
-     *
-     * <p>This does not apply to the time.  Only the date.  You can set the hour range using {@link #setHourRange(int, int) }.</p>
-     * @see #getEndDate()
-     * @see #setStartDate(java.util.Date)
-     * @see #getMinHour()
-     * @since 6.0
-     */
+    /// Gets the start date of the picker. Only applicable for types `Display#PICKER_TYPE_DATE_AND_TIME` and `Display#PICKER_TYPE_DATE`.
+    /// Also, only applicable to lightweight picker (i.e. `#isUseLightweightPopup()` == true.
+    ///
+    /// #### Returns
+    ///
+    /// @return The start date or null if there is none set.
+    ///
+    /// This does not apply to the time.  Only the date.  You can set the hour range using `int)`.
+    ///
+    /// #### Since
+    ///
+    /// 6.0
+    ///
+    /// #### See also
+    ///
+    /// - #getEndDate()
+    ///
+    /// - #setStartDate(java.util.Date)
+    ///
+    /// - #getMinHour()
     public Date getStartDate() {
         return this.startDate;
     }
 
-    /**
-     * Sets the start date of the picker. Only applicable for types {@link Display#PICKER_TYPE_DATE_AND_TIME} and {@link Display#PICKER_TYPE_DATE}.
-     * Also, only applicable to lightweight picker (i.e. {@link #isUseLightweightPopup() } == {@literal true}.
-     *
-     * <p>This does not affect the time.  Only the date.  You can set the hour range using {@link #setHourRange(int, int) }.</p>
-     *
-     * @param start The start date.
-     * @see #getStartDate()
-     * @see #setEndDate(java.util.Date)
-     * @since 6.0
-     */
+    /// Sets the start date of the picker. Only applicable for types `Display#PICKER_TYPE_DATE_AND_TIME` and `Display#PICKER_TYPE_DATE`.
+    /// Also, only applicable to lightweight picker (i.e. `#isUseLightweightPopup()` == true.
+    ///
+    /// This does not affect the time.  Only the date.  You can set the hour range using `int)`.
+    ///
+    /// #### Parameters
+    ///
+    /// - `start`: The start date.
+    ///
+    /// #### Since
+    ///
+    /// 6.0
+    ///
+    /// #### See also
+    ///
+    /// - #getStartDate()
+    ///
+    /// - #setEndDate(java.util.Date)
     public void setStartDate(Date start) {
         this.startDate = start;
     }
 
-    /**
-     * Gets the end date of the picker. Only applicable for types {@link Display#PICKER_TYPE_DATE_AND_TIME} and {@link Display#PICKER_TYPE_DATE}.
-     * Also, only applicable to lightweight picker (i.e. {@link #isUseLightweightPopup() } == {@literal true}.
-     *
-     * @return The end date or null if there is none set.
-     *
-     * <p>This does not apply to the time.  Only the date.  You can set the hour range using {@link #setHourRange(int, int) }.</p>
-     * @see #getStartDate()
-     * @see #setEndDate(java.util.Date)
-     * @see #getMaxHour()
-     * @since 6.0
-     */
+    /// Gets the end date of the picker. Only applicable for types `Display#PICKER_TYPE_DATE_AND_TIME` and `Display#PICKER_TYPE_DATE`.
+    /// Also, only applicable to lightweight picker (i.e. `#isUseLightweightPopup()` == true.
+    ///
+    /// #### Returns
+    ///
+    /// @return The end date or null if there is none set.
+    ///
+    /// This does not apply to the time.  Only the date.  You can set the hour range using `int)`.
+    ///
+    /// #### Since
+    ///
+    /// 6.0
+    ///
+    /// #### See also
+    ///
+    /// - #getStartDate()
+    ///
+    /// - #setEndDate(java.util.Date)
+    ///
+    /// - #getMaxHour()
     public Date getEndDate() {
         return this.endDate;
     }
 
-    /**
-     * Sets the end date of the picker. Only applicable for types {@link Display#PICKER_TYPE_DATE_AND_TIME} and {@link Display#PICKER_TYPE_DATE}.
-     * Also, only applicable to lightweight picker (i.e. {@link #isUseLightweightPopup() } == {@literal true}.
-     *
-     * <p>This does not affect the time.  Only the date.  You can set the hour range using {@link #setHourRange(int, int) }.</p>
-     *
-     * @param end The end date.
-     * @see #setStartDate(java.util.Date)
-     * @see #getEndDate()
-     * @since 6.0
-     */
+    /// Sets the end date of the picker. Only applicable for types `Display#PICKER_TYPE_DATE_AND_TIME` and `Display#PICKER_TYPE_DATE`.
+    /// Also, only applicable to lightweight picker (i.e. `#isUseLightweightPopup()` == true.
+    ///
+    /// This does not affect the time.  Only the date.  You can set the hour range using `int)`.
+    ///
+    /// #### Parameters
+    ///
+    /// - `end`: The end date.
+    ///
+    /// #### Since
+    ///
+    /// 6.0
+    ///
+    /// #### See also
+    ///
+    /// - #setStartDate(java.util.Date)
+    ///
+    /// - #getEndDate()
     public void setEndDate(Date end) {
         this.endDate = end;
     }
 
-    /**
-     * Checks if this picker is in lightweight mode.  If this returns true, then the
-     * picker will use cross-platform lightweight widgets instead of native widgets.
-     */
+    /// Checks if this picker is in lightweight mode.  If this returns true, then the
+    /// picker will use cross-platform lightweight widgets instead of native widgets.
     public boolean isUseLightweightPopup() {
         return useLightweightPopup;
     }
 
-    /**
-     * Sets the picker to use lightweight mode for its widgets.  With this mode enabled
-     * the picker will use cross-platform lightweight widgets instead of native widgets.
-     *
-     * @param useLightweightPopup
-     */
+    /// Sets the picker to use lightweight mode for its widgets.  With this mode enabled
+    /// the picker will use cross-platform lightweight widgets instead of native widgets.
+    ///
+    /// #### Parameters
+    ///
+    /// - `useLightweightPopup`
     public void setUseLightweightPopup(boolean useLightweightPopup) {
         this.useLightweightPopup = useLightweightPopup;
     }
 
-    /**
-     * Check to see if the built-in action listener should ignore a given
-     * action event.  This allows us to propagate action events
-     * out of the Picker as opposed to detecting clicks on the picker button.
-     *
-     * @param evt
-     * @return
-     */
+    /// Check to see if the built-in action listener should ignore a given
+    /// action event.  This allows us to propagate action events
+    /// out of the Picker as opposed to detecting clicks on the picker button.
+    ///
+    /// #### Parameters
+    ///
+    /// - `evt`
     private boolean ignoreActionEvent(ActionEvent evt) {
         return evt.getX() == -99 && evt.getY() == -99;
     }
@@ -903,7 +1066,7 @@ public class Picker extends Button {
         stopEditingCallback = onFinish;
         Form f = this.getComponentForm();
         if (f != null) {
-            if (f.getCurrentInputDevice() == currentInput) {
+            if (f.getCurrentInputDevice() == currentInput) { //NOPMD CompareObjectsWithEquals
                 try {
                     f.setCurrentInputDevice(null);
                 } catch (Throwable t) {
@@ -916,9 +1079,7 @@ public class Picker extends Button {
     @Override
     public boolean isEditing() {
         Form f = this.getComponentForm();
-        boolean out = currentInput != null && f != null && f.getCurrentInputDevice() == currentInput;
-
-        return out;
+        return currentInput != null && f != null && f.getCurrentInputDevice() == currentInput; //NOPMD CompareObjectsWithEquals
     }
 
     @Override
@@ -926,24 +1087,24 @@ public class Picker extends Button {
         return isUseLightweightPopup();
     }
 
-    /**
-     * Returns the type of the picker
-     *
-     * @return one of Display.PICKER_TYPE_DATE, Display.PICKER_TYPE_DATE_AND_TIME, Display.PICKER_TYPE_STRINGS,
-     * Display.PICKER_TYPE_DURATION, Display.PICKER_TYPE_DURATION_HOURS, Display.PICKER_TYPE_DURATION_MINUTES, or
-     * Display.PICKER_TYPE_TIME
-     */
+    /// Returns the type of the picker
+    ///
+    /// #### Returns
+    ///
+    /// @return one of Display.PICKER_TYPE_DATE, Display.PICKER_TYPE_DATE_AND_TIME, Display.PICKER_TYPE_STRINGS,
+    /// Display.PICKER_TYPE_DURATION, Display.PICKER_TYPE_DURATION_HOURS, Display.PICKER_TYPE_DURATION_MINUTES, or
+    /// Display.PICKER_TYPE_TIME
     public int getType() {
         return type;
     }
 
-    /**
-     * Sets the type of the picker to one of Display.PICKER_TYPE_DATE, Display.PICKER_TYPE_DATE_AND_TIME, Display.PICKER_TYPE_STRINGS,
-     * Display.PICKER_TYPE_DURATION, Display.PICKER_TYPE_DURATION_HOURS, Display.PICKER_TYPE_DURATION_MINUTES or
-     * Display.PICKER_TYPE_TIME
-     *
-     * @param type the type
-     */
+    /// Sets the type of the picker to one of Display.PICKER_TYPE_DATE, Display.PICKER_TYPE_DATE_AND_TIME, Display.PICKER_TYPE_STRINGS,
+    /// Display.PICKER_TYPE_DURATION, Display.PICKER_TYPE_DURATION_HOURS, Display.PICKER_TYPE_DURATION_MINUTES or
+    /// Display.PICKER_TYPE_TIME
+    ///
+    /// #### Parameters
+    ///
+    /// - `type`: the type
     public void setType(int type) {
         this.type = type;
         switch (type) {
@@ -977,23 +1138,23 @@ public class Picker extends Button {
         }
     }
 
-    /**
-     * Returns the date, this value is used both for type date/date and time. Notice that this
-     * value isn't used for time
-     *
-     * @return the date object
-     */
+    /// Returns the date, this value is used both for type date/date and time. Notice that this
+    /// value isn't used for time
+    ///
+    /// #### Returns
+    ///
+    /// the date object
     public Date getDate() {
         return (Date) value;
     }
 
-    /**
-     * Sets the date, this value is used both for type date/date and time. Notice that this
-     * value isn't used for time. Notice that this value will have no effect if the picker
-     * is currently showing.
-     *
-     * @param d the new date
-     */
+    /// Sets the date, this value is used both for type date/date and time. Notice that this
+    /// value isn't used for time. Notice that this value will have no effect if the picker
+    /// is currently showing.
+    ///
+    /// #### Parameters
+    ///
+    /// - `d`: the new date
     public void setDate(Date d) {
         value = d;
         updateValue();
@@ -1022,7 +1183,7 @@ public class Picker extends Button {
                 // Simulating a drag will trigger tensile drag to push the content
                 // back up to the top.
                 // See https://github.com/codenameone/CodenameOne/issues/2476
-                        if (f.getContentPane().getScrollY() < 0) {
+                if (f.getContentPane().getScrollY() < 0) {
                     f.getContentPane().pointerPressed(100, 100);
                     f.getContentPane().pointerDragged(100, 100);
                     f.getContentPane().pointerReleased(100, 100);
@@ -1033,7 +1194,7 @@ public class Picker extends Button {
         }
     }
 
-    private void padContentPane(final int top, final int bottom, final int left, final int right) {
+    private void padContentPane(final int top) {
         final Form f = getComponentForm();
         if (f != null) {
             f.getAnimationManager().flushAnimation(new Runnable() {
@@ -1101,7 +1262,7 @@ public class Picker extends Button {
                             @Override
                             public void run() {
                                 dlg.resize(top, bottom, left, right);
-                                padContentPane(top, bottom, left, right);
+                                padContentPane(top);
 
 
                             }
@@ -1116,7 +1277,7 @@ public class Picker extends Button {
             }
 
             try {
-                VirtualInputDevice nextInput = new VirtualInputDevice() {
+                VirtualInputDevice nextInput = new VirtualInputDevice() { //NOPMD CloseResource - managed by Form#setCurrentInputDevice
 
                     @Override
                     public void close() throws Exception {
@@ -1151,23 +1312,87 @@ public class Picker extends Button {
         }
     }
 
-    /**
-     * Returns the String array matching the metadata
-     *
-     * @return a string array
-     */
+    /// Returns the String array matching the metadata
+    ///
+    /// #### Returns
+    ///
+    /// a string array
     public String[] getStrings() {
         return (String[]) metaData;
     }
 
-    /**
-     * <p>Sets the string entries for the string picker. <br>
-     * sample usage for this method below:</p>
-     *
-     * <script src="https://gist.github.com/codenameone/47602e679f61712693bd.js"></script>
-     *
-     * @param strs string array
-     */
+    /// Sets the string entries for the string picker.
+    ///
+    /// sample usage for this method below:
+    ///
+    /// ```java
+    /// Toolbar.setGlobalToolbar(true);
+    /// Form hi = new Form("Transitions", new BoxLayout(BoxLayout.Y_AXIS));
+    /// Style bg = hi.getContentPane().getUnselectedStyle();
+    /// bg.setBgTransparency(255);
+    /// bg.setBgColor(0xff0000);
+    /// Button showTransition = new Button("Show");
+    /// Picker pick = new Picker();
+    /// pick.setStrings("Slide", "SlideFade", "Cover", "Uncover", "Fade", "Flip");
+    /// pick.setSelectedString("Slide");
+    /// TextField duration = new TextField("10000", "Duration", 6, TextArea.NUMERIC);
+    /// CheckBox horizontal = CheckBox.createToggle("Horizontal");
+    /// pick.addActionListener((e) -> {
+    ///     String s = pick.getSelectedString().toLowerCase();
+    ///     horizontal.setEnabled(s.equals("slide") || s.indexOf("cover") > -1);
+    /// });
+    /// horizontal.setSelected(true);
+    /// hi.add(showTransition).
+    ///     add(pick).
+    ///     add(duration).
+    ///     add(horizontal);
+    ///
+    /// Form dest = new Form("Destination");
+    /// bg = dest.getContentPane().getUnselectedStyle();
+    /// bg.setBgTransparency(255);
+    /// bg.setBgColor(0xff);
+    /// dest.setBackCommand(
+    ///         dest.getToolbar().addCommandToLeftBar("Back", null, (e) -> hi.showBack()));
+    ///
+    /// showTransition.addActionListener((e) -> {
+    ///     int h = CommonTransitions.SLIDE_HORIZONTAL;
+    ///     if(!horizontal.isSelected()) {
+    ///         h = CommonTransitions.SLIDE_VERTICAL;
+    ///     }
+    ///     switch(pick.getSelectedString()) {
+    ///         case "Slide":
+    ///             hi.setTransitionOutAnimator(CommonTransitions.createSlide(h, true, duration.getAsInt(3000)));
+    ///             dest.setTransitionOutAnimator(CommonTransitions.createSlide(h, true, duration.getAsInt(3000)));
+    ///             break;
+    ///         case "SlideFade":
+    ///             hi.setTransitionOutAnimator(CommonTransitions.createSlideFadeTitle(true, duration.getAsInt(3000)));
+    ///             dest.setTransitionOutAnimator(CommonTransitions.createSlideFadeTitle(true, duration.getAsInt(3000)));
+    ///             break;
+    ///         case "Cover":
+    ///             hi.setTransitionOutAnimator(CommonTransitions.createCover(h, true, duration.getAsInt(3000)));
+    ///             dest.setTransitionOutAnimator(CommonTransitions.createCover(h, true, duration.getAsInt(3000)));
+    ///             break;
+    ///         case "Uncover":
+    ///             hi.setTransitionOutAnimator(CommonTransitions.createUncover(h, true, duration.getAsInt(3000)));
+    ///             dest.setTransitionOutAnimator(CommonTransitions.createUncover(h, true, duration.getAsInt(3000)));
+    ///             break;
+    ///         case "Fade":
+    ///             hi.setTransitionOutAnimator(CommonTransitions.createFade(duration.getAsInt(3000)));
+    ///             dest.setTransitionOutAnimator(CommonTransitions.createFade(duration.getAsInt(3000)));
+    ///             break;
+    ///         case "Flip":
+    ///             hi.setTransitionOutAnimator(new FlipTransition(-1, duration.getAsInt(3000)));
+    ///             dest.setTransitionOutAnimator(new FlipTransition(-1, duration.getAsInt(3000)));
+    ///             break;
+    ///     }
+    ///     dest.show();
+    /// });
+    /// hi.show();
+    /// ```
+    ///
+    /// #### Parameters
+    ///
+    /// - `strs`: string array
     public void setStrings(String... strs) {
         this.type = Display.PICKER_TYPE_STRINGS;
         int slen = strs.length;
@@ -1183,30 +1408,30 @@ public class Picker extends Button {
         updateValue();
     }
 
-    /**
-     * Returns the current string
-     *
-     * @return the selected string
-     */
+    /// Returns the current string
+    ///
+    /// #### Returns
+    ///
+    /// the selected string
     public String getSelectedString() {
         return (String) value;
     }
 
-    /**
-     * Sets the current value in a string array picker
-     *
-     * @param str the current value
-     */
+    /// Sets the current value in a string array picker
+    ///
+    /// #### Parameters
+    ///
+    /// - `str`: the current value
     public void setSelectedString(String str) {
         value = str;
         updateValue();
     }
 
-    /**
-     * Returns the index of the selected string
-     *
-     * @return the selected string offset or -1
-     */
+    /// Returns the index of the selected string
+    ///
+    /// #### Returns
+    ///
+    /// the selected string offset or -1
     public int getSelectedStringIndex() {
         int offset = 0;
         if (value == null) {
@@ -1227,20 +1452,18 @@ public class Picker extends Button {
         return -1;
     }
 
-    /**
-     * Returns the index of the selected string
-     *
-     * @param index sets the index of the selected string
-     */
+    /// Returns the index of the selected string
+    ///
+    /// #### Parameters
+    ///
+    /// - `index`: sets the index of the selected string
     public void setSelectedStringIndex(int index) {
         value = ((String[]) metaData)[index];
         updateValue();
     }
 
-    /**
-     * Updates the display value of the picker, subclasses can override this to invoke
-     * set text with the right value
-     */
+    /// Updates the display value of the picker, subclasses can override this to invoke
+    /// set text with the right value
     protected void updateValue() {
         if (value == null) {
             setText("...");
@@ -1318,238 +1541,248 @@ public class Picker extends Button {
         }
     }
 
-    /**
-     * Convenience method equivalent to invoking setTime(hour * 60 + minute);
-     *
-     * @param hour   the hour in 24hr format
-     * @param minute the minute within the hour
-     */
+    /// Convenience method equivalent to invoking setTime(hour * 60 + minute);
+    ///
+    /// #### Parameters
+    ///
+    /// - `hour`: the hour in 24hr format
+    ///
+    /// - `minute`: the minute within the hour
     public void setTime(int hour, int minute) {
         setTime(hour * 60 + minute);
     }
 
-    /**
-     * This value is only used for time type and is ignored in the case of date and time where
-     * both are embedded within the date.
-     *
-     * @return the time value as minutes since midnight e.g. 630 is 10:30am
-     */
+    /// This value is only used for time type and is ignored in the case of date and time where
+    /// both are embedded within the date.
+    ///
+    /// #### Returns
+    ///
+    /// the time value as minutes since midnight e.g. 630 is 10:30am
     public int getTime() {
         return ((Integer) value).intValue();
     }
 
-    /**
-     * This value is only used for time type and is ignored in the case of date and time where
-     * both are embedded within the date.
-     *
-     * @param time the time value as minutes since midnight e.g. 630 is 10:30am
-     */
+    /// This value is only used for time type and is ignored in the case of date and time where
+    /// both are embedded within the date.
+    ///
+    /// #### Parameters
+    ///
+    /// - `time`: the time value as minutes since midnight e.g. 630 is 10:30am
     public void setTime(int time) {
         value = Integer.valueOf(time);
         updateValue();
     }
 
-    /**
-     * Sets the minute step size for PICKER_TYPE_DURATION, and PICKER_TYPE_DURATION_TIME types.
-     *
-     * @param step The step size in minutes.
-     */
+    /// Sets the minute step size for PICKER_TYPE_DURATION, and PICKER_TYPE_DURATION_TIME types.
+    ///
+    /// #### Parameters
+    ///
+    /// - `step`: The step size in minutes.
     public void setMinuteStep(int step) {
         this.minuteStep = step;
     }
 
-    /**
-     * Convenience method for setting duration in hours and minutes.
-     *
-     * @param hour   The hours for duration.
-     * @param minute The minutes for duration.
-     * @see #setDuration(long)
-     * @see #getDuration()
-     * @see #getDurationHours()
-     * @see #getDurationMinutes()
-     */
+    /// Convenience method for setting duration in hours and minutes.
+    ///
+    /// #### Parameters
+    ///
+    /// - `hour`: The hours for duration.
+    ///
+    /// - `minute`: The minutes for duration.
+    ///
+    /// #### See also
+    ///
+    /// - #setDuration(long)
+    ///
+    /// - #getDuration()
+    ///
+    /// - #getDurationHours()
+    ///
+    /// - #getDurationMinutes()
     public void setDuration(int hour, int minute) {
         setDuration(hour * 60L * 60 * 1000L + minute * 60L * 1000L);
     }
 
-    /**
-     * This value is used for the duration type.
-     *
-     * @return The duration in milliseconds.
-     * @see #getDurationHours()
-     * @see #getDurationMinutes()
-     */
+    /// This value is used for the duration type.
+    ///
+    /// #### Returns
+    ///
+    /// The duration in milliseconds.
+    ///
+    /// #### See also
+    ///
+    /// - #getDurationHours()
+    ///
+    /// - #getDurationMinutes()
     public long getDuration() {
         return (Long) value;
     }
 
-    /**
-     * This value is only used for duration type.
-     *
-     * @param duration The duration value in milliseconds.
-     * @see #setDuration(int, int)
-     * @see #getDuration()
-     * @see #getDurationHours()
-     * @see #getDurationMinutes()
-     */
+    /// This value is only used for duration type.
+    ///
+    /// #### Parameters
+    ///
+    /// - `duration`: The duration value in milliseconds.
+    ///
+    /// #### See also
+    ///
+    /// - #setDuration(int, int)
+    ///
+    /// - #getDuration()
+    ///
+    /// - #getDurationHours()
+    ///
+    /// - #getDurationMinutes()
     public void setDuration(long duration) {
         value = Long.valueOf(duration);
         updateValue();
     }
 
-    /**
-     * Gets the duration hours.  Used only for duration type.
-     *
-     * @return The duration hours.
-     * @see #getDurationMinutes()
-     * @see #getDuration()
-     */
+    /// Gets the duration hours.  Used only for duration type.
+    ///
+    /// #### Returns
+    ///
+    /// The duration hours.
+    ///
+    /// #### See also
+    ///
+    /// - #getDurationMinutes()
+    ///
+    /// - #getDuration()
     public int getDurationHours() {
         return (int) (getDuration() / 60 / 60 / 1000L);
     }
 
-    /**
-     * Gets the duration minutes.  Used only for duration type.
-     *
-     * @return The duration minutes.
-     * @see #getDurationHours()
-     * @see #getDuration()
-     */
+    /// Gets the duration minutes.  Used only for duration type.
+    ///
+    /// #### Returns
+    ///
+    /// The duration minutes.
+    ///
+    /// #### See also
+    ///
+    /// - #getDurationHours()
+    ///
+    /// - #getDuration()
     public int getDurationMinutes() {
         return (int) (getDuration() / 1000 / 60) % 60;
     }
 
-    /**
-     * Indicates whether hours should be rendered as AM/PM or 24hr format
-     *
-     * @return the showMeridiem
-     */
+    /// Indicates whether hours should be rendered as AM/PM or 24hr format
+    ///
+    /// #### Returns
+    ///
+    /// the showMeridiem
     public boolean isShowMeridiem() {
         return showMeridiem;
     }
 
-    /**
-     * Indicates whether hours should be rendered as AM/PM or 24hr format
-     *
-     * @param showMeridiem the showMeridiem to set
-     */
+    /// Indicates whether hours should be rendered as AM/PM or 24hr format
+    ///
+    /// #### Parameters
+    ///
+    /// - `showMeridiem`: the showMeridiem to set
     public void setShowMeridiem(boolean showMeridiem) {
         this.showMeridiem = showMeridiem;
         updateValue();
     }
 
-    /**
-     * When using a lightweight spinner this will be used as the rendering prototype
-     *
-     * @return the renderingPrototype
-     */
+    /// When using a lightweight spinner this will be used as the rendering prototype
+    ///
+    /// #### Returns
+    ///
+    /// the renderingPrototype
     public Object getRenderingPrototype() {
         return renderingPrototype;
     }
 
-    /**
-     * When using a lightweight spinner this will be used as the rendering prototype
-     *
-     * @param renderingPrototype the renderingPrototype to set
-     */
+    /// When using a lightweight spinner this will be used as the rendering prototype
+    ///
+    /// #### Parameters
+    ///
+    /// - `renderingPrototype`: the renderingPrototype to set
     public void setRenderingPrototype(Object renderingPrototype) {
         this.renderingPrototype = renderingPrototype;
     }
 
-    /**
-     * Allows us to define a date format for the display of dates/times
-     *
-     * @return the defined formatter
-     */
+    /// Allows us to define a date format for the display of dates/times
+    ///
+    /// #### Returns
+    ///
+    /// the defined formatter
     public SimpleDateFormat getFormatter() {
         return formatter;
     }
 
-    /**
-     * Allows us to define a date format for the display of dates/times
-     *
-     * @param formatter the new formatter
-     */
+    /// Allows us to define a date format for the display of dates/times
+    ///
+    /// #### Parameters
+    ///
+    /// - `formatter`: the new formatter
     public void setFormatter(SimpleDateFormat formatter) {
         this.formatter = formatter;
         updateValue();
     }
 
-    /**
-     * The preferred width of the popup dialog. This will only
-     * be used on devices where the popup width and height are configurable, such
-     * as the iPad or tablets.  On iPhone, the picker always spans the width of the
-     * screen along the bottom.
-     *
-     * @return
-     */
+    /// The preferred width of the popup dialog. This will only
+    /// be used on devices where the popup width and height are configurable, such
+    /// as the iPad or tablets.  On iPhone, the picker always spans the width of the
+    /// screen along the bottom.
     public int getPreferredPopupWidth() {
         return preferredPopupWidth;
     }
 
-    /**
-     * The preferred width of the popup dialog for the picker.  This will only
-     * be used on devices where the popup width and height are configurable, such
-     * as the iPad or tablets.  On iPhone, the picker always spans the width of the
-     * screen along the bottom.
-     *
-     * @param width The preferred width of the popup.
-     */
+    /// The preferred width of the popup dialog for the picker.  This will only
+    /// be used on devices where the popup width and height are configurable, such
+    /// as the iPad or tablets.  On iPhone, the picker always spans the width of the
+    /// screen along the bottom.
+    ///
+    /// #### Parameters
+    ///
+    /// - `width`: The preferred width of the popup.
     public void setPreferredPopupWidth(int width) {
         this.preferredPopupWidth = width;
     }
 
-    /**
-     * The preferred height of the popup dialog.  This will only
-     * be used on devices where the popup width and height are configurable, such
-     * as the iPad or tablets.  On iPhone, the picker always spans the width of the
-     * screen along the bottom.
-     *
-     * @return
-     */
+    /// The preferred height of the popup dialog.  This will only
+    /// be used on devices where the popup width and height are configurable, such
+    /// as the iPad or tablets.  On iPhone, the picker always spans the width of the
+    /// screen along the bottom.
     public int getPreferredPopupHeight() {
         return preferredPopupHeight;
     }
 
-    /**
-     * The preferred height of the popup dialog for the picker.  This will only
-     * be used on devices where the popup width and height are configurable, such
-     * as the iPad or tablets.  On iPhone, the picker always spans the width of the
-     * screen along the bottom.
-     *
-     * @param height The preferred height of the popup.
-     */
+    /// The preferred height of the popup dialog for the picker.  This will only
+    /// be used on devices where the popup width and height are configurable, such
+    /// as the iPad or tablets.  On iPhone, the picker always spans the width of the
+    /// screen along the bottom.
+    ///
+    /// #### Parameters
+    ///
+    /// - `height`: The preferred height of the popup.
     public void setPreferredPopupHeight(int height) {
         this.preferredPopupHeight = height;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public String[] getPropertyNames() {
         return new String[]{"Strings"};
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public Class[] getPropertyTypes() {
         return new Class[]{String[].class};
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public String[] getPropertyTypeNames() {
         return new String[]{"String []"};
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public Object getPropertyValue(String name) {
         if ("Strings".equals(name)) {
@@ -1558,9 +1791,7 @@ public class Picker extends Button {
         return null;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public String setPropertyValue(String name, Object value) {
         if ("Strings".equals(name)) {
@@ -1570,11 +1801,11 @@ public class Picker extends Button {
         return super.setPropertyValue(name, value);
     }
 
-    /**
-     * Returns the value which works for all picker types
-     *
-     * @return the value object
-     */
+    /// Returns the value which works for all picker types
+    ///
+    /// #### Returns
+    ///
+    /// the value object
     public Object getValue() {
         return value;
     }

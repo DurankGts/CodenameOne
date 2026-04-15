@@ -27,8 +27,8 @@ import com.codename1.facebook.FaceBookAccess;
 import com.codename1.io.FileSystemStorage;
 import com.codename1.io.Log;
 import com.codename1.io.MultipartRequest;
-import com.codename1.io.NetworkEvent;
 import com.codename1.io.NetworkManager;
+import com.codename1.io.Util;
 import com.codename1.ui.Dialog;
 import com.codename1.ui.Image;
 import com.codename1.ui.events.ActionEvent;
@@ -38,18 +38,14 @@ import com.codename1.ui.util.Resources;
 import java.io.IOException;
 import java.io.InputStream;
 
-/**
- * Facebook sharing service
- *
- * @author Chen
- */
+/// Facebook sharing service
+///
+/// @author Chen
 public class FacebookShare extends ShareService {
 
     private String token;
 
-    /**
-     * Default Constructor
-     */
+    /// Default Constructor
     public FacebookShare() {
         super("Facebook", null);
     }
@@ -64,33 +60,18 @@ public class FacebookShare extends ShareService {
         return i;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public boolean equals(Object o) {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
-            return false;
-        }
-        if (!super.equals(o)) {
+        if (!(o instanceof FacebookShare)) {
             return false;
         }
 
         FacebookShare that = (FacebookShare) o;
-
-        if (token != null ? !token.equals(that.token) : that.token != null) {
-            return false;
-        }
-
-        return true;
+        return super.equals(o) &&
+                (token == null ? that.token == null : token.equals(that.token));
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public int hashCode() {
         int result = super.hashCode();
@@ -98,9 +79,7 @@ public class FacebookShare extends ShareService {
         return result;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void actionPerformed(ActionEvent evt) {
         if (!FaceBookAccess.getInstance().isAuthenticated()) {
@@ -117,9 +96,7 @@ public class FacebookShare extends ShareService {
         super.actionPerformed(evt);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void share(String text, final String image, final String mime) {
         final ShareForm[] f = new ShareForm[1];
@@ -189,13 +166,15 @@ public class FacebookShare extends ShareService {
                             final String endpoint = "https://graph.facebook.com/me/photos?access_token=" + token;
                             req.setUrl(endpoint);
                             req.addArgumentNoEncoding("message", f[0].getMessage());
-                            InputStream is = null;
+                            InputStream is = null; //NOPMD CloseResource
                             try {
                                 is = FileSystemStorage.getInstance().openInputStream(image);
                                 req.addData("source", is, FileSystemStorage.getInstance().getLength(image), mime);
                                 NetworkManager.getInstance().addToQueue(req);
                             } catch (IOException ioe) {
                                 Log.e(ioe);
+                            } finally {
+                                Util.cleanup(is);
                             }
                         }
                     });
@@ -205,17 +184,13 @@ public class FacebookShare extends ShareService {
 
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void share(String toShare) {
         share(toShare, null, null);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public boolean canShareImage() {
         return true;

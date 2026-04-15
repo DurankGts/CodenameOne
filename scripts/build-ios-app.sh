@@ -4,9 +4,19 @@ set -euo pipefail
 
 bia_log() { echo "[build-ios-app] $1"; }
 
-# Pin Xcode so CN1’s Java subprocess sees xcodebuild
-export DEVELOPER_DIR="/Applications/Xcode_16.4.app/Contents/Developer"
+# Pin Xcode 26 for CI validation.
+if [ -z "${XCODE_APP:-}" ]; then
+  XCODE_APP="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+fi
+if [ ! -x "$XCODE_APP/Contents/Developer/usr/bin/xcodebuild" ]; then
+  bia_log "Xcode 26 not found. Set XCODE_APP to an installed Xcode 26 app bundle path." >&2
+  exit 1
+fi
+export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
+export XCODEBUILD="$DEVELOPER_DIR/usr/bin/xcodebuild"
 export PATH="$DEVELOPER_DIR/usr/bin:$PATH"
+bia_log "Using DEVELOPER_DIR=$DEVELOPER_DIR"
+bia_log "Using XCODEBUILD=$XCODEBUILD"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -44,17 +54,29 @@ if ! command -v xcodebuild >/dev/null 2>&1; then
   bia_log "xcodebuild not found. Install Xcode command-line tools." >&2
   exit 1
 fi
-if ! command -v pod >/dev/null 2>&1; then
-  bia_log "CocoaPods (pod) command not found. Install cocoapods before running this script." >&2
-  exit 1
-fi
-
 export PATH="$JAVA_HOME/bin:$MAVEN_HOME/bin:$PATH"
+BASE_PATH="$PATH"
 
 bia_log "Using JAVA_HOME at $JAVA_HOME"
 bia_log "Using JAVA17_HOME at $JAVA17_HOME"
 bia_log "Using Maven installation at $MAVEN_HOME"
-bia_log "Using CocoaPods version $(pod --version 2>/dev/null || echo '<unknown>')"
+if command -v pod >/dev/null 2>&1; then
+  bia_log "Using CocoaPods version $(pod --version 2>/dev/null || echo '<unknown>')"
+else
+  bia_log "CocoaPods command not found; pod install will be skipped unless the generated project requires it"
+fi
+bia_log "Java version for baseline toolchain:"
+"$JAVA_HOME/bin/java" -version
+bia_log "Using JAVAC from JAVA17_HOME for demo compilation:"
+"$JAVA17_HOME/bin/javac" -version
+IOS_UISCENE="${IOS_UISCENE:-false}"
+bia_log "Building sample app with ios.uiscene=${IOS_UISCENE}"
+EXTRA_IOS_ARGS=()
+if [ -n "${IOS_DEPENDENCY_ARGS:-}" ]; then
+  # shellcheck disable=SC2206
+  EXTRA_IOS_ARGS=(${IOS_DEPENDENCY_ARGS})
+  bia_log "Applying extra iOS build args: ${IOS_DEPENDENCY_ARGS}"
+fi
 
 APP_DIR="scripts/hellocodenameone"
 
@@ -69,12 +91,40 @@ mkdir -p "$ARTIFACTS_DIR"
 
 export CN1_BUILD_STATS_FILE="$ARTIFACTS_DIR/iphone-builder-stats.txt"
 
-./mvnw package \
-  -DskipTests \
-  -Dcodename1.platform=ios \
-  -Dcodename1.buildTarget=ios-source \
-  -Dopen=false \
-  -U -e
+bia_log "Running HelloCodenameOne Maven build with JAVA_HOME=$JAVA17_HOME"
+(
+  export JAVA_HOME="$JAVA17_HOME"
+  export PATH="$JAVA_HOME/bin:$MAVEN_HOME/bin:$BASE_PATH"
+  MVN_IOS_LOG="$ARTIFACTS_DIR/hellocn1-ios-build.log"
+  MVN_CMD=(
+    ./mvnw package
+    -DskipTests
+    -Dcodename1.platform=ios
+    -Dcodename1.buildTarget=ios-source
+    -Dmaven.compiler.fork=true
+    -Dmaven.compiler.executable="$JAVA17_HOME/bin/javac"
+    -Dcodename1.arg.ios.uiscene="${IOS_UISCENE}"
+    -Dopen=false
+  )
+  if [ ${#EXTRA_IOS_ARGS[@]} -gt 0 ]; then
+    MVN_CMD+=("${EXTRA_IOS_ARGS[@]}")
+  fi
+  MVN_CMD+=(-U -e -X)
+  set +e
+  "${MVN_CMD[@]}" > "$MVN_IOS_LOG" 2>&1
+  RC=$?
+  set -e
+  if [ $RC -ne 0 ]; then
+    bia_log "Maven iOS build failed (exit=$RC). Log: $MVN_IOS_LOG"
+    bia_log "Key failure lines:"
+    if command -v rg >/dev/null 2>&1; then
+      rg -n "(iOS builder log:|Caused by:|BuildException|Cannot run program|UnsupportedClassVersionError|error:|\\[ERROR\\])" "$MVN_IOS_LOG" | tail -n 200 || true
+    else
+      grep -nE "(iOS builder log:|Caused by:|BuildException|Cannot run program|UnsupportedClassVersionError|error:|\\[ERROR\\])" "$MVN_IOS_LOG" | tail -n 200 || true
+    fi
+    exit $RC
+  fi
+)
 VM_END=$(date +%s)
 VM_TIME=$((VM_END - VM_START))
 cd ../..
@@ -112,8 +162,11 @@ if [ -z "$PROJECT_DIR" ]; then
 fi
 bia_log "Found generated iOS project at $PROJECT_DIR"
 
-# CocoaPods (project contains a Podfile but usually empty — fine)
 if [ -f "$PROJECT_DIR/Podfile" ]; then
+  if ! command -v pod >/dev/null 2>&1; then
+    bia_log "Generated project requires CocoaPods but the pod command is not installed." >&2
+    exit 1
+  fi
   bia_log "Installing CocoaPods dependencies"
   POD_START=$(date +%s)
   (
@@ -130,7 +183,25 @@ else
   bia_log "Podfile not found in generated project; skipping pod install"
 fi
 
-# Locate workspace for the next step
+WORKSPACE_XML='<?xml version="1.0" encoding="UTF-8"?>
+<Workspace
+   version = "1.0">
+   <FileRef
+      location = "group:HelloCodenameOne.xcodeproj">
+   </FileRef>
+</Workspace>'
+if [ ! -d "$PROJECT_DIR/HelloCodenameOne.xcworkspace" ] && [ -d "$PROJECT_DIR/HelloCodenameOne.xcodeproj" ]; then
+  bia_log "Creating fallback xcworkspace for generated Xcode project"
+  mkdir -p "$PROJECT_DIR/HelloCodenameOne.xcworkspace"
+  printf '%s\n' "$WORKSPACE_XML" > "$PROJECT_DIR/HelloCodenameOne.xcworkspace/contents.xcworkspacedata"
+fi
+
+if [ -d "$PROJECT_DIR/HelloCodenameOne.xcodeproj" ]; then
+  bia_log "Ensuring shared Xcode scheme exists"
+  "$REPO_ROOT/scripts/ios/create-shared-scheme.py" "$PROJECT_DIR" HelloCodenameOne
+fi
+
+# Locate workspace or project for the next step
 WORKSPACE=""
 for candidate in "$PROJECT_DIR"/*.xcworkspace; do
   if [ -d "$candidate" ]; then
@@ -139,11 +210,19 @@ for candidate in "$PROJECT_DIR"/*.xcworkspace; do
   fi
 done
 if [ -z "$WORKSPACE" ]; then
-  bia_log "Failed to locate xcworkspace in $PROJECT_DIR" >&2
+  for candidate in "$PROJECT_DIR"/*.xcodeproj; do
+    if [ -d "$candidate" ]; then
+      WORKSPACE="$candidate"
+      break
+    fi
+  done
+fi
+if [ -z "$WORKSPACE" ]; then
+  bia_log "Failed to locate xcworkspace or xcodeproj in $PROJECT_DIR" >&2
   ls "$PROJECT_DIR" >&2 || true
   exit 1
 fi
-bia_log "Found xcworkspace: $WORKSPACE"
+bia_log "Found Xcode entrypoint: $WORKSPACE"
 
 
 # Make these visible to the next GH Actions step
@@ -159,6 +238,10 @@ bia_log "Emitted outputs -> workspace=$WORKSPACE, scheme=HelloCodenameOne"
 # (Optional) dump xcodebuild -list for debugging
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-$REPO_ROOT/artifacts}"
 mkdir -p "$ARTIFACTS_DIR"
-xcodebuild -workspace "$WORKSPACE" -list > "$ARTIFACTS_DIR/xcodebuild-list.txt" 2>&1 || true
+if [[ "$WORKSPACE" == *.xcworkspace ]]; then
+  xcodebuild -workspace "$WORKSPACE" -list > "$ARTIFACTS_DIR/xcodebuild-list.txt" 2>&1 || true
+else
+  xcodebuild -project "$WORKSPACE" -list > "$ARTIFACTS_DIR/xcodebuild-list.txt" 2>&1 || true
+fi
 
 exit 0

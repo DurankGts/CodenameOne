@@ -33,14 +33,12 @@ import com.codename1.ui.Image;
 
 import java.io.InputStream;
 
-/**
- * This class is identical to FileEncodedImage with the difference of using
- * asynchronous loading for files (and the animation framework) which will
- * not work for all cases (e.g. renderers) but could improve some performance/RAM
- * aspects.
- *
- * @author Shai Almog
- */
+/// This class is identical to FileEncodedImage with the difference of using
+/// asynchronous loading for files (and the animation framework) which will
+/// not work for all cases (e.g. renderers) but could improve some performance/RAM
+/// aspects.
+///
+/// @author Shai Almog
 public final class FileEncodedImageAsync extends EncodedImage {
     private static final Object LOCK = new Object();
     private final String fileName;
@@ -63,46 +61,55 @@ public final class FileEncodedImageAsync extends EncodedImage {
         this.placeholderImage = placeholderImage;
     }
 
-    /**
-     * Creates an encoded image that maps to a local file thus allowing to
-     * seamlessly fetch files as needed. This only works reasonably well for very small
-     * files.
-     *
-     * @param fileName    the name of the file
-     * @param placeholder a placeholder image until the actual image loads
-     * @param width       the width of the file or -1 if unknown (notice that this will improve performance)
-     * @param height      the height of the file or -1 if unknown (notice that this will improve performance)
-     * @return image that will load the file seamlessly
-     * @deprecated use the version that accepts a name and a placeholderImage
-     */
+    /// Creates an encoded image that maps to a local file thus allowing to
+    /// seamlessly fetch files as needed. This only works reasonably well for very small
+    /// files.
+    ///
+    /// #### Parameters
+    ///
+    /// - `fileName`: the name of the file
+    ///
+    /// - `placeholder`: a placeholder image until the actual image loads
+    ///
+    /// - `width`: the width of the file or -1 if unknown (notice that this will improve performance)
+    ///
+    /// - `height`: the height of the file or -1 if unknown (notice that this will improve performance)
+    ///
+    /// #### Returns
+    ///
+    /// image that will load the file seamlessly
+    ///
+    /// #### Deprecated
+    ///
+    /// use the version that accepts a name and a placeholderImage
     public static FileEncodedImageAsync create(String fileName, byte[] placeholder, int width, int height) {
         return new FileEncodedImageAsync(fileName, placeholder, width, height);
     }
 
-    /**
-     * Creates an encoded image that maps to a local file thus allowing to
-     * seamlessly fetch files as needed. This only works reasonably well for very small
-     * files.
-     *
-     * @param fileName    the name of the file
-     * @param placeholder an image that will occupy the space
-     * @return image that will load the file seamlessly
-     */
+    /// Creates an encoded image that maps to a local file thus allowing to
+    /// seamlessly fetch files as needed. This only works reasonably well for very small
+    /// files.
+    ///
+    /// #### Parameters
+    ///
+    /// - `fileName`: the name of the file
+    ///
+    /// - `placeholder`: an image that will occupy the space
+    ///
+    /// #### Returns
+    ///
+    /// image that will load the file seamlessly
     public static FileEncodedImageAsync create(String fileName, Image placeholder) {
         return new FileEncodedImageAsync(fileName, placeholder);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     protected void resetCache() {
         super.resetCache();
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     protected Image getInternal() {
         if (imageData == null) {
@@ -115,9 +122,7 @@ public final class FileEncodedImageAsync extends EncodedImage {
         return super.getInternal();
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public byte[] getImageData() {
         if (imageData != null) {
@@ -131,7 +136,7 @@ public final class FileEncodedImageAsync extends EncodedImage {
             Display.getInstance().scheduleBackgroundTask(new Runnable() {
                 @Override
                 public void run() {
-                    InputStream i = null;
+                    InputStream i = null; //NOPMD CloseResource
                     try {
                         if (!FileSystemStorage.getInstance().exists(fileName)) {
                             Log.p(fileName + " doesn't exist");
@@ -140,7 +145,6 @@ public final class FileEncodedImageAsync extends EncodedImage {
                         final byte[] imageDataLocal = new byte[(int) FileSystemStorage.getInstance().getLength(fileName)];
                         i = FileSystemStorage.getInstance().openInputStream(fileName);
                         Util.readFully(i, imageDataLocal);
-                        i.close();
 
                         // we need to change the image on the EDT to avoid potential race conditions
                         Display.getInstance().callSerially(new Runnable() {
@@ -167,9 +171,7 @@ public final class FileEncodedImageAsync extends EncodedImage {
         return placeholder;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public boolean animate() {
         if (changePending) {
@@ -181,9 +183,7 @@ public final class FileEncodedImageAsync extends EncodedImage {
         return false;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public boolean isAnimation() {
         return true;

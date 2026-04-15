@@ -24,12 +24,10 @@ package com.codename1.facebook;
 
 import java.util.Hashtable;
 
-/**
- * This class represents a Facebook Page object
- * https://developers.facebook.com/docs/reference/api/page/
- *
- * @author Chen Fishbein
- */
+/// This class represents a Facebook Page object
+/// https://developers.facebook.com/docs/reference/api/page/
+///
+/// @author Chen Fishbein
 public class Page extends FBObject {
 
     private String about;
@@ -42,88 +40,66 @@ public class Page extends FBObject {
     private String coverId;
     private String coverLink;
 
-    /**
-     * Empty Contructor
-     */
+    /// Empty Contructor
     public Page() {
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// Constructor with properties to initialize this page.
     public Page(Hashtable props) {
         super(props);
         init(props);
     }
 
-    /**
-     * Simple Getter
-     */
+    /// Simple Getter
     public String getAbout() {
         return about;
     }
 
-    /**
-     * Simple Getter
-     */
+    /// Simple Getter
     public String getCategory() {
         return category;
     }
 
-    /**
-     * Simple Getter
-     */
+    /// Simple Getter
     public String getCoverId() {
         return coverId;
     }
 
-    /**
-     * Simple Getter
-     */
+    /// Simple Getter
     public String getCoverLink() {
         return coverLink;
     }
 
-    /**
-     * Simple Getter
-     */
+    /// Simple Getter
     public String getFounded() {
         return founded;
     }
 
-    /**
-     * Simple Getter
-     */
+    /// Simple Getter
     public int getLikesCount() {
         return likesCount;
     }
 
-    /**
-     * Simple Getter
-     */
+    /// Simple Getter
     public String getLink() {
         return link;
     }
 
-    /**
-     * Simple Getter
-     */
+    /// Simple Getter
     public String getUsername() {
         return username;
     }
 
-    /**
-     * Simple Getter
-     */
+    /// Simple Getter
     public String getWebsite() {
         return website;
     }
 
-    /**
-     * copies the relevant values from the given hashtable
-     *
-     * @param props an hashtable to copy from
-     */
+    /// copies the relevant values from the given hashtable
+    ///
+    /// #### Parameters
+    ///
+    /// - `props`: an hashtable to copy from
     @Override
     public void copy(Hashtable props) {
         super.copy(props);
@@ -153,9 +129,7 @@ public class Page extends FBObject {
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -167,11 +141,18 @@ public class Page extends FBObject {
         return super.equals(o);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public int hashCode() {
-        return super.hashCode();
+        int result = super.hashCode();
+        result = 31 * result + (about != null ? about.hashCode() : 0);
+        result = 31 * result + (category != null ? category.hashCode() : 0);
+        result = 31 * result + (founded != null ? founded.hashCode() : 0);
+        result = 31 * result + likesCount;
+        result = 31 * result + (link != null ? link.hashCode() : 0);
+        result = 31 * result + (username != null ? username.hashCode() : 0);
+        result = 31 * result + (website != null ? website.hashCode() : 0);
+        result = 31 * result + (coverId != null ? coverId.hashCode() : 0);
+        result = 31 * result + (coverLink != null ? coverLink.hashCode() : 0);
+        return result;
     }
 }

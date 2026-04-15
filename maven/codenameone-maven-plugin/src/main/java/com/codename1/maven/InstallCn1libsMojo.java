@@ -230,6 +230,7 @@ public class InstallCn1libsMojo extends AbstractCN1Mojo {
         return changed;
     }
     
+
     /**
      * Merges the lib's required properties with the project properties.  Does not persist.
      * @param artifact
@@ -244,11 +245,8 @@ public class InstallCn1libsMojo extends AbstractCN1Mojo {
         String javaVersion = (String)projectProps.getProperty("codename1.arg.java.version", "8");
         String javaVersionLib = (String)libProps.get("codename1.arg.java.version");
         if(javaVersionLib != null){
-            int v1 = 5;
-            if(javaVersion != null){
-                v1 = Integer.parseInt(javaVersion);
-            }
-            int v2 = Integer.parseInt(javaVersionLib);
+            int v1 = JavaVersionUtil.parseJavaVersion(javaVersion, 5);
+            int v2 = JavaVersionUtil.parseJavaVersion(javaVersionLib, 5);
             //if the lib java version is bigger, this library cannot be used
             if(v1 < v2){
                 throw new BuildException("Cannot use a cn1lib with java version "
@@ -269,6 +267,12 @@ public class InstallCn1libsMojo extends AbstractCN1Mojo {
                 //if this property already exists with a different value the 
                 //install will fail
                 if(!merged.get(key).equals(libProps.getProperty(key))){
+                    if ("codename1.arg.java.version".equals(key)) {
+                        // Preserve the project's java version when it is equal to or greater than
+                        // the library requirement. This is validated above and allows using
+                        // Java 8 cn1libs in Java 11/17+ projects.
+                        continue;
+                    }
                     throw new BuildException("Property " + key + " has a conflict");
                 }
             }

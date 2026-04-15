@@ -25,14 +25,13 @@ package com.codename1.tools.translator;
 
 import java.io.DataInputStream;
 import java.io.File;
-import java.io.FileFilter;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.FileWriter;
-import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -44,7 +43,7 @@ import java.util.Set;
  * @author Shai Almog
  */
 public class ByteCodeTranslator {
-    public static enum OutputType { 
+    public enum OutputType {
         
         OUTPUT_TYPE_IOS {
             @Override
@@ -65,10 +64,17 @@ public class ByteCodeTranslator {
                 return "c";
             }
 
+        },
+        OUTPUT_TYPE_JAVASCRIPT {
+            @Override
+            public String extension() {
+                return "js";
+            }
+
         };
 
         public abstract String extension();
-    };
+    }
     public static OutputType output = OutputType.OUTPUT_TYPE_IOS;
     public static boolean verbose = true;
     
@@ -85,22 +91,14 @@ public class ByteCodeTranslator {
     }
     
     void execute(File sourceDir, File outputDir) throws Exception {
-        File[] directoryList = sourceDir.listFiles(new FileFilter() {
-            @Override
-            public boolean accept(File pathname) {
-                return !pathname.isHidden() && !pathname.getName().startsWith(".") && pathname.isDirectory();
-            }
-        });
-        File[] fileList = sourceDir.listFiles(new FileFilter() {
-            @Override
-            public boolean accept(File pathname) {
-                return !pathname.isHidden() && !pathname.getName().startsWith(".") && !pathname.isDirectory();
-            }
-        });
+        File[] directoryList = sourceDir.listFiles(pathname ->
+                !pathname.isHidden() && !pathname.getName().startsWith(".") && pathname.isDirectory());
+        File[] fileList = sourceDir.listFiles(pathname ->
+                !pathname.isHidden() && !pathname.getName().startsWith(".") && !pathname.isDirectory());
         if(fileList != null) {
             for(File f : fileList) {
                 if (f.getName().equals("module-info.class")) {
-                    // Remove module-info.class that might have been added by jdk9 compile
+                    // Remove module-info.class that might have been added by jdk9 compiler
                     System.out.println("WARNING: Found module-info.class file at "+f+".  One or more of your jars must have been built for JDK9 or higher.  -target 8 or lower is required.");
                     System.out.println("         Will ignore this warning and attempt build anyways.");
                     continue;
@@ -110,7 +108,7 @@ public class ByteCodeTranslator {
                 } else {
                     if(!f.isDirectory()) {
                         // copy the file to the dest dir
-                        copy(new FileInputStream(f), new FileOutputStream(new File(outputDir, f.getName())));
+                        copy(Files.newInputStream(f.toPath()), Files.newOutputStream(new File(outputDir, f.getName()).toPath()));
                     }
                 }
             }
@@ -130,36 +128,18 @@ public class ByteCodeTranslator {
         File destFile = new File(destDir, source.getName());
         destFile.mkdirs();
         File[] files = source.listFiles();
+        if (files == null) {
+            return;
+        }
         for(File f : files) {
             if(f.isDirectory()) {
                 copyDir(f, destFile);
             } else {
-                copy(new FileInputStream(f), new FileOutputStream(new File(destFile, f.getName())));
+                copy(Files.newInputStream(f.toPath()), Files.newOutputStream(new File(destFile, f.getName()).toPath()));
             }
         }
     }
-    //
-    // make sure a directory is clean.  This is applied
-    // to output directories, and should normally be a no-op
-    // .. except if some accident occurred or this is a reliberate
-    // re-run of a failed build.
-    // the underlying purpose is to make repeated builds produce the same result.
-    //
-    /*private static void cleanDir(File dir)
-    {	//
-    	// this recursively deletes everything, so be cautious about this!
-    	// this is called only on directories we supposedly have just created.
-    	// 
-    	File [] current = dir.listFiles();
-    	if(current.length>0) { // unusual and worth a mention
-    		System.out.println("cleanup before build, removing "+current.length+" files in "+dir);
-    		for(File cf : current) 
-    			{ if(cf.isDirectory()) { cleanDir(cf); }
-    			  cf.delete(); 
-    			}
-    	}
-    }*/
-    
+
     /**
      * @param args the command line arguments
      */
@@ -171,7 +151,7 @@ public class ByteCodeTranslator {
         }
         
         if(args.length != 9) {
-            System.out.println("We accept 9 arguments output type (ios, csharp, clean), input directory, output directory, app name, package name, app dispaly name, version, type (ios/iphone/ipad) and additional frameworks");
+            System.out.println("We accept 9 arguments output type (ios, csharp, clean, javascript), input directory, output directory, app name, package name, app dispaly name, version, type (ios/iphone/ipad) and additional frameworks");
             System.exit(1);
             return;
         }
@@ -181,15 +161,19 @@ public class ByteCodeTranslator {
         final String appVersion = args[6];
         final String appType = args[7];
         final String addFrameworks = args[8];
-        // we accept 3 arguments output type, input directory & output directory
+        // we accept 3 argument output types, input directory and output directory
         if (System.getProperty("saveUnitTests", "false").equals("true")) {
             System.out.println("Generating Unit Tests");
             ByteCodeClass.setSaveUnitTests(true);
         }
-        if(args[0].equalsIgnoreCase("csharp")) {
+        if(args[0].equalsIgnoreCase("ios")) {
+            output = OutputType.OUTPUT_TYPE_IOS;
+        } else if(args[0].equalsIgnoreCase("csharp")) {
             output = OutputType.OUTPUT_TYPE_CSHARP;
         } else if(args[0].equalsIgnoreCase("clean")) {
             output = OutputType.OUTPUT_TYPE_CLEAN;
+        } else if(args[0].equalsIgnoreCase("javascript")) {
+            output = OutputType.OUTPUT_TYPE_JAVASCRIPT;
         }
         String[] sourceDirectories = args[1].split(";");
         File[] sources = new File[sourceDirectories.length];
@@ -216,6 +200,9 @@ public class ByteCodeTranslator {
             case OUTPUT_TYPE_CLEAN:
                 handleCleanOutput(b, sources, dest, appName);
                 break;
+            case OUTPUT_TYPE_JAVASCRIPT:
+                handleJavascriptOutput(b, sources, dest, appName);
+                break;
             default:
                 handleDefaultOutput(b, sources, dest);
         }
@@ -229,38 +216,79 @@ public class ByteCodeTranslator {
     private static void handleCleanOutput(ByteCodeTranslator b, File[] sources, File dest, String appName) throws Exception {
         File root = new File(dest, "dist");
         root.mkdirs();
-        System.out.println("Root is: " + root.getAbsolutePath());
+        if(verbose) {
+            System.out.println("Root is: " + root.getAbsolutePath());
+        }
         File srcRoot = new File(root, appName + "-src");
         srcRoot.mkdirs();
 
         b.execute(sources, srcRoot);
 
         File cn1Globals = new File(srcRoot, "cn1_globals.h");
-        copy(ByteCodeTranslator.class.getResourceAsStream("/cn1_globals.h"), new FileOutputStream(cn1Globals));
+        copy(ByteCodeTranslator.class.getResourceAsStream("/cn1_globals.h"), Files.newOutputStream(cn1Globals.toPath()));
         if (System.getProperty("INCLUDE_NPE_CHECKS", "false").equals("true")) {
             replaceInFile(cn1Globals, "//#define CN1_INCLUDE_NPE_CHECKS",  "#define CN1_INCLUDE_NPE_CHECKS");
         }
+        File cn1GlobalsC = new File(srcRoot, "cn1_globals.c");
+        copy(ByteCodeTranslator.class.getResourceAsStream("/cn1_globals.m"), Files.newOutputStream(cn1GlobalsC.toPath()));
+        File nativeMethodsC = new File(srcRoot, "nativeMethods.c");
+        copy(ByteCodeTranslator.class.getResourceAsStream("/nativeMethods.m"), Files.newOutputStream(nativeMethodsC.toPath()));
+        if (System.getProperty("USE_RPMALLOC", "false").equals("true")) {
+            File malloc = new File(srcRoot, "malloc.c");
+            copy(ByteCodeTranslator.class.getResourceAsStream("/malloc.c"), Files.newOutputStream(malloc.toPath()));
+            File rpmalloc = new File(srcRoot, "rpmalloc.c");
+            copy(ByteCodeTranslator.class.getResourceAsStream("/rpmalloc.c"), Files.newOutputStream(rpmalloc.toPath()));
+            File rpmalloch = new File(srcRoot, "rpmalloc.h");
+            copy(ByteCodeTranslator.class.getResourceAsStream("/rpmalloc.h"), Files.newOutputStream(rpmalloch.toPath()));
+        }
         File xmlvm = new File(srcRoot, "xmlvm.h");
-        copy(ByteCodeTranslator.class.getResourceAsStream("/xmlvm.h"), new FileOutputStream(xmlvm));
-        File nativeMethods = new File(srcRoot, "nativeMethods.m");
-        copy(ByteCodeTranslator.class.getResourceAsStream("/nativeMethods.m"), new FileOutputStream(nativeMethods));
-        File javaIoFileM = new File(srcRoot, "java_io_File.m");
-        copy(ByteCodeTranslator.class.getResourceAsStream("/java_io_File.m"), new FileOutputStream(javaIoFileM));
+        copy(ByteCodeTranslator.class.getResourceAsStream("/xmlvm.h"), Files.newOutputStream(xmlvm.toPath()));
 
         Parser.writeOutput(srcRoot);
 
+        File javaIoFileHeader = new File(srcRoot, "java_io_File.h");
+        if (javaIoFileHeader.exists()) {
+            File javaIoFileC = new File(srcRoot, "java_io_File_runtime.c");
+            copy(ByteCodeTranslator.class.getResourceAsStream("/java_io_File.m"), Files.newOutputStream(javaIoFileC.toPath()));
+        }
+
+        File classMethodIndexM = new File(srcRoot, "cn1_class_method_index.m");
+        if (classMethodIndexM.exists()) {
+            File classMethodIndexC = new File(srcRoot, "cn1_class_method_index.c");
+            copy(Files.newInputStream(classMethodIndexM.toPath()), Files.newOutputStream(classMethodIndexC.toPath()));
+            if(!classMethodIndexM.delete()) {
+                System.err.println("Deletion of " + classMethodIndexM.getAbsolutePath() + " failed");
+            }
+        }
+
         writeCmakeProject(root, srcRoot, appName);
+    }
+
+    private static void handleJavascriptOutput(ByteCodeTranslator b, File[] sources, File dest, String appName) throws Exception {
+        File root = new File(dest, "dist");
+        root.mkdirs();
+        if(verbose) {
+            System.out.println("Root is: " + root.getAbsolutePath());
+        }
+        File srcRoot = new File(root, appName + "-js");
+        srcRoot.mkdirs();
+        b.execute(sources, srcRoot);
+        Parser.writeOutput(srcRoot);
     }
 
     private static void handleIosOutput(ByteCodeTranslator b, File[] sources, File dest, String appName, String appPackageName, String appDisplayName, String appVersion, String appType, String addFrameworks) throws Exception {
         File root = new File(dest, "dist");
         root.mkdirs();
-         System.out.println("Root is: " + root.getAbsolutePath());
+         if(verbose) {
+             System.out.println("Root is: " + root.getAbsolutePath());
+         }
         File srcRoot = new File(root, appName + "-src");
         srcRoot.mkdirs();
         //cleanDir(srcRoot);
 
-        System.out.println("srcRoot is: " + srcRoot.getAbsolutePath() );
+        if(verbose) {
+            System.out.println("srcRoot is: " + srcRoot.getAbsolutePath() );
+        }
 
         File imagesXcassets = new File(srcRoot, "Images.xcassets");
         imagesXcassets.mkdirs();
@@ -270,13 +298,13 @@ public class ByteCodeTranslator {
         launchImageLaunchimage.mkdirs();
         //cleanDir(launchImageLaunchimage);
 
-        copy(ByteCodeTranslator.class.getResourceAsStream("/LaunchImages.json"), new FileOutputStream(new File(launchImageLaunchimage, "Contents.json")));
+        copy(ByteCodeTranslator.class.getResourceAsStream("/LaunchImages.json"), Files.newOutputStream(new File(launchImageLaunchimage, "Contents.json").toPath()));
 
         File appIconAppiconset = new File(imagesXcassets, "AppIcon.appiconset");
         appIconAppiconset.mkdirs();
         //cleanDir(appIconAppiconset);
 
-        copy(ByteCodeTranslator.class.getResourceAsStream("/Icons.json"), new FileOutputStream(new File(appIconAppiconset, "Contents.json")));
+        copy(ByteCodeTranslator.class.getResourceAsStream("/Icons.json"), Files.newOutputStream(new File(appIconAppiconset, "Contents.json").toPath()));
 
 
         File xcproj = new File(root, appName + ".xcodeproj");
@@ -285,59 +313,51 @@ public class ByteCodeTranslator {
 
         File projectXCworkspace = new File(xcproj, "project.xcworkspace");
         projectXCworkspace.mkdirs();
-        //cleanDir(projectXCworkspace);
-
-        /*File xcsharedData = new File(projectXCworkspace, "xcshareddata");
-        xcsharedData.mkdirs();*/
 
         b.execute(sources, srcRoot);
 
         File cn1Globals = new File(srcRoot, "cn1_globals.h");
-        copy(ByteCodeTranslator.class.getResourceAsStream("/cn1_globals.h"), new FileOutputStream(cn1Globals));
+        copy(ByteCodeTranslator.class.getResourceAsStream("/cn1_globals.h"), Files.newOutputStream(cn1Globals.toPath()));
         if (System.getProperty("INCLUDE_NPE_CHECKS", "false").equals("true")) {
             replaceInFile(cn1Globals, "//#define CN1_INCLUDE_NPE_CHECKS",  "#define CN1_INCLUDE_NPE_CHECKS");
         }
         File cn1GlobalsM = new File(srcRoot, "cn1_globals.m");
-        copy(ByteCodeTranslator.class.getResourceAsStream("/cn1_globals.m"), new FileOutputStream(cn1GlobalsM));
+        copy(ByteCodeTranslator.class.getResourceAsStream("/cn1_globals.m"), Files.newOutputStream(cn1GlobalsM.toPath()));
         File nativeMethods = new File(srcRoot, "nativeMethods.m");
-        copy(ByteCodeTranslator.class.getResourceAsStream("/nativeMethods.m"), new FileOutputStream(nativeMethods));
+        copy(ByteCodeTranslator.class.getResourceAsStream("/nativeMethods.m"), Files.newOutputStream(nativeMethods.toPath()));
         File javaIoFileM = new File(srcRoot, "java_io_File.m");
-        copy(ByteCodeTranslator.class.getResourceAsStream("/java_io_File.m"), new FileOutputStream(javaIoFileM));
+        copy(ByteCodeTranslator.class.getResourceAsStream("/java_io_File.m"), Files.newOutputStream(javaIoFileM.toPath()));
 
         if (System.getProperty("USE_RPMALLOC", "false").equals("true")) {
             File malloc = new File(srcRoot, "malloc.c");
-            copy(ByteCodeTranslator.class.getResourceAsStream("/malloc.c"), new FileOutputStream(malloc));
+            copy(ByteCodeTranslator.class.getResourceAsStream("/malloc.c"), Files.newOutputStream(malloc.toPath()));
             File rpmalloc = new File(srcRoot, "rpmalloc.c");
-            copy(ByteCodeTranslator.class.getResourceAsStream("/rpmalloc.c"), new FileOutputStream(rpmalloc));
+            copy(ByteCodeTranslator.class.getResourceAsStream("/rpmalloc.c"), Files.newOutputStream(rpmalloc.toPath()));
             File rpmalloch = new File(srcRoot, "rpmalloc.h");
-            copy(ByteCodeTranslator.class.getResourceAsStream("/rpmalloc.h"), new FileOutputStream(rpmalloch));
+            copy(ByteCodeTranslator.class.getResourceAsStream("/rpmalloc.h"), Files.newOutputStream(rpmalloch.toPath()));
         }
 
         Parser.writeOutput(srcRoot);
 
         File templateInfoPlist = new File(srcRoot, appName + "-Info.plist");
-        copy(ByteCodeTranslator.class.getResourceAsStream("/template/template/template-Info.plist"), new FileOutputStream(templateInfoPlist));
+        copy(ByteCodeTranslator.class.getResourceAsStream("/template/template/template-Info.plist"), Files.newOutputStream(templateInfoPlist.toPath()));
 
         File templatePch = new File(srcRoot, appName + "-Prefix.pch");
-        copy(ByteCodeTranslator.class.getResourceAsStream("/template/template/template-Prefix.pch"), new FileOutputStream(templatePch));
+        copy(ByteCodeTranslator.class.getResourceAsStream("/template/template/template-Prefix.pch"), Files.newOutputStream(templatePch.toPath()));
 
         File xmlvm = new File(srcRoot, "xmlvm.h");
-        copy(ByteCodeTranslator.class.getResourceAsStream("/xmlvm.h"), new FileOutputStream(xmlvm));
+        copy(ByteCodeTranslator.class.getResourceAsStream("/xmlvm.h"), Files.newOutputStream(xmlvm.toPath()));
 
         File projectWorkspaceData = new File(projectXCworkspace, "contents.xcworkspacedata");
-        copy(ByteCodeTranslator.class.getResourceAsStream("/template/template.xcodeproj/project.xcworkspace/contents.xcworkspacedata"), new FileOutputStream(projectWorkspaceData));
+        copy(ByteCodeTranslator.class.getResourceAsStream("/template/template.xcodeproj/project.xcworkspace/contents.xcworkspacedata"), Files.newOutputStream(projectWorkspaceData.toPath()));
         replaceInFile(projectWorkspaceData, "KitchenSink", appName);
 
 
         File projectPbx = new File(xcproj, "project.pbxproj");
-        copy(ByteCodeTranslator.class.getResourceAsStream("/template/template.xcodeproj/project.pbxproj"), new FileOutputStream(projectPbx));            
+        copy(ByteCodeTranslator.class.getResourceAsStream("/template/template.xcodeproj/project.pbxproj"), Files.newOutputStream(projectPbx.toPath()));
 
-        String[] sourceFiles = srcRoot.list(new FilenameFilter() {
-            @Override
-            public boolean accept(File pathname, String string) {
-                return string.endsWith(".bundle") || string.endsWith(".xcdatamodeld") || !pathname.isHidden() && !string.startsWith(".") && !"Images.xcassets".equals(string);
-            }
-        });
+        String[] sourceFiles = srcRoot.list((pathname, string) ->
+                string.endsWith(".bundle") || string.endsWith(".xcdatamodeld") || !pathname.isHidden() && !string.startsWith(".") && !"Images.xcassets".equals(string));
 
         StringBuilder fileOneEntry = new StringBuilder();
         StringBuilder fileTwoEntry = new StringBuilder();
@@ -347,12 +367,12 @@ public class ByteCodeTranslator {
         StringBuilder frameworks2 = new StringBuilder();
         StringBuilder resources = new StringBuilder();
 
-        List<String> noArcFiles = new ArrayList<String>();
+        List<String> noArcFiles = new ArrayList<>();
         noArcFiles.add("CVZBarReaderViewController.m");
         noArcFiles.add("OpenUDID.m");
 
-        List<String> includeFrameworks = new ArrayList<String>();
-        Set<String> optionalFrameworks = new HashSet<String>();
+        List<String> includeFrameworks = new ArrayList<>();
+        Set<String> optionalFrameworks = new HashSet<>();
         for (String optionalFramework : System.getProperty("optional.frameworks", "").split(";")) {
             optionalFramework = optionalFramework.trim();
             if (!optionalFramework.isEmpty()) {
@@ -392,9 +412,9 @@ public class ByteCodeTranslator {
 
         int currentValue = 0xF63EAAA;
 
-        ArrayList<String> arr = new ArrayList<String>();
+        ArrayList<String> arr = new ArrayList<>();
         arr.addAll(includeFrameworks);
-        arr.addAll(Arrays.asList(sourceFiles));
+        arr.addAll(sourceFiles != null ? Arrays.asList(sourceFiles) : new ArrayList<>());
 
         for(String file : arr) {
             fileListEntry.append("		0");
@@ -428,7 +448,7 @@ public class ByteCodeTranslator {
             } else {
                 fileListEntry.append("; path = \"");
                 if(file.endsWith(".m") || file.endsWith(".c") || file.endsWith(".cpp") || file.endsWith(".mm") || file.endsWith(".h") || 
-                        file.endsWith(".bundle") || file.endsWith(".xcdatamodeld") || file.endsWith(".hh") || file.endsWith(".hpp") || file.endsWith(".xib")) {
+                        file.endsWith(".swift") || file.endsWith(".bundle") || file.endsWith(".xcdatamodeld") || file.endsWith(".hh") || file.endsWith(".hpp") || file.endsWith(".xib")) {
                     fileListEntry.append(file);
                 } else {
                     fileListEntry.append(appName);
@@ -453,13 +473,17 @@ public class ByteCodeTranslator {
             }
             String fileSettingsDefault = "settings = {"+injectFileSettings.trim()+" }; ";
             if(noArcFiles.contains(file)) {
-                fileOneEntry.append(" */; settings = {COMPILER_FLAGS = \"-fno-objc-arc\";"+injectFileSettings+" }; };\n");                
+                fileOneEntry.append(" */; settings = {COMPILER_FLAGS = \"-fno-objc-arc\";")
+                        .append(injectFileSettings)
+                        .append(" }; };\n");
             } else {
-                fileOneEntry.append(" */;"+fileSettingsDefault+" };\n");                
+                fileOneEntry.append(" */;")
+                        .append(fileSettingsDefault)
+                        .append(" };\n");
             }
             
             if(file.endsWith(".m") || file.endsWith(".c") || file.endsWith(".cpp") || file.endsWith(".hh") || file.endsWith(".hpp") || 
-                    file.endsWith(".mm") || file.endsWith(".h") || file.endsWith(".bundle") || file.endsWith(".xcdatamodeld") || file.endsWith(".xib")) {
+                    file.endsWith(".swift") || file.endsWith(".mm") || file.endsWith(".h") || file.endsWith(".bundle") || file.endsWith(".xcdatamodeld") || file.endsWith(".xib")) {
                 
                 // bundle also needs to be a runtime resource
                 if(file.endsWith(".bundle") || file.endsWith(".xcdatamodeld")) {
@@ -496,30 +520,6 @@ public class ByteCodeTranslator {
                     frameworks2.append("18E9ABBC002F3D1D /* ");
                     frameworks2.append(file);
                     frameworks2.append(" */,\n");
-                    
-                    
-                        
-                    /*
-                    
-                    // Removing this because it causes crashes in cocoapods.
-                    // Why was it necessary to add .a files to the same group
-                    // as the sources, if we've already added it to frameworks.
-                    // Related to https://stackoverflow.com/questions/47210585/codename-one-issue-devilering-binary-for-ios
-                    if(file.endsWith(".a")) {
-                        fileTwoEntry.append("				0");
-                        fileTwoEntry.append(fileOneValue);
-                        fileTwoEntry.append("18E9ABBC002F3D1D /* ");
-                        fileTwoEntry.append(file);
-                        fileTwoEntry.append(" *").append("/,\n");
-
-                        if(!file.endsWith(".h") && !file.endsWith(".bundle") && !file.endsWith(".xcdatamodeld")) {
-                            fileThreeEntry.append("				0");
-                            fileThreeEntry.append(referenceValue);
-                            fileThreeEntry.append("18E9ABBC002F3D1D /* ");
-                            fileThreeEntry.append(file);
-                            fileThreeEntry.append(" *").append("/,\n");
-                        }
-                    }*/
                 } else {
                     // standard resource file
                     resources.append("\n				0");
@@ -554,19 +554,24 @@ public class ByteCodeTranslator {
 
     private static void writeCmakeProject(File projectRoot, File srcRoot, String appName) throws IOException {
         File cmakeLists = new File(projectRoot, "CMakeLists.txt");
-        FileWriter writer = new FileWriter(cmakeLists);
-        try {
+        String srcRootPath = srcRoot.getAbsolutePath();
+        try (Writer writer = new OutputStreamWriter(Files.newOutputStream(cmakeLists.toPath()), StandardCharsets.UTF_8)) {
             writer.append("cmake_minimum_required(VERSION 3.10)\n");
-            writer.append("project(").append(appName).append(" LANGUAGES C OBJC)\n");
-            writer.append("enable_language(OBJC OPTIONAL)\n");
+            writer.append("project(").append(appName).append(" LANGUAGES C)\n");
             writer.append("set(CMAKE_C_STANDARD 99)\n");
-            writer.append("file(GLOB TRANSLATOR_SOURCES \"").append(srcRoot.getName()).append("/*.c\" \"").append(srcRoot.getName()).append("/*.m\")\n");
-            writer.append("file(GLOB TRANSLATOR_HEADERS \"").append(srcRoot.getName()).append("/*.h\")\n");
+            writer.append("set(CN1_APP_SOURCE_ROOT \"")
+                    .append(escapeCmakePath(srcRootPath))
+                    .append("\")\n");
+            writer.append("include_directories(${CN1_APP_SOURCE_ROOT})\n");
+            writer.append("file(GLOB TRANSLATOR_SOURCES \"${CN1_APP_SOURCE_ROOT}/*.c\")\n");
+            writer.append("file(GLOB TRANSLATOR_HEADERS \"${CN1_APP_SOURCE_ROOT}/*.h\")\n");
             writer.append("add_library(${PROJECT_NAME} ${TRANSLATOR_SOURCES} ${TRANSLATOR_HEADERS})\n");
-            writer.append("target_include_directories(${PROJECT_NAME} PUBLIC ").append(srcRoot.getName()).append(")\n");
-        } finally {
-            writer.close();
+            writer.append("target_include_directories(${PROJECT_NAME} PUBLIC ${CN1_APP_SOURCE_ROOT})\n");
         }
+    }
+
+    private static String escapeCmakePath(String path) {
+        return path.replace("\\", "\\\\");
     }
     
     private static String getFileType(String s) {
@@ -603,6 +608,9 @@ public class ByteCodeTranslator {
         if(s.endsWith(".mm") || s.endsWith(".cpp")) {
             return "sourcecode.cpp.objc";
         }
+        if(s.endsWith(".swift")) {
+            return "sourcecode.swift";
+        }
         if(s.endsWith(".xib")) {
             return "file.xib";
         }
@@ -624,15 +632,14 @@ public class ByteCodeTranslator {
     //
     private static StringBuilder readFileAsStringBuilder(File sourceFile) throws IOException
     {
-        DataInputStream dis = new DataInputStream(new FileInputStream(sourceFile));
-        byte[] data = new byte[(int)sourceFile.length()];
-        dis.readFully(data);
-        dis.close();
-        StringBuilder b = new StringBuilder(new String(data));
-        return b;
+        try(DataInputStream dis = new DataInputStream(Files.newInputStream(sourceFile.toPath()))) {
+            byte[] data = new byte[(int) sourceFile.length()];
+            dis.readFully(data);
+            return new StringBuilder(new String(data, StandardCharsets.UTF_8));
+        }
     }
     //
-    // rewrite 4/2017 by ddyer to use more appropriate data
+    // Use more appropriate data
     // structures, minimizing gc thrashing.  This avoids a big
     // spike in memory and gc usage (and corresponding build 
     // failures due to OutOfMemoryError) at the very end of the build 
@@ -641,6 +648,7 @@ public class ByteCodeTranslator {
     private static void replaceInFile(File sourceFile, String... values) throws IOException {
         StringBuilder str = readFileAsStringBuilder(sourceFile);
         int totchanges = 0;
+
     	// perform the mutations on stringbuilder, which ought to implement
         // these operations efficiently.
         for (int iter = 0; iter < values.length; iter += 2) {
@@ -654,13 +662,16 @@ public class ByteCodeTranslator {
                 totchanges++;
             }
         }
+
         //
         // don't start the output file until all the processing is done
         //
-        System.out.println("Rewrite " + sourceFile + " with " + totchanges + " changes");
-        FileWriter fios = new FileWriter(sourceFile);
-        fios.write(str.toString());
-        fios.close();
+        if(verbose) {
+            System.out.println("Rewrite " + sourceFile + " with " + totchanges + " changes");
+        }
+        try(Writer fios = new OutputStreamWriter(Files.newOutputStream(sourceFile.toPath()), StandardCharsets.UTF_8)) {
+            fios.write(str.toString());
+        }
     }
     
 
@@ -668,7 +679,7 @@ public class ByteCodeTranslator {
 
     /**
      * Copy the input stream into the output stream, closes both streams when finishing or in
-     * a case of an exception
+     *  the case of an exception
      * 
      * @param i source
      * @param o destination
@@ -679,7 +690,7 @@ public class ByteCodeTranslator {
 
     /**
      * Copy the input stream into the output stream, closes both streams when finishing or in
-     * a case of an exception
+     * the case of an exception
      *
      * @param i source
      * @param o destination
@@ -700,10 +711,10 @@ public class ByteCodeTranslator {
     }
 
     /**
-     * Closes the object (connection, stream etc.) without throwing any exception, even if the
+     * Closes the object (connection, stream, etc.) without throwing any exception, even if the
      * object is null
      *
-     * @param o Connection, Stream or other closeable object
+     * @param o Connection, Stream or another closeable object
      */
     public static void cleanup(Object o) {
         try {
@@ -713,7 +724,6 @@ public class ByteCodeTranslator {
             }
             if(o instanceof InputStream) {
                 ((InputStream)o).close();
-                return;
             }
         } catch(IOException err) {
             err.printStackTrace();

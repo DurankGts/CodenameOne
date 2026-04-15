@@ -27,38 +27,41 @@ import com.codename1.ui.animations.Transition;
 import com.codename1.ui.geom.Dimension;
 import com.codename1.ui.plaf.Style;
 
-import static com.codename1.ui.ComponentSelector.$;
-
-/**
- * A collection of useful progress animations and utility methods.
- *
- * @author shannah
- * @since 7.0
- */
+/// A collection of useful progress animations and utility methods.
+///
+/// @author shannah
+///
+/// #### Since
+///
+/// 7.0
 public class CommonProgressAnimations {
 
-    /**
-     * Base class for ProgressAnimations
-     *
-     * @since 7.0
-     */
+    /// Base class for ProgressAnimations
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public static abstract class ProgressAnimation extends Component {
         private static final String PROGRESS_KEY = "$$ProgressAnimation";
         protected Component cmp;
 
-        /**
-         * Marks a component as "loading", replacing it in its parent conatiner with
-         * a progress animation.  When the component's content is "ready" or finished loading
-         * you should call {@link #markComponentReady(com.codename1.ui.Component) } to swap
-         * the component back into its parent, and removing the progress animation.
-         *
-         * <p>If the component has already been marked as "loading", this will simply return
-         * the progress animation that was previously assigned to it.</p>
-         *
-         * @param cmp  The component to be replaced by a progress animation.
-         * @param type The type of progress animation to use.
-         * @return The ProgressAnimation that is currently occuppying the component's space.
-         */
+        /// Marks a component as "loading", replacing it in its parent conatiner with
+        /// a progress animation.  When the component's content is "ready" or finished loading
+        /// you should call `#markComponentReady(com.codename1.ui.Component)` to swap
+        /// the component back into its parent, and removing the progress animation.
+        ///
+        /// If the component has already been marked as "loading", this will simply return
+        /// the progress animation that was previously assigned to it.
+        ///
+        /// #### Parameters
+        ///
+        /// - `cmp`: The component to be replaced by a progress animation.
+        ///
+        /// - `type`: The type of progress animation to use.
+        ///
+        /// #### Returns
+        ///
+        /// The ProgressAnimation that is currently occuppying the component's space.
         public static ProgressAnimation markComponentLoading(Component cmp, Class<? extends ProgressAnimation> type) {
             if (type == null) {
                 type = CircleProgress.class;
@@ -74,7 +77,7 @@ public class CommonProgressAnimations {
                 return prg;
             } catch (Throwable t) {
                 Log.e(t);
-                throw new RuntimeException("Failed to create progress component: " + t.getMessage());
+                throw new RuntimeException("Failed to create progress component: " + t.getMessage(), t);
             }
         }
 
@@ -91,13 +94,14 @@ public class CommonProgressAnimations {
 
         }
 
-        /**
-         * Marks a component as "ready", if it had previously been marked as "loading".  If the component
-         * had been replaced in its parent container by a progress animation, then this will swap it back.
-         *
-         * @param cmp The component to mark as "ready".
-         * @param t   The transition to use for replacing the progress animation with the component.  Null for immediate replacement.
-         */
+        /// Marks a component as "ready", if it had previously been marked as "loading".  If the component
+        /// had been replaced in its parent container by a progress animation, then this will swap it back.
+        ///
+        /// #### Parameters
+        ///
+        /// - `cmp`: The component to mark as "ready".
+        ///
+        /// - `t`: The transition to use for replacing the progress animation with the component.  Null for immediate replacement.
         public static void markComponentReady(Component cmp, Transition t) {
             ProgressAnimation progress = (ProgressAnimation) cmp.getClientProperty(PROGRESS_KEY);
             if (progress == null) {
@@ -113,26 +117,29 @@ public class CommonProgressAnimations {
             }
         }
 
-        /**
-         * Marks a component as "ready", if it had previously been marked as "loading".  If the component
-         * had been replaced in its parent container by a progress animation, then this will swap it back.
-         *
-         * @param cmp The component to mark as "ready".
-         */
+        /// Marks a component as "ready", if it had previously been marked as "loading".  If the component
+        /// had been replaced in its parent container by a progress animation, then this will swap it back.
+        ///
+        /// #### Parameters
+        ///
+        /// - `cmp`: The component to mark as "ready".
         public static void markComponentReady(Component cmp) {
             markComponentReady(cmp, null);
         }
 
-        /**
-         * Gets the progress animation that is currently showing for a component.  The progress
-         * animation would be "assigned" by {@link #markComponentLoading(com.codename1.ui.Component, java.lang.Class) },
-         * and can be "deassigned" by by {@link #markComponentReady(com.codename1.ui.Component) }.
-         *
-         * <p>This may return null, if the component isn't currently marked as loading.</p>
-         *
-         * @param cmp The Component whose progress animation we're seeking.
-         * @return The ProgressAnimation, or null if the component isn't "loading".
-         */
+        /// Gets the progress animation that is currently showing for a component.  The progress
+        /// animation would be "assigned" by `java.lang.Class)`,
+        /// and can be "deassigned" by by `#markComponentReady(com.codename1.ui.Component)`.
+        ///
+        /// This may return null, if the component isn't currently marked as loading.
+        ///
+        /// #### Parameters
+        ///
+        /// - `cmp`: The Component whose progress animation we're seeking.
+        ///
+        /// #### Returns
+        ///
+        /// The ProgressAnimation, or null if the component isn't "loading".
         public static ProgressAnimation getProgressAnimation(Component cmp) {
             return (ProgressAnimation) cmp.getClientProperty(PROGRESS_KEY);
         }
@@ -150,30 +157,24 @@ public class CommonProgressAnimations {
         }
     }
 
-    /**
-     * A progress animation that shows an animated circle.
-     *
-     * @since 7.0
-     */
+    /// A progress animation that shows an animated circle.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public static class CircleProgress extends ProgressAnimation {
         int stepSize = (int) Math.round(360.0 / Display.getInstance().getFrameRate() / 1.5);
         int step = 0;
 
-        /**
-         * Replaces the given component with a CircleProgress until its content is ready.
-         * When the component's content is ready, then make sure to call {@link ProgressAnimation#markComponentReady(com.codename1.ui.Component) )
-         * to swap the component back into its parent.
-         *
-         * @param cmp
-         * @return
-         */
+        /// Replaces the given component with a CircleProgress until its content is ready.
+        /// When the component's content is ready, then make sure to call {@link ProgressAnimation#markComponentReady(com.codename1.ui.Component)}
+        /// to swap the component back into its parent.
+        ///
+        /// #### Parameters
+        ///
+        /// - `cmp`
         public static CircleProgress markComponentLoading(Component cmp) {
             return (CircleProgress) markComponentLoading(cmp, CircleProgress.class);
-        }
-
-        @Override
-        public void paint(Graphics g) {
-            super.paint(g);
         }
 
         @Override
@@ -205,52 +206,49 @@ public class CommonProgressAnimations {
 
         @Override
         protected Dimension calcPreferredSize() {
-            Dimension out = new Dimension(CN.convertToPixels(8f), CN.convertToPixels(8f));
-            return out;
+            return new Dimension(CN.convertToPixels(8f), CN.convertToPixels(8f));
         }
 
 
     }
 
-    /**
-     * An empty progress animation.
-     *
-     * @since 7.0
-     */
+    /// An empty progress animation.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public static class EmptyAnimation extends ProgressAnimation {
-        /**
-         * Replaces the given component with an EmptyAnimation until its content is ready.
-         * When the component's content is ready, then make sure to call {@link ProgressAnimation#markComponentReady(com.codename1.ui.Component) )
-         * to swap the component back into its parent.
-         *
-         * @param cmp
-         * @return
-         */
+        /// Replaces the given component with an EmptyAnimation until its content is ready.
+        /// When the component's content is ready, then make sure to call {@link ProgressAnimation#markComponentReady(com.codename1.ui.Component)}
+        /// to swap the component back into its parent.
+        ///
+        /// #### Parameters
+        ///
+        /// - `cmp`
         public static EmptyAnimation markComponentLoading(Component cmp) {
             return (EmptyAnimation) markComponentLoading(cmp, EmptyAnimation.class);
         }
 
         @Override
         protected Dimension calcPreferredSize() {
-            Dimension out = new Dimension(CN.convertToPixels(8f), CN.convertToPixels(8f));
-            return out;
+            return new Dimension(CN.convertToPixels(8f), CN.convertToPixels(8f));
         }
     }
 
-    /**
-     * A progress animation that shows a block of text being typed.  Except words
-     * are rendered as filled rectangles instead of actual glyphs.  This is appropriate
-     * where a paragraph of text is scheduled to appear, but is not ready to show yet.
-     *
-     * @since 7.0
-     */
+    /// A progress animation that shows a block of text being typed.  Except words
+    /// are rendered as filled rectangles instead of actual glyphs.  This is appropriate
+    /// where a paragraph of text is scheduled to appear, but is not ready to show yet.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public static class LoadingTextAnimation extends ProgressAnimation {
 
         private static final String loremIpsum = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.";
-        private final int lettersPerChunk = 3;
-        private final int cyclesPerChunk = 3; // Number of cycles required to type a letter.
-        private int pauseCounter = 0;
+        private static final int lettersPerChunk = 3;
+        private static final int cyclesPerChunk = 3; // Number of cycles required to type a letter.
         private final int pauseLength = Display.getInstance().getFrameRate();
+        private int pauseCounter = 0;
         private int rows = 3;
         private int cols = 40;
         private int cycleCount;
@@ -266,14 +264,13 @@ public class CommonProgressAnimations {
             s.setPaddingUnit(Style.UNIT_TYPE_DIPS);
         }
 
-        /**
-         * Replaces the given component with a LoadingTextAnimation until its content is ready.
-         * When the component's content is ready, then make sure to call {@link ProgressAnimation#markComponentReady(com.codename1.ui.Component) )
-         * to swap the component back into its parent.
-         *
-         * @param cmp
-         * @return
-         */
+        /// Replaces the given component with a LoadingTextAnimation until its content is ready.
+        /// When the component's content is ready, then make sure to call {@link ProgressAnimation#markComponentReady(com.codename1.ui.Component)}
+        /// to swap the component back into its parent.
+        ///
+        /// #### Parameters
+        ///
+        /// - `cmp`
         public static LoadingTextAnimation markComponentLoading(Component cmp) {
             return (LoadingTextAnimation) markComponentLoading(cmp, LoadingTextAnimation.class);
         }
@@ -298,11 +295,6 @@ public class CommonProgressAnimations {
                 }
             }
             return true;
-        }
-
-        @Override
-        public void paint(Graphics g) {
-            super.paint(g);
         }
 
         @Override
@@ -378,45 +370,43 @@ public class CommonProgressAnimations {
             int charHeight = f.getHeight();
             int leading = charHeight / 2;
 
-            Dimension out = new Dimension(charWidth * cols + getStyle().getHorizontalPadding(), rows * (charHeight + leading) - leading + getStyle().getVerticalPadding());
-            return out;
+            return new Dimension(charWidth * cols + getStyle().getHorizontalPadding(),
+                    rows * (charHeight + leading) - leading + getStyle().getVerticalPadding());
         }
 
-        /**
-         * Returns the number of rows of text to render.
-         *
-         * @return
-         */
+        /// Returns the number of rows of text to render.
         public int rows() {
             return rows;
         }
 
-        /**
-         * Returns the number of columns to render.
-         *
-         * @return
-         */
+        /// Returns the number of columns to render.
         public int cols() {
             return cols;
         }
 
-        /**
-         * Sets the number of rows to render.
-         *
-         * @param rows The number of rows to render.
-         * @return Self for chaining.
-         */
+        /// Sets the number of rows to render.
+        ///
+        /// #### Parameters
+        ///
+        /// - `rows`: The number of rows to render.
+        ///
+        /// #### Returns
+        ///
+        /// Self for chaining.
         public LoadingTextAnimation rows(int rows) {
             this.rows = rows;
             return this;
         }
 
-        /**
-         * Returns the number of columns to render.
-         *
-         * @param cols The number of columns to render.
-         * @return Self for chaining.
-         */
+        /// Returns the number of columns to render.
+        ///
+        /// #### Parameters
+        ///
+        /// - `cols`: The number of columns to render.
+        ///
+        /// #### Returns
+        ///
+        /// Self for chaining.
         public LoadingTextAnimation cols(int cols) {
             this.cols = cols;
             return this;

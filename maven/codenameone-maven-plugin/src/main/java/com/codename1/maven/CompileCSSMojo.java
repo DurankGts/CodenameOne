@@ -83,8 +83,8 @@ public class CompileCSSMojo extends AbstractCN1Mojo {
                 if (parent == null) {
                     continue;
                 }
-                File localizationSibling = new File(parent, "l10n");
-                if (hasLocalizationBundles(localizationSibling)) {
+                File localizationSibling = findLocalizationSibling(parent);
+                if (localizationSibling != null) {
                     return localizationSibling;
                 }
             }
@@ -92,12 +92,12 @@ public class CompileCSSMojo extends AbstractCN1Mojo {
 
         File cn1ProjectDir = getCN1ProjectDir();
         if (cn1ProjectDir != null) {
-            File defaultLocalization = new File(cn1ProjectDir, path("src", "main", "l10n"));
-            if (hasLocalizationBundles(defaultLocalization)) {
-                return defaultLocalization;
+            File sourceLocalization = findLocalizationSibling(new File(cn1ProjectDir, path("src", "main")));
+            if (sourceLocalization != null) {
+                return sourceLocalization;
             }
-            File rootLocalization = new File(cn1ProjectDir, "l10n");
-            if (hasLocalizationBundles(rootLocalization)) {
+            File rootLocalization = findLocalizationSibling(cn1ProjectDir);
+            if (rootLocalization != null) {
                 return rootLocalization;
             }
         }
@@ -105,24 +105,28 @@ public class CompileCSSMojo extends AbstractCN1Mojo {
         return null;
     }
 
-    private boolean hasLocalizationBundles(File directory) {
-        if (directory == null || !directory.isDirectory()) {
-            return false;
+    private File findLocalizationSibling(File parent) {
+        if (parent == null) {
+            return null;
         }
-        File[] files = directory.listFiles();
-        if (files == null) {
-            return false;
+        File l10n = new File(parent, "l10n");
+        if (hasLocalizationDirectory(l10n)) {
+            return l10n;
         }
-        for (File file : files) {
-            if (file.isDirectory()) {
-                if (hasLocalizationBundles(file)) {
-                    return true;
-                }
-            } else if (file.getName().endsWith(".properties")) {
-                return true;
-            }
+        File i18n = new File(parent, "i18n");
+        if (hasLocalizationDirectory(i18n)) {
+            return i18n;
         }
-        return false;
+        return null;
+    }
+
+    /**
+     * Treats an existing l10n directory as a valid localization source.
+     * <p>This intentionally does not require `.properties` files up-front because
+     * the CSS flow can still rely on the directory even when bundles are generated later.</p>
+     */
+    private boolean hasLocalizationDirectory(File directory) {
+        return directory != null && directory.isDirectory();
     }
 
     private void executeImpl(String themePrefix) throws MojoExecutionException, MojoFailureException {

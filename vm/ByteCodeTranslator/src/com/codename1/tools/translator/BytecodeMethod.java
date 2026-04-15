@@ -108,6 +108,10 @@ public class BytecodeMethod implements SignatureSet {
     private String desc;
     private boolean eliminated;
     private boolean barebone;
+    private boolean disableDebugInfo;
+    private boolean disableNullAndArrayBoundsChecks;
+    private boolean fastMethodStackInUse;
+    private boolean fastMethodStackPrimitiveOnly;
 
     
     static boolean optimizerOn;
@@ -120,6 +124,22 @@ public class BytecodeMethod implements SignatureSet {
 
     public boolean isBarebone() {
         return barebone;
+    }
+
+    public boolean isDisableDebugInfo() {
+        return disableDebugInfo;
+    }
+
+    public void setDisableDebugInfo(boolean disableDebugInfo) {
+        this.disableDebugInfo = disableDebugInfo;
+    }
+
+    public boolean isDisableNullAndArrayBoundsChecks() {
+        return disableNullAndArrayBoundsChecks;
+    }
+
+    public void setDisableNullAndArrayBoundsChecks(boolean disableNullAndArrayBoundsChecks) {
+        this.disableNullAndArrayBoundsChecks = disableNullAndArrayBoundsChecks;
     }
 
     private boolean checkBarebone() {
@@ -267,6 +287,74 @@ public class BytecodeMethod implements SignatureSet {
             return false;
         }
         return true;
+    }
+
+    private boolean canUseFastMethodStack() {
+        if (synchronizedMethod || nativeMethod || abstractMethod) {
+            return false;
+        }
+        for (Instruction instruction : instructions) {
+            if (instruction instanceof TryCatch
+                    || instruction instanceof Invoke
+                    || instruction instanceof CustomInvoke
+                    || instruction instanceof Field
+                    || instruction instanceof TypeInstruction
+                    || instruction instanceof MultiArray
+                    || instruction instanceof CustomIntruction) {
+                return false;
+            }
+            if (instruction instanceof ArrayLoadExpression && !disableNullAndArrayBoundsChecks) {
+                return false;
+            }
+            if (instruction instanceof BasicInstruction) {
+                int op = instruction.getOpcode();
+                if (op == Opcodes.MONITORENTER || op == Opcodes.MONITOREXIT
+                        || op == Opcodes.ATHROW
+                        || op == Opcodes.IDIV || op == Opcodes.LDIV || op == Opcodes.IREM || op == Opcodes.LREM
+                        || op == Opcodes.ARRAYLENGTH
+                        || (!disableNullAndArrayBoundsChecks && (op >= Opcodes.IALOAD && op <= Opcodes.SALOAD))
+                        || (!disableNullAndArrayBoundsChecks && (op >= Opcodes.IASTORE && op <= Opcodes.SASTORE))
+                        || (!disableNullAndArrayBoundsChecks && (op == Opcodes.AALOAD || op == Opcodes.AASTORE
+                        || op == Opcodes.BALOAD || op == Opcodes.BASTORE || op == Opcodes.CALOAD || op == Opcodes.CASTORE))
+                        || op == Opcodes.NEWARRAY) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private boolean isPrimitiveOnlyFastFrameCandidate() {
+        for (ByteCodeMethodArg arg : arguments) {
+            if (arg.getQualifier() == 'o') {
+                return false;
+            }
+        }
+        if (!returnType.isVoid() && returnType.getQualifier() == 'o') {
+            return false;
+        }
+        if (!staticMethod) {
+            return false;
+        }
+        for (Instruction instruction : instructions) {
+            if (instruction instanceof VarOp) {
+                int op = instruction.getOpcode();
+                if (op == Opcodes.ALOAD || op == Opcodes.ASTORE) {
+                    return false;
+                }
+            }
+            if (instruction instanceof BasicInstruction) {
+                int op = instruction.getOpcode();
+                if (op == Opcodes.ARETURN || op == Opcodes.ACONST_NULL || op == Opcodes.AALOAD || op == Opcodes.AASTORE) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    public boolean useFastReturnRelease() {
+        return fastMethodStackInUse && !TryCatch.isTryCatchInMethod();
     }
     
     public BytecodeMethod(String clsName, int access, String name, String desc, String signature, String[] exceptions) {
@@ -747,6 +835,44 @@ public class BytecodeMethod implements SignatureSet {
     public boolean isSynchronizedMethod() {
         return synchronizedMethod;
     }
+
+    public List<Instruction> getInstructions() {
+        return instructions;
+    }
+
+    public List<ByteCodeMethodArg> getArguments() {
+        return arguments;
+    }
+
+    public ByteCodeMethodArg getReturnType() {
+        return returnType;
+    }
+
+    public int getMaxStack() {
+        return maxStack;
+    }
+
+    public int getMaxLocals() {
+        return maxLocals;
+    }
+
+    public boolean isConstructor() {
+        return constructor;
+    }
+
+    public String getMethodIdentifier() {
+        StringBuilder b = new StringBuilder();
+        b.append(clsName).append("_");
+        if(methodName.equals("<init>")) {
+            b.append("__INIT__");
+        } else if(methodName.equals("<clinit>")) {
+            b.append("__CLINIT__");
+        } else {
+            b.append(getCMethodName());
+        }
+        appendMethodSignatureSuffixFromDesc(desc, b, new ArrayList<String>());
+        return b.toString();
+    }
     
     private boolean hasLocalVariableWithIndex(char qualifier, int index) {
         for (LocalVariable lv : localVariables) {
@@ -809,6 +935,7 @@ public class BytecodeMethod implements SignatureSet {
         }
             
         b.append(declaration);
+        boolean fastMethodStackCandidate = canUseFastMethodStack();
         
         boolean hasInstructions = true;
         if(optimizerOn) {
@@ -825,7 +952,10 @@ public class BytecodeMethod implements SignatureSet {
                 String variableName = lv.getQualifier() + "locals_"+lv.getIndex()+"_";
                 if (!added.contains(variableName) && (barebone || lv.getQualifier() != 'o')) {
                     added.add(variableName);
-                    b.append("    volatile ");
+                    b.append("    ");
+                    if (!disableDebugInfo) {
+                        b.append("volatile ");
+                    }
                     switch (lv.getQualifier()) {
                         case 'i' :
                             b.append("JAVA_INT"); break;
@@ -842,25 +972,58 @@ public class BytecodeMethod implements SignatureSet {
                 }
             }
             
+            boolean useFastMethodStack = !barebone && fastMethodStackCandidate;
+            boolean usePrimitiveFastFrame = useFastMethodStack && isPrimitiveOnlyFastFrameCandidate();
+            fastMethodStackInUse = useFastMethodStack;
+            fastMethodStackPrimitiveOnly = usePrimitiveFastFrame;
             if(!barebone) {
                 if(staticMethod) {
                     if(methodName.equals("__CLINIT__")) {
-                        b.append("    DEFINE_METHOD_STACK(");
+                        if (useFastMethodStack) {
+                            if (usePrimitiveFastFrame) {
+                                b.append("    DEFINE_METHOD_STACK_FAST_PRIMITIVE(");
+                            } else {
+                                b.append("    DEFINE_METHOD_STACK_FAST_REF(");
+                            }
+                        } else {
+                            b.append("    DEFINE_METHOD_STACK(");
+                        }
                     } else {
-                        b.append("    __STATIC_INITIALIZER_");
+                        b.append("    if (!class__");
                         b.append(clsName.replace('/', '_').replace('$', '_'));
-                        b.append("(threadStateData);\n    DEFINE_METHOD_STACK(");
+                        b.append(".initialized) __STATIC_INITIALIZER_");
+                        b.append(clsName.replace('/', '_').replace('$', '_'));
+                        if (useFastMethodStack) {
+                            if (usePrimitiveFastFrame) {
+                                b.append("(threadStateData);\n    DEFINE_METHOD_STACK_FAST_PRIMITIVE(");
+                            } else {
+                                b.append("(threadStateData);\n    DEFINE_METHOD_STACK_FAST_REF(");
+                            }
+                        } else {
+                            b.append("(threadStateData);\n    DEFINE_METHOD_STACK(");
+                        }
                     }
                 } else {
-                    b.append("    DEFINE_INSTANCE_METHOD_STACK(");
+                    if (useFastMethodStack) {
+                        if (usePrimitiveFastFrame) {
+                            b.append("    DEFINE_INSTANCE_METHOD_STACK_FAST_PRIMITIVE(");
+                        } else {
+                            b.append("    DEFINE_INSTANCE_METHOD_STACK_FAST_REF(");
+                        }
+                    } else {
+                        b.append("    DEFINE_INSTANCE_METHOD_STACK(");
+                    }
                 }
                 b.append(maxStack);
                 b.append(", ");
                 b.append(maxLocals);
-                b.append(", 0, ");
-                b.append(Parser.addToConstantPool(clsName));
-                b.append(", ");
-                b.append(Parser.addToConstantPool(methodName));
+                b.append(", 0");
+                if (!useFastMethodStack) {
+                    b.append(", ");
+                    b.append(Parser.addToConstantPool(clsName));
+                    b.append(", ");
+                    b.append(Parser.addToConstantPool(methodName));
+                }
                 b.append(");\n");
             } else {
                 b.append("    struct elementStruct* SP = &threadStateData->threadObjectStack[threadStateData->threadObjectStackOffset];\n");
@@ -1103,10 +1266,6 @@ public class BytecodeMethod implements SignatureSet {
             returnType.appendCMethodExt(bld);
         }
         
-        if(!forceVirtual && !virtualMethodsInvoked.contains(bld.toString())) {
-            return;
-        }
-                
         // generate the function pointer declaration
         appendCMethodPrefix("\ntypedef ", ")", b, "(*functionPtr_", cls);
         b.append(";\n");
@@ -1155,9 +1314,6 @@ public class BytecodeMethod implements SignatureSet {
         if(!returnType.isVoid()) {
             bld.append("_R");
             returnType.appendCMethodExt(bld);
-        }
-        if(!forceVirtual && !virtualMethodsInvoked.contains(bld.toString())) {
-            return;
         }
         appendCMethodPrefix(b, "virtual_", cls);
         b.append(";\n");
@@ -1284,6 +1440,9 @@ public class BytecodeMethod implements SignatureSet {
     }
     
     public void addLocalVariable(String name, String desc, String signature, Label start, Label end, int index) {
+        if (disableDebugInfo) {
+            return;
+        }
         //addInstruction(0, new LocalVariable(name, desc, signature, start, end, index));
         localVariables.add(new LocalVariable(name, desc, signature, start, end, index));
     }
@@ -1293,6 +1452,9 @@ public class BytecodeMethod implements SignatureSet {
     } 
     
     public void addDebugInfo(int line) {
+        if (disableDebugInfo) {
+            return;
+        }
         addInstruction(new LineNumber(sourceFile, line));
     }
     
@@ -1311,6 +1473,7 @@ public class BytecodeMethod implements SignatureSet {
     
     private void addInstruction(Instruction i) {
         instructions.add(i);
+        i.setMethod(this);
         i.addDependencies(dependentClasses);
         if (dependencyGraph != null) {
             String methodUsed = i.getMethodUsed();
@@ -1806,27 +1969,44 @@ public class BytecodeMethod implements SignatureSet {
                         
                         if (arrayLiteral != null  && indexLiteral != null && valueLiteral != null) {
                             String elementType = null;
+                            String valueType = null;
                             switch (current.getOpcode()) {
                                 case Opcodes.AASTORE:
-                                    elementType = "OBJECT";break;
+                                    elementType = "OBJECT";
+                                    valueType = "JAVA_OBJECT";
+                                    break;
                                 case Opcodes.IASTORE:
-                                    elementType = "INT"; break;
+                                    elementType = "INT";
+                                    valueType = "JAVA_INT";
+                                    break;
                                 case Opcodes.DASTORE:
-                                    elementType = "DOUBLE"; break;
+                                    elementType = "DOUBLE";
+                                    valueType = "JAVA_DOUBLE";
+                                    break;
                                     
                                 case Opcodes.LASTORE:
-                                    elementType = "LONG"; break;
+                                    elementType = "LONG";
+                                    valueType = "JAVA_LONG";
+                                    break;
                                 case Opcodes.FASTORE:
-                                    elementType = "FLOAT"; break;
+                                    elementType = "FLOAT";
+                                    valueType = "JAVA_FLOAT";
+                                    break;
                                 case Opcodes.CASTORE:
-                                    elementType = "CHAR";break;
+                                    elementType = "CHAR";
+                                    valueType = "JAVA_CHAR";
+                                    break;
                                 case Opcodes.BASTORE:
-                                    elementType = "BYTE"; break;
+                                    elementType = "BYTE";
+                                    valueType = "JAVA_BYTE";
+                                    break;
                                 case Opcodes.SASTORE:
-                                    elementType = "SHORT"; break;
+                                    elementType = "SHORT";
+                                    valueType = "JAVA_SHORT";
+                                    break;
                                     
                             }
-                            if (elementType == null) {
+                            if (elementType == null || valueType == null) {
                                 break;
                             }
                             
@@ -1834,7 +2014,12 @@ public class BytecodeMethod implements SignatureSet {
                             instructions.remove(iter-3);
                             instructions.remove(iter-3);
                             instructions.remove(iter-3);
-                            String code = "    CN1_SET_ARRAY_ELEMENT_"+elementType+"(" + arrayLiteral + ", "+indexLiteral+", "+valueLiteral+");\n";
+                            String code = "    {\n" +
+                                    "        JAVA_OBJECT __cn1ArrayTmp = " + arrayLiteral + ";\n" +
+                                    "        JAVA_INT __cn1IndexTmp = " + indexLiteral + ";\n" +
+                                    "        " + valueType + " __cn1ValueTmp = " + valueLiteral + ";\n" +
+                                    "        CN1_SET_ARRAY_ELEMENT_"+elementType+"(__cn1ArrayTmp, __cn1IndexTmp, __cn1ValueTmp);\n" +
+                                    "    }\n";
                             instructions.add(iter-3, new CustomIntruction(code, code, dependentClasses));
                             iter = iter-3;
                             instructionCount = instructions.size();

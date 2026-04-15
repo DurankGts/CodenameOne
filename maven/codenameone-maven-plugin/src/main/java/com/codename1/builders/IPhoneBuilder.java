@@ -35,6 +35,7 @@ import java.io.*;
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
@@ -69,6 +70,7 @@ public class IPhoneBuilder extends Executor {
     private boolean detectJailbreak;
 
     private boolean runPods=false;
+    private boolean runSpm=false;
     private boolean photoLibraryUsage;
     private String buildVersion;
     private boolean usesLocalNotifications;
@@ -123,6 +125,38 @@ public class IPhoneBuilder extends Executor {
         }
         return 0;
     }
+
+    private void ensurePodsInstalled() throws BuildException {
+        if(!new File(pod).exists()) {
+            pod = "/usr/bin/pod";
+            if(!new File(pod).exists()) {
+                pod = "/opt/homebrew/bin/pod";
+                if(!new File(pod).exists()) {
+                    log("You need to install cocoapods to proceed, to install cocoapods on your mac issue this command in the terminal: sudo gem install cocoapods --pre\n"
+                            + "followed by: sudo gem install xcodeproj");
+                    throw new BuildException("Please install Cocoapods in order to use ios.dependencyManager=cocoapods or ios.pods");
+                }
+            }
+        }
+        try {
+            log("Pods version: " + execString(new File("."), pod, "--version"));
+        } catch (Exception ex) {
+            error("Please install Cocoapods in order to build iOS projects with CocoaPods.  E.g. 'sudo gem install cocoapods'.  See https://cocoapods.org/", ex);
+            throw new BuildException("Please install Cocoapods in order to build iOS projects with CocoaPods.  E.g. 'sudo gem install cocoapods'.  See https://cocoapods.org/");
+        }
+    }
+
+    private void ensureXcodeprojInstalled() throws BuildException {
+        try {
+            execString(new File("."), "ruby", "-e", "require 'xcodeproj'; puts Xcodeproj::VERSION");
+        } catch (Exception ex) {
+            throw new BuildException("Please install the xcodeproj Ruby gem to configure iOS Swift packages. E.g. 'sudo gem install xcodeproj'", ex);
+        }
+    }
+
+    private static String escapeRuby(String input) {
+        return input.replace("\\", "\\\\").replace("'", "\\'");
+    }
     
     @Override
     protected String getDeviceIdCode() {
@@ -141,7 +175,7 @@ public class IPhoneBuilder extends Executor {
         ProcessBuilder pb = new ProcessBuilder("otool", "-lv", file.getAbsolutePath());
         Process p = pb.start();
         InputStream is = p.getInputStream();
-        Scanner scanner = new Scanner(is);
+        Scanner scanner = new Scanner(is, "UTF-8");
         while (scanner.hasNextLine()) {
             String line = scanner.nextLine();
             if (line.contains("LC_VERSION_MIN_")) {
@@ -219,12 +253,6 @@ public class IPhoneBuilder extends Executor {
         defaultEnvironment.put("LANG", "en_US.UTF-8");
         tmpFile = tmpDir = getBuildDirectory();
         useMetal = "true".equals(request.getArg("ios.metal", "false"));
-        try {
-            log("Pods version: " + execString(new File("."), pod, "--version"));
-        } catch (Exception ex) {
-            error("Please install Cocoapods in order to generate Xcode projects.  E.g. 'sudo gem install cocoapods'.  See https://cocoapods.org/", ex);
-            throw new BuildException("Please install Cocoapods in order to generate Xcode projects.  E.g. 'sudo gem install cocoapods'.  See https://cocoapods.org/");
-        }
         log("Request Args: ");
         log("-----------------");
         for (String arg : request.getArgs()) {
@@ -283,37 +311,22 @@ public class IPhoneBuilder extends Executor {
         disableUIWebView = enableWKWebView && "true".equals(request.getArg("ios.noUIWebView", "true"));
 
         boolean bicodeHandle = true;
-        xcodebuild = "xcodebuild";
+        xcodebuild = resolveXcodebuild();
         xcodeVersion = getXcodeVersion(xcodebuild);
         if (xcodeVersion <= 0) {
             xcodeVersion = 10;
         }
 
         String facebookAppId = request.getArg("facebook.appId", null);
-        if(!new File(pod).exists()) {
-            pod = "/usr/bin/pod";
-            if(!new File(pod).exists()) {
-                pod = "/opt/homebrew/bin/pod";
-                if(!new File(pod).exists()) {
-                    log("You need to install cocoapods to proceed, to install cocoapods on your mac issue this command in the terminal: sudo gem install cocoapods --pre\n"
-                            + "followed by: sudo gem install xcodeproj");
-                    return false;
-                }
-            }
-        }
-        
         boolean usePodsForFacebook = !request.getArg("ios.facebook.usePods", "true").equals("false") && facebookAppId != null && facebookAppId.length() > 0;
         if (usePodsForFacebook) {
             String fbPodsVersion = request.getArg("ios.facebook.version", "~>5.6.0");
             addMinDeploymentTarget("10.0");
             iosPods += (((iosPods.length() > 0) ? ",":"") + "FBSDKCoreKit "+fbPodsVersion+",FBSDKLoginKit "+fbPodsVersion+",FBSDKShareKit "+fbPodsVersion);
         }
-        
-        runPods = true;
-        
-        
+
         String googleAdUnitId = request.getArg("ios.googleAdUnitId", request.getArg("google.adUnitId", null));
-        boolean usePodsForGoogleAds = runPods && googleAdUnitId != null && googleAdUnitId.length() > 0;
+        boolean usePodsForGoogleAds = googleAdUnitId != null && googleAdUnitId.length() > 0;
         if (usePodsForGoogleAds) {
             iosPods += (((iosPods.length() > 0) ? ",":"") + "Firebase/Core,Firebase/AdMob");
             addMinDeploymentTarget("7.0");
@@ -323,6 +336,17 @@ public class IPhoneBuilder extends Executor {
         }
         if (enableWKWebView) {
             addMinDeploymentTarget("8.0");
+        }
+
+        IOSDependencyConfig dependencyConfig = IOSDependencyManager.resolve(request, iosPods);
+        iosPods = dependencyConfig.iosPods;
+        runPods = dependencyConfig.usesCocoaPods();
+        runSpm = dependencyConfig.usesSwiftPackages();
+        if (runPods) {
+            ensurePodsInstalled();
+        }
+        if (runSpm) {
+            ensureXcodeprojInstalled();
         }
 
         debug("Xcode version is "+xcodeVersion);
@@ -718,6 +742,7 @@ public class IPhoneBuilder extends Executor {
         }
         
         File glAppDelegate = new File(buildinRes, "CodenameOne_GLAppDelegate.m");
+        boolean useUIScene = "true".equalsIgnoreCase(request.getArg("ios.uiscene", "false"));
         String integrateFacebook = "";
         
 
@@ -873,6 +898,14 @@ public class IPhoneBuilder extends Executor {
                 throw new BuildException("Failure while processing ios.blockScreenshotsOnEnterBackground build hint", ex);
             }
         }
+
+        if (useUIScene) {
+            try {
+                replaceInFile(new File(buildinRes, "CodenameOne_GLAppDelegate.h"), "#ifdef CN1_USE_UI_SCENE", "#define CN1_USE_UI_SCENE\n#ifdef CN1_USE_UI_SCENE");
+            } catch (IOException ex) {
+                throw new BuildException("Failure while processing ios.uiscene build hint", ex);
+            }
+        }
         
         String applicationDidEnterBackground = request.getArg("ios.applicationDidEnterBackground", null);
         if(applicationDidEnterBackground != null) {
@@ -932,6 +965,10 @@ public class IPhoneBuilder extends Executor {
         if(request.getArg("ios.newStorageLocation", "true").equals("true")) {
             newStorage = "        Display.getInstance().setProperty(\"iosNewStorage\", \"true\");\n";
         }
+        String disableScreenshots = "";
+        if (request.getArg("ios.disableScreenshots", "false").equalsIgnoreCase("true")) {
+            disableScreenshots = "        Display.getInstance().setProperty(\"DisableScreenshots\", \"true\");\n";
+        }
 
         String didEnterBackground =  "        stopped = true;\n"
                 + "        final long bgTask = com.codename1.impl.ios.IOSImplementation.beginBackgroundTask();\n"
@@ -967,6 +1004,7 @@ public class IPhoneBuilder extends Executor {
                     + "        Display.getInstance().setProperty(\"AppVersion\", APPLICATION_VERSION);\n"
                     + "        Display.getInstance().setProperty(\"AppName\", APPLICATION_NAME);\n"
                     + newStorage
+                    + disableScreenshots
                     + adPadding
                     + integrateFacebook
                     + integrateGoogleConnect
@@ -1016,7 +1054,7 @@ public class IPhoneBuilder extends Executor {
                     + "    }\n"
                     + "}\n";
 
-            stubSourceStream.write(stubSourceCode.getBytes());
+            stubSourceStream.write(stubSourceCode.getBytes(StandardCharsets.UTF_8));
         } catch (IOException ex) {
             throw new BuildException("Failed to write stub source", ex);
         }
@@ -1059,16 +1097,63 @@ public class IPhoneBuilder extends Executor {
                 String classNameWithUnderscores = currentNative.getName().replace('.', '_');
                 String mSourceFile = "#include \"xmlvm.h\"\n"
                         + "#include \"java_lang_String.h\"\n"
+                        + "#include <stdlib.h>\n"
                         + "#import \"CodenameOne_GLViewController.h\"\n"
                         + "#import <UIKit/UIKit.h>\n"
-                        + "#import \"" + classNameWithUnderscores + "Impl.h\"\n" + newVMInclude
+                        + "#import <objc/runtime.h>\n"
+                        + "#import \"" + classNameWithUnderscores + "Impl.h\"\n"
+                        + newVMInclude
                         + "#include \"" + classNameWithUnderscores + "ImplCodenameOne.h\"\n\n"
+                        + "static id cn1_createNativeInterfacePeer(NSString* className) {\n"
+                        + "    NSMutableArray* candidates = [NSMutableArray arrayWithObject:className];\n"
+                        + "    NSString* executableName = [[NSBundle mainBundle] objectForInfoDictionaryKey:@\"CFBundleExecutable\"];\n"
+                        + "    NSString* bundleName = [[NSBundle mainBundle] objectForInfoDictionaryKey:@\"CFBundleName\"];\n"
+                        + "    NSArray* moduleNames = @[executableName ?: @\"\", bundleName ?: @\"\"];\n"
+                        + "    for(NSString* moduleName in moduleNames) {\n"
+                        + "        if(moduleName.length == 0) {\n"
+                        + "            continue;\n"
+                        + "        }\n"
+                        + "        NSString* sanitized = [[moduleName stringByReplacingOccurrencesOfString:@\"-\" withString:@\"_\"] stringByReplacingOccurrencesOfString:@\" \" withString:@\"_\"];\n"
+                        + "        [candidates addObject:[sanitized stringByAppendingFormat:@\".%@\", className]];\n"
+                        + "        if(![sanitized isEqualToString:moduleName]) {\n"
+                        + "            [candidates addObject:[moduleName stringByAppendingFormat:@\".%@\", className]];\n"
+                        + "        }\n"
+                        + "    }\n"
+                        + "    Class cls = Nil;\n"
+                        + "    for(NSString* candidate in candidates) {\n"
+                        + "        cls = NSClassFromString(candidate);\n"
+                        + "        if(cls != Nil) {\n"
+                        + "            break;\n"
+                        + "        }\n"
+                        + "    }\n"
+                        + "    if(cls == Nil) {\n"
+                        + "        unsigned int classCount = 0;\n"
+                        + "        Class *classList = objc_copyClassList(&classCount);\n"
+                        + "        NSString* dottedSuffix = [@\".\" stringByAppendingString:className];\n"
+                        + "        for(unsigned int i = 0; i < classCount; i++) {\n"
+                        + "            NSString* runtimeName = [NSString stringWithUTF8String:class_getName(classList[i])];\n"
+                        + "            if([runtimeName isEqualToString:className] || [runtimeName hasSuffix:dottedSuffix] || [runtimeName hasSuffix:className]) {\n"
+                        + "                cls = classList[i];\n"
+                        + "                NSLog(@\"[CN1] Resolved native interface class %@ via runtime scan as %@\", className, runtimeName);\n"
+                        + "                break;\n"
+                        + "            }\n"
+                        + "        }\n"
+                        + "        if(classList != NULL) {\n"
+                        + "            free(classList);\n"
+                        + "        }\n"
+                        + "    }\n"
+                        + "    if(cls == Nil) {\n"
+                        + "        NSLog(@\"[CN1] Failed to find native interface class %@. Tried: %@\", className, candidates);\n"
+                        + "        return nil;\n"
+                        + "    }\n"
+                        + "    return [[cls alloc] init];\n"
+                        + "}\n\n"
                         + "JAVA_LONG " + classNameWithUnderscores + "ImplCodenameOne_initializeNativePeer__" + postfixForNewVM + "(" + prefixForNewVM + ") {\n"
-                        + "    " + classNameWithUnderscores + "Impl* i = [[" + classNameWithUnderscores + "Impl alloc] init];\n"
+                        + "    id i = cn1_createNativeInterfacePeer(@\"" + classNameWithUnderscores + "Impl\");\n"
                         + "    return i;\n"
                         + "}\n\n"
                         + "void " + classNameWithUnderscores + "ImplCodenameOne_releaseNativePeerInstance___long(" + prefix2ForNewVM + "JAVA_LONG l) {\n"
-                        + "    " + classNameWithUnderscores + "Impl* i = (" + classNameWithUnderscores + "Impl*)l;\n"
+                        + "    id i = (id)l;\n"
                         + "    [i release];\n"
                         + "}\n\n"
                         + "extern NSData* arrayToData(JAVA_OBJECT arr);\n"
@@ -1097,8 +1182,7 @@ public class IPhoneBuilder extends Executor {
                     String mFileBody;
 
                     mFileArgs = "(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT me";
-                    mFileBody = "    " + classNameWithUnderscores + "Impl* ptr = (" + classNameWithUnderscores +
-                        "Impl*)get_field_" + classNameWithUnderscores + "ImplCodenameOne_nativePeer(me);\n";
+                    mFileBody = "    id ptr = (id)get_field_" + classNameWithUnderscores + "ImplCodenameOne_nativePeer(me);\n";
 
                     
                     if(!(returnType.equals(Void.class) || returnType.equals(Void.TYPE))) {
@@ -1158,16 +1242,14 @@ public class IPhoneBuilder extends Executor {
                 
                 
                 try (FileOutputStream out = new FileOutputStream(javaFile)) {
-                    out.write(javaImplSourceFile.getBytes());
-                    out.close();
+                    out.write(javaImplSourceFile.getBytes(StandardCharsets.UTF_8));
                 } catch (IOException ex) {
                     throw new BuildException("Error while generating native interface stub for "+currentNative, ex);
                 }
                 File mFile = new File(resDir, "native_" + currentNative.getName().replace('.', '_') + "ImplCodenameOne.m");
 
                 try (FileOutputStream out = new FileOutputStream(mFile)) {
-                    out.write(mSourceFile.getBytes());
-                    out.close();
+                    out.write(mSourceFile.getBytes(StandardCharsets.UTF_8));
                 } catch (IOException ex) {
                     throw new BuildException("Error while generating native interface stub for "+currentNative, ex);
                 }
@@ -1180,8 +1262,9 @@ public class IPhoneBuilder extends Executor {
         if (!new File(javacPath).exists()) {
             javacPath = "javac";
         }
+        String[] stubSourceTarget = getStubCompileSourceTarget(javacPath);
         try {
-            if (!execWithFiles(stubSource, stubSource, ".java", javacPath, "-source", "1.6", "-target", "1.6", "-classpath",
+            if (!execWithFiles(stubSource, stubSource, ".java", javacPath, "-source", stubSourceTarget[0], "-target", stubSourceTarget[1], "-classpath",
                     classesDir.getAbsolutePath(),
                     "-d", classesDir.getAbsolutePath())) {
                 return false;
@@ -1224,22 +1307,22 @@ public class IPhoneBuilder extends Executor {
                 byte[] data = new byte[(int) appDelH.length()];
                 dis.readFully(data);
                 dis.close();
-                FileWriter fios = new FileWriter(appDelH);
-                String str = new String(data);
-                str = str.replace("//#define CN1_INCLUDE_NOTIFICATIONS", "#define CN1_INCLUDE_NOTIFICATIONS");
-                fios.write(str);
-                fios.close();
+                try(Writer fios = new OutputStreamWriter(Files.newOutputStream(appDelH.toPath()), StandardCharsets.UTF_8)) {
+                    String str = new String(data, StandardCharsets.UTF_8);
+                    str = str.replace("//#define CN1_INCLUDE_NOTIFICATIONS", "#define CN1_INCLUDE_NOTIFICATIONS");
+                    fios.write(str);
+                }
 
                 File iosNative = new File(buildinRes, "IOSNative.m");
-                dis = new DataInputStream(new FileInputStream(iosNative));
+                dis = new DataInputStream(Files.newInputStream(iosNative.toPath()));
                 data = new byte[(int) iosNative.length()];
                 dis.readFully(data);
                 dis.close();
-                fios = new FileWriter(iosNative);
-                str = new String(data);
-                str = str.replace("//#define CN1_INCLUDE_NOTIFICATIONS2", "#define CN1_INCLUDE_NOTIFICATIONS2");
-                fios.write(str);
-                fios.close();
+                try (Writer fios = new OutputStreamWriter(Files.newOutputStream(iosNative.toPath()), StandardCharsets.UTF_8)) {
+                    String str = new String(data, StandardCharsets.UTF_8);
+                    str = str.replace("//#define CN1_INCLUDE_NOTIFICATIONS2", "#define CN1_INCLUDE_NOTIFICATIONS2");
+                    fios.write(str);
+                }
             } catch (IOException ex) {
                 log("Failed to Update Objective-C source files to activate notifications flag");
                 throw new BuildException("Failed to update Objective-C source files to activate notifications flag", ex);
@@ -1250,26 +1333,27 @@ public class IPhoneBuilder extends Executor {
             try {
                 // special workaround for issue Apple is having with push notification missing from
                 // the entitlements
-                DataInputStream dis = new DataInputStream(new FileInputStream(glAppDelegate));
                 byte[] data = new byte[(int) glAppDelegate.length()];
-                dis.readFully(data);
-                dis.close();
-                FileWriter fios = new FileWriter(glAppDelegate);
-                String str = new String(data);
-                str = str.replace("#define INCLUDE_CN1_PUSH", "");
-                fios.write(str);
-                fios.close();
+                try(DataInputStream dis = new DataInputStream(Files.newInputStream(glAppDelegate.toPath()))) {
+                    dis.readFully(data);
+                }
+
+                try(Writer fios = new OutputStreamWriter(Files.newOutputStream(glAppDelegate.toPath()), StandardCharsets.UTF_8)) {
+                    String str = new String(data, StandardCharsets.UTF_8);
+                    str = str.replace("#define INCLUDE_CN1_PUSH", "");
+                    fios.write(str);
+                }
 
                 File iosNative = new File(buildinRes, "IOSNative.m");
-                dis = new DataInputStream(new FileInputStream(iosNative));
-                data = new byte[(int) iosNative.length()];
-                dis.readFully(data);
-                dis.close();
-                fios = new FileWriter(iosNative);
-                str = new String(data);
-                str = str.replace("#define INCLUDE_CN1_PUSH2", "//#define INCLUDE_CN1_PUSH2");
-                fios.write(str);
-                fios.close();
+                try(DataInputStream dis = new DataInputStream(Files.newInputStream(iosNative.toPath()))) {
+                    data = new byte[(int) iosNative.length()];
+                    dis.readFully(data);
+                }
+                try (Writer fios = new OutputStreamWriter(Files.newOutputStream(iosNative.toPath()), StandardCharsets.UTF_8)) {
+                    String str = new String(data, StandardCharsets.UTF_8);
+                    str = str.replace("#define INCLUDE_CN1_PUSH2", "//#define INCLUDE_CN1_PUSH2");
+                    fios.write(str);
+                }
             } catch (IOException ex) {
                 throw new BuildException("Failed to update Objective-C source files to activate push notification flag", ex);
             }
@@ -1596,9 +1680,11 @@ public class IPhoneBuilder extends Executor {
                     // that the change will work for all builds.  I made it "only" for the cocoapods version
                     // to prevent inadvertent breaking of versioned builds etc...
                     if (runPods) {
-                        replaceAllInFile(pbx, "ARCHS = [^;]+;", "ARCHS = \"\\$(ARCHS_STANDARD_INCLUDING_64_BIT)\";");
+                        replaceAllInFile(pbx, "ARCHS = [^;]+;", "ARCHS = \"\\$(ARCHS_STANDARD)\";");
+                        replaceAllInFile(pbx, "VALID_ARCHS = [^;]+;", "VALID_ARCHS = \"\\$(ARCHS_STANDARD)\";");
                     } else {
-                        replaceInFile(pbx, "ARCHS = armv7;", "ARCHS = \"armv7 arm64\";");
+                        replaceInFile(pbx, "ARCHS = armv7;", "ARCHS = \"\\$(ARCHS_STANDARD)\";");
+                        replaceAllInFile(pbx, "VALID_ARCHS = [^;]+;", "VALID_ARCHS = \"\\$(ARCHS_STANDARD)\";");
                     }
                 }
 
@@ -1628,6 +1714,9 @@ public class IPhoneBuilder extends Executor {
                                 "ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;\n"
                             + "				ENABLE_BITCODE = NO;\n");
                     }
+                    if (xcodeVersion >= 9) {
+                        replaceAllInFile(pbx, "ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME = LaunchImage;", "");
+                    }
                 }
 
                 if (useMetal) {
@@ -1636,6 +1725,12 @@ public class IPhoneBuilder extends Executor {
                 }
             } catch (Exception ex) {
                 throw new BuildException("Failed to update infoplist file", ex);
+            }
+
+            try {
+                normalizeAssetCatalogs(request);
+            } catch (Exception ex) {
+                throw new BuildException("Failed to normalize iOS asset catalogs", ex);
             }
             stopwatch.split("Post-VM Setup");
             if (runPods) {
@@ -1665,6 +1760,9 @@ public class IPhoneBuilder extends Executor {
                     deploymentTargetStr = "begin\n"
                             + "  xcproj.targets.find{|e|e.name=='" + request.getMainClass() + "'}.build_configurations.each{|config| \n"
                             + "    config.build_settings['PRODUCT_BUNDLE_IDENTIFIER']='"+request.getPackageName()+"'\n"
+                            + "    config.build_settings['DEFINES_MODULE']='YES'\n"
+                            + "    config.build_settings['SWIFT_VERSION']='5.0'\n"
+                            + "    config.build_settings['SWIFT_OBJC_BRIDGING_HEADER']='$(SRCROOT)/cn1-Bridging-Header.h'\n"
                             + "  }\n"
                             + "  xcproj.targets.each do |target|\n"
                             + "    target.build_configurations.each do |config|\n"
@@ -1804,6 +1902,7 @@ public class IPhoneBuilder extends Executor {
 
                     String createSchemesScript = "#!/usr/bin/env ruby\n" +
                             "require 'xcodeproj'\n" +
+                            "require 'pathname'\n" +
                             "main_class_name = \"" + request.getMainClass() + "\"\n" +
                             "project_file = \"" +
                                 tmpDir.getAbsolutePath() + "/dist/" +
@@ -1817,8 +1916,99 @@ public class IPhoneBuilder extends Executor {
                             + "  puts \"Backtrace:\\n\\t#{e.backtrace.join(\"\\n\\t\")}\"\n"
                             + "  puts 'An error occurred recreating schemes, but the build still might work...'\n"
                             + "end\n"
+                            + "begin\n"
+                            + "  main_target = xcproj.targets.find{|e| e.name==main_class_name}\n"
+                            + "  targets_to_fix = []\n"
+                            + "  if main_target\n"
+                            + "    targets_to_fix << main_target\n"
+                            + "  else\n"
+                            + "    targets_to_fix = xcproj.targets.select{|t| t.respond_to?(:product_type) && t.product_type == 'com.apple.product-type.application'}\n"
+                            + "  end\n"
+                            + "  if targets_to_fix.empty?\n"
+                            + "    raise \"Unable to find iOS app target for Swift phase fixups. main_class_name=#{main_class_name}, available=#{xcproj.targets.map(&:name).join(', ')}\"\n"
+                            + "  end\n"
+                            + "  targets_to_fix.each do |main_target|\n"
+                            + "    project_root = File.dirname(project_file)\n"
+                            + "    swift_paths = Dir.glob(File.join(project_root, main_class_name + '-src', '**', '*.swift'))\n"
+                            + "    swift_paths.each do |swift_path|\n"
+                            + "      rel_path = Pathname.new(swift_path).relative_path_from(Pathname.new(project_root)).to_s\n"
+                            + "      ref = xcproj.files.find{|f| f.path == rel_path} || xcproj.main_group.new_file(rel_path)\n"
+                            + "      unless main_target.source_build_phase.files_references.include?(ref)\n"
+                            + "        main_target.source_build_phase.add_file_reference(ref, true)\n"
+                            + "      end\n"
+                            + "      begin\n"
+                            + "        main_target.resources_build_phase.remove_file_reference(ref)\n"
+                            + "      rescue\n"
+                            + "      end\n"
+                            + "    end\n"
+                            + "    swift_refs = xcproj.files.select do |f|\n"
+                            + "      file_name = f.path || f.name || f.display_name\n"
+                            + "      file_name && file_name.downcase.end_with?('.swift')\n"
+                            + "    end\n"
+                            + "    swift_refs.each do |ref|\n"
+                            + "      unless main_target.source_build_phase.files_references.include?(ref)\n"
+                            + "        main_target.source_build_phase.add_file_reference(ref, true)\n"
+                            + "      end\n"
+                            + "      begin\n"
+                            + "        main_target.resources_build_phase.remove_file_reference(ref)\n"
+                            + "      rescue\n"
+                            + "      end\n"
+                            + "    end\n"
+                            + "    swift_resource_files = main_target.resources_build_phase.files.select do |bf|\n"
+                            + "      ref = bf.file_ref\n"
+                            + "      file_name = (ref && (ref.path || ref.name || ref.display_name)) || bf.display_name\n"
+                            + "      file_name && file_name.downcase.end_with?('.swift')\n"
+                            + "    end\n"
+                            + "    swift_resource_files.each do |bf|\n"
+                            + "      main_target.resources_build_phase.files.delete(bf)\n"
+                            + "    end\n"
+                            + "    source_folder_resources = main_target.resources_build_phase.files.select do |bf|\n"
+                            + "      ref = bf.file_ref\n"
+                            + "      ref_name = ref && (ref.path || ref.name || ref.display_name)\n"
+                            + "      next false unless ref_name\n"
+                            + "      if ref_name =~ /(^|\\/)[^\\/]*-src$/\n"
+                            + "        true\n"
+                            + "      else\n"
+                            + "        dir_path = File.join(project_root, ref_name)\n"
+                            + "        File.directory?(dir_path) && !Dir.glob(File.join(dir_path, '**', '*.swift')).empty?\n"
+                            + "      end\n"
+                            + "    end\n"
+                            + "    source_folder_resources.each do |bf|\n"
+                            + "      main_target.resources_build_phase.files.delete(bf)\n"
+                            + "    end\n"
+                            + "    remaining_swift_resources = main_target.resources_build_phase.files.select do |bf|\n"
+                            + "      ref = bf.file_ref\n"
+                            + "      file_name = (ref && (ref.path || ref.name || ref.display_name)) || bf.display_name\n"
+                            + "      if file_name && file_name.downcase.end_with?('.swift')\n"
+                            + "        true\n"
+                            + "      elsif file_name && file_name =~ /(^|\\/)[^\\/]*-src$/\n"
+                            + "        true\n"
+                            + "      elsif file_name\n"
+                            + "        dir_path = File.join(project_root, file_name)\n"
+                            + "        File.directory?(dir_path) && !Dir.glob(File.join(dir_path, '**', '*.swift')).empty?\n"
+                            + "      else\n"
+                            + "        false\n"
+                            + "      end\n"
+                            + "    end\n"
+                            + "    unless remaining_swift_resources.empty?\n"
+                            + "      names = remaining_swift_resources.map do |bf|\n"
+                            + "        ref = bf.file_ref\n"
+                            + "        (ref && (ref.path || ref.name || ref.display_name)) || bf.display_name || '<unknown>'\n"
+                            + "      end\n"
+                            + "      raise \"Swift files/resources still present in Copy Bundle Resources: #{names.join(', ')}\"\n"
+                            + "    end\n"
+                            + "  end\n"
+                            + "rescue => e\n"
+                            + "  puts \"Error while correcting Swift build phases: #{$!}\"\n"
+                            + "  puts \"Backtrace:\\n\\t#{e.backtrace.join(\"\\n\\t\")}\"\n"
+                            + "  raise e\n"
+                            + "end\n"
                             + deploymentTargetStr
                             + appExtensionsBuilder.toString();
+                    File bridgingHeaderFile = new File(new File(tmpDir, "dist"), "cn1-Bridging-Header.h");
+                    if (!bridgingHeaderFile.exists()) {
+                        this.createFile(bridgingHeaderFile, "// Codename One generated Swift bridging header\n".getBytes(StandardCharsets.UTF_8));
+                    }
                     File hooksDir = new File(tmpFile, "hooks");
                     hooksDir.mkdir();
                     File fixSchemesFile = new File(hooksDir, "fix_xcode_schemes.rb");
@@ -1956,8 +2146,63 @@ public class IPhoneBuilder extends Executor {
                 stopwatch.split("CocoaPods");
             }
 
-            try {
+            if (runSpm) {
+                configureSwiftPackages(request, dependencyConfig);
+                if (!runPods) {
+                    ensureTopLevelWorkspace(request);
+                }
+                stopwatch.split("SwiftPM");
+            }
 
+            File postPodsFixSchemesFile = new File(new File(tmpFile, "hooks"), "fix_xcode_schemes.rb");
+            if (postPodsFixSchemesFile.exists()) {
+                try {
+                    if (!exec(postPodsFixSchemesFile.getParentFile(), postPodsFixSchemesFile.getAbsolutePath())) {
+                        log("Failed to re-run xcode project Swift/resource phase fixups after dependency integration.");
+                        return false;
+                    }
+                } catch (Exception ex) {
+                    throw new BuildException("Failed to re-run xcode project Swift/resource phase fixups after dependency integration.", ex);
+                }
+            }
+
+            // Detect whether the project contains any Swift source files.
+            // If so, inject SWIFT_VERSION and related build settings into the
+            // pbxproj and create the bridging header.  This avoids adding
+            // Swift-specific settings to pure Objective-C projects.
+            File distDir = new File(tmpFile, "dist");
+            if (hasSwiftFiles(distDir)) {
+                File bridgingHeader = new File(distDir, "cn1-Bridging-Header.h");
+                if (!bridgingHeader.exists()) {
+                    try {
+                        this.createFile(bridgingHeader, "// Codename One generated Swift bridging header\n".getBytes(StandardCharsets.UTF_8));
+                    } catch (IOException ex) {
+                        log("Warning: failed to create Swift bridging header: " + ex.getMessage());
+                    }
+                }
+
+                try {
+                    File pbx = new File(tmpFile, "dist/" + request.getMainClass() + ".xcodeproj/project.pbxproj");
+                    // Inject Swift build settings by anchoring on SDKROOT which appears in
+                    // every project-level build configuration.
+                    replaceInFile(pbx,
+                            "SDKROOT = iphoneos;",
+                            "SDKROOT = iphoneos;\n\t\t\t\tSWIFT_VERSION = 5.0;");
+                    // Inject target-level settings by anchoring on PRODUCT_NAME which
+                    // appears in every target build configuration.
+                    replaceInFile(pbx,
+                            "PRODUCT_NAME = \"$(TARGET_NAME)\";",
+                            "DEFINES_MODULE = YES;\n\t\t\t\tPRODUCT_NAME = \"$(TARGET_NAME)\";\n\t\t\t\tSWIFT_OBJC_BRIDGING_HEADER = \"$(SRCROOT)/cn1-Bridging-Header.h\";");
+                } catch (IOException ex) {
+                    throw new BuildException("Failed to inject Swift build settings into pbxproj", ex);
+                }
+            }
+
+            try {
+                File pbxprojFile = new File(tmpFile, "dist/" + request.getMainClass() + ".xcodeproj/project.pbxproj");
+                removeLinesContaining(pbxprojFile,
+                        ".swift in Resources",
+                        request.getMainClass() + "-src in Resources");
 
                 if (request.getArg("ios.buildType", "debug").equals("debug") &&
                         request.getArg("ios.no_strip", "false").equalsIgnoreCase("true")) {
@@ -2018,6 +2263,111 @@ public class IPhoneBuilder extends Executor {
         return xcodeProjectDir;
     }
 
+    private void configureSwiftPackages(BuildRequest request, IOSDependencyConfig dependencyConfig) throws BuildException {
+        if (!dependencyConfig.usesSwiftPackages()) {
+            return;
+        }
+        File hooksDir = new File(tmpFile, "hooks");
+        hooksDir.mkdir();
+        File configFile = new File(hooksDir, "configure_swift_packages.rb");
+        StringBuilder script = new StringBuilder();
+        script.append("#!/usr/bin/env ruby\n")
+                .append("require 'xcodeproj'\n")
+                .append("project_file = '").append(escapeRuby(new File(tmpFile, "dist/" + request.getMainClass() + ".xcodeproj").getAbsolutePath())).append("'\n")
+                .append("xcproj = Xcodeproj::Project.open(project_file)\n")
+                .append("target = xcproj.targets.find { |t| t.name == '").append(escapeRuby(request.getMainClass())).append("' }\n")
+                .append("abort('Unable to find app target ").append(escapeRuby(request.getMainClass())).append("') unless target\n");
+        for (SwiftPackageSpec spec : dependencyConfig.swiftPackages) {
+            script.append("package_ref = xcproj.root_object.package_references.find { |pkg| pkg.respond_to?(:repositoryURL) && pkg.repositoryURL == '")
+                    .append(escapeRuby(spec.url)).append("' }\n")
+                    .append("if package_ref.nil?\n")
+                    .append("  package_ref = xcproj.new(Xcodeproj::Project::Object::XCRemoteSwiftPackageReference)\n")
+                    .append("  package_ref.repositoryURL = '").append(escapeRuby(spec.url)).append("'\n")
+                    .append("  package_ref.requirement = ").append(toRubyRequirement(spec.requirement)).append("\n")
+                    .append("  xcproj.root_object.package_references << package_ref\n")
+                    .append("end\n");
+            for (String product : spec.products) {
+                script.append("product_dep = target.package_product_dependencies.find { |dep| dep.product_name == '")
+                        .append(escapeRuby(product)).append("' }\n")
+                        .append("if product_dep.nil?\n")
+                        .append("  product_dep = xcproj.new(Xcodeproj::Project::Object::XCSwiftPackageProductDependency)\n")
+                        .append("  product_dep.package = package_ref\n")
+                        .append("  product_dep.product_name = '").append(escapeRuby(product)).append("'\n")
+                        .append("  target.package_product_dependencies << product_dep\n")
+                        .append("end\n")
+                        .append("unless target.frameworks_build_phase.files_references.any? { |ref| ref.respond_to?(:display_name) && ref.display_name == '")
+                        .append(escapeRuby(product)).append("' }\n")
+                        .append("  build_file = xcproj.new(Xcodeproj::Project::Object::PBXBuildFile)\n")
+                        .append("  build_file.product_ref = product_dep\n")
+                        .append("  target.frameworks_build_phase.files << build_file\n")
+                        .append("end\n");
+            }
+        }
+        script.append("xcproj.save\n");
+        try {
+            createFile(configFile, script.toString().getBytes(StandardCharsets.UTF_8));
+            exec(hooksDir, "chmod", "0755", configFile.getAbsolutePath());
+            if (!exec(hooksDir, configFile.getAbsolutePath())) {
+                throw new BuildException("Failed to configure Swift Package Manager dependencies for generated Xcode project");
+            }
+        } catch (BuildException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new BuildException("Failed to configure Swift Package Manager dependencies for generated Xcode project", ex);
+        }
+    }
+
+    private String toRubyRequirement(String requirement) throws BuildException {
+        if (requirement.startsWith("from:")) {
+            String min = requirement.substring("from:".length()).trim();
+            return "{ 'kind' => 'upToNextMajorVersion', 'minimumVersion' => '" + escapeRuby(min) + "' }";
+        }
+        if (requirement.startsWith("exact:")) {
+            String version = requirement.substring("exact:".length()).trim();
+            return "{ 'kind' => 'exactVersion', 'version' => '" + escapeRuby(version) + "' }";
+        }
+        if (requirement.startsWith("branch:")) {
+            String branch = requirement.substring("branch:".length()).trim();
+            return "{ 'kind' => 'branch', 'branch' => '" + escapeRuby(branch) + "' }";
+        }
+        if (requirement.startsWith("revision:")) {
+            String revision = requirement.substring("revision:".length()).trim();
+            return "{ 'kind' => 'revision', 'revision' => '" + escapeRuby(revision) + "' }";
+        }
+        if (requirement.startsWith("range:")) {
+            String[] bounds = requirement.substring("range:".length()).trim().split("\\.\\.<");
+            if (bounds.length != 2) {
+                throw new BuildException("Invalid SPM range requirement '" + requirement + "'");
+            }
+            return "{ 'kind' => 'versionRange', 'minimumVersion' => '" + escapeRuby(bounds[0].trim()) + "', 'maximumVersion' => '" + escapeRuby(bounds[1].trim()) + "' }";
+        }
+        throw new BuildException("Unsupported SPM requirement '" + requirement + "'");
+    }
+
+    private void ensureTopLevelWorkspace(BuildRequest request) throws BuildException {
+        File distDir = new File(tmpFile, "dist");
+        File workspaceDir = new File(distDir, request.getMainClass() + ".xcworkspace");
+        if (workspaceDir.exists()) {
+            return;
+        }
+        if (!workspaceDir.mkdirs() && !workspaceDir.isDirectory()) {
+            throw new BuildException("Failed to create workspace directory " + workspaceDir.getAbsolutePath());
+        }
+        File workspaceData = new File(workspaceDir, "contents.xcworkspacedata");
+        String contents = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+                "<Workspace\n" +
+                "   version = \"1.0\">\n" +
+                "   <FileRef\n" +
+                "      location = \"group:" + request.getMainClass() + ".xcodeproj\">\n" +
+                "   </FileRef>\n" +
+                "</Workspace>\n";
+        try {
+            createFile(workspaceData, contents.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException ex) {
+            throw new BuildException("Failed to create workspace metadata at " + workspaceData.getAbsolutePath(), ex);
+        }
+    }
+
     private void appendFilesToXcodeProjGroup(StringBuilder sb, File dir, String serviceGroupVarName, String serviceTargetVarName, File baseDir) {
 
         String basePath = baseDir.getAbsolutePath();
@@ -2037,6 +2387,52 @@ public class IPhoneBuilder extends Executor {
                 appendFilesToXcodeProjGroup(sb, f, serviceGroupVarName, serviceTargetVarName, baseDir);
             }
         }
+    }
+
+    private void removeLinesContaining(File file, String... snippets) throws IOException {
+        if (file == null || !file.exists() || snippets == null || snippets.length == 0) {
+            return;
+        }
+        String content = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+        StringBuilder sb = new StringBuilder(content.length());
+        try (BufferedReader reader = new BufferedReader(new StringReader(content))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                boolean remove = false;
+                for (String snippet : snippets) {
+                    if (snippet != null && !snippet.isEmpty() && line.contains(snippet)) {
+                        remove = true;
+                        break;
+                    }
+                }
+                if (!remove) {
+                    sb.append(line).append('\n');
+                }
+            }
+        }
+        createFile(file, sb.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Recursively checks whether the given directory contains any {@code .swift} files.
+     */
+    private static boolean hasSwiftFiles(File dir) {
+        if (dir == null || !dir.isDirectory()) {
+            return false;
+        }
+        File[] children = dir.listFiles();
+        if (children == null) {
+            return false;
+        }
+        for (File f : children) {
+            if (f.isFile() && f.getName().endsWith(".swift")) {
+                return true;
+            }
+            if (f.isDirectory() && hasSwiftFiles(f)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     
@@ -2341,6 +2737,25 @@ public class IPhoneBuilder extends Executor {
                 inject += "\n<key>UILaunchStoryboardName</key><string>"+request.getArg("ios.launchStoryboardName", "LaunchScreen")+"</string>";
             }
         }
+        if ("true".equalsIgnoreCase(request.getArg("ios.uiscene", "false")) && !inject.contains("UIApplicationSceneManifest")) {
+            inject += "\n<key>UIApplicationSceneManifest</key>\n"
+                    + "<dict>\n"
+                    + "    <key>UIApplicationSupportsMultipleScenes</key>\n"
+                    + "    <false/>\n"
+                    + "    <key>UISceneConfigurations</key>\n"
+                    + "    <dict>\n"
+                    + "        <key>UIWindowSceneSessionRoleApplication</key>\n"
+                    + "        <array>\n"
+                    + "            <dict>\n"
+                    + "                <key>UISceneConfigurationName</key>\n"
+                    + "                <string>Default Configuration</string>\n"
+                    + "                <key>UISceneDelegateClassName</key>\n"
+                    + "                <string>CodenameOne_GLSceneDelegate</string>\n"
+                    + "            </dict>\n"
+                    + "        </array>\n"
+                    + "    </dict>\n"
+                    + "</dict>";
+        }
 
         if(request.getArg("ios.fileSharingEnabled", "false").equals("true")) {
             inject += "\n	<key>UIFileSharingEnabled</key>\n	<true/>\n";
@@ -2418,7 +2833,8 @@ public class IPhoneBuilder extends Executor {
             }
         }
 
-        BufferedReader infoReader = new BufferedReader(new FileReader(infoPlist));
+        BufferedReader infoReader = new BufferedReader(new InputStreamReader(
+                Files.newInputStream(infoPlist.toPath()), StandardCharsets.UTF_8));
         StringBuilder b = new StringBuilder();
         String line = infoReader.readLine();
         while(line != null) {
@@ -2539,9 +2955,9 @@ public class IPhoneBuilder extends Executor {
         }
         infoReader.close();
         
-        FileOutputStream fo = new FileOutputStream(infoPlist);
-        fo.write(b.toString().getBytes());
-        fo.close();
+        try(FileOutputStream fo = new FileOutputStream(infoPlist)) {
+            fo.write(b.toString().getBytes(StandardCharsets.UTF_8));
+        }
     }
 
     /**
@@ -2552,7 +2968,7 @@ public class IPhoneBuilder extends Executor {
      */
     private int getXcodeVersion(String xcodeBuild) {
         try {
-            String result = execString(tmpFile, xcodeBuild, "-version");
+            String result = execString(new File("."), xcodeBuild, "-version");
             debug("Result is "+result);
 
             Scanner scanner = new Scanner(result);
@@ -2592,6 +3008,87 @@ public class IPhoneBuilder extends Executor {
             } catch (Throwable ex){}
         }
         return defaultVal;
+    }
+
+    private String[] getStubCompileSourceTarget(String javacPath) {
+        String source = "1.6";
+        String target = "1.6";
+        int major = -1;
+        String version = null;
+        try {
+            String versionOutput = execString(tmpFile != null ? tmpFile : new File("."), javacPath, "-version");
+            if (versionOutput != null && versionOutput.trim().length() > 0) {
+                String[] parts = versionOutput.trim().split("\\s+");
+                version = parts[parts.length - 1];
+                major = getMajorVersionInt(version, -1);
+            }
+        } catch (Exception ex) {
+            debug("Failed to resolve javac version for iOS stub compile: " + ex.getMessage());
+        }
+        if (major < 0) {
+            version = System.getProperty("java.version");
+            major = getMajorVersionInt(version, -1);
+        }
+        if (major >= 9) {
+            source = "8";
+            target = "8";
+            log("JDK " + version + " does not support -source/-target 1.6. Compiling iOS stubs with -source/-target 8.");
+        }
+        return new String[]{source, target};
+    }
+
+    private String resolveXcodebuild() {
+        String explicitXcodebuild = System.getenv("XCODEBUILD");
+        if (explicitXcodebuild != null && explicitXcodebuild.length() > 0) {
+            File candidate = new File(explicitXcodebuild);
+            if (candidate.exists()) {
+                log("Using xcodebuild from XCODEBUILD: " + candidate.getAbsolutePath());
+                return candidate.getAbsolutePath();
+            }
+        }
+
+        String developerDir = System.getenv("DEVELOPER_DIR");
+        if (developerDir != null && developerDir.length() > 0) {
+            File candidate = new File(developerDir, "usr/bin/xcodebuild");
+            if (candidate.exists()) {
+                log("Using xcodebuild from DEVELOPER_DIR: " + candidate.getAbsolutePath());
+                return candidate.getAbsolutePath();
+            }
+        }
+
+        String xcodeApp = System.getenv("XCODE_APP");
+        if (xcodeApp != null && xcodeApp.length() > 0) {
+            File candidate = new File(xcodeApp, "Contents/Developer/usr/bin/xcodebuild");
+            if (candidate.exists()) {
+                log("Using xcodebuild from XCODE_APP: " + candidate.getAbsolutePath());
+                return candidate.getAbsolutePath();
+            }
+        }
+
+        File xcrun = new File("/usr/bin/xcrun");
+        if (xcrun.exists()) {
+            try {
+                String resolved = execString(tmpFile, xcrun.getAbsolutePath(), "-f", "xcodebuild");
+                if (resolved != null) {
+                    resolved = resolved.trim();
+                }
+                if (resolved != null && resolved.length() > 0) {
+                    log("Using xcodebuild resolved by xcrun: " + resolved);
+                    return resolved;
+                }
+            } catch (Exception ex) {
+                debug("xcrun failed to resolve xcodebuild: " + ex.getMessage());
+            }
+        }
+
+        File usrBin = new File("/usr/bin/xcodebuild");
+        if (usrBin.exists()) {
+            log("Using xcodebuild at /usr/bin/xcodebuild");
+            return usrBin.getAbsolutePath();
+        }
+
+        log("Using xcodebuild from PATH");
+        return "xcodebuild";
     }
     
 
@@ -2636,9 +3133,11 @@ public class IPhoneBuilder extends Executor {
         File resDir = getResDir();
         
         BufferedImage iconImage = ImageIO.read(new ByteArrayInputStream(request.getIcon()));
-        icon512 = new File(iconDirectory, "iTunesArtwork");
+        // Legacy iOS icon files are still copied into the root resources, but should not
+        // be placed inside AppIcon.appiconset as they are not referenced by Contents.json.
+        icon512 = new File(resDir, "iTunesArtwork");
         createFile(icon512, request.getIcon());
-        icon57 = new File(iconDirectory, "Icon.png");
+        icon57 = new File(resDir, "Icon.png");
         createIconFile(icon57, iconImage, 57, 57);
         createIconFile(new File(iconDirectory, "iPhoneNotification@2x.png"), iconImage, 40, 40);
         createIconFile(new File(iconDirectory, "iPhoneNotification@3x.png"), iconImage, 60, 60);
@@ -2666,9 +3165,6 @@ public class IPhoneBuilder extends Executor {
         createIconFile(new File(iconDirectory, "iPadPro@2x.png"), iconImage, 167, 167);
         createIconFile(new File(iconDirectory, "AppStore.png"), iconImage, 1024, 1024);
         
-
-        copy(icon512, new File(resDir, icon512.getName()));
-        copy(icon57, new File(resDir, icon57.getName()));
         copyIcons(iconDirectory, resDir, 
                 "iPhoneNotification@2x.png",
                 "iPhoneNotification@3x.png",
@@ -2719,8 +3215,32 @@ public class IPhoneBuilder extends Executor {
                 copy(defaultLaunchStoryBoard, launchStoryBoard);
             }
             defaultLaunchStoryBoard.delete();
+
+            // Xcode 9+ uses LaunchScreen.storyboard. Keeping the legacy launch image set
+            // causes asset-catalog warnings for many missing legacy image files.
+            File legacyLaunchImages = new File(tmpFile, "dist/" + request.getMainClass() + "-src/Images.xcassets/LaunchImage.launchimage");
+            if (legacyLaunchImages.exists()) {
+                delTree(legacyLaunchImages);
+            }
         }
         return true;
+    }
+
+    private void normalizeAssetCatalogs(BuildRequest request) throws IOException {
+        File appSrcDir = new File(tmpFile, "dist/" + request.getMainClass() + "-src");
+        File appIconContents = new File(appSrcDir, "Images.xcassets/AppIcon.appiconset/Contents.json");
+        if (appIconContents.exists()) {
+            replaceInFile(appIconContents,
+                    ",\n    {\n      \"size\" : \"120x120\",\n      \"idiom\" : \"iphone\",\n      \"filename\" : \"Icon7@2x.png\",\n      \"scale\" : \"1x\"\n    },\n    {\n      \"size\" : \"167x167\",\n      \"idiom\" : \"ipad\",\n      \"filename\" : \"Icon-167.png\",\n      \"scale\" : \"3x\"\n    }",
+                    "");
+        }
+
+        if (xcodeVersion >= 9) {
+            File legacyLaunchImages = new File(appSrcDir, "Images.xcassets/LaunchImage.launchimage");
+            if (legacyLaunchImages.exists()) {
+                delTree(legacyLaunchImages);
+            }
+        }
     }
 
     

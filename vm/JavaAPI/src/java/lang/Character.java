@@ -288,6 +288,30 @@ public final class Character implements Comparable<Character>{
         return value; 
     }
     
+    static boolean isLetterCompat(char ch) {
+        return isLetter(ch);
+    }
+
+    static boolean isLetterCompat(int codePoint) {
+        return isLetter(codePoint);
+    }
+
+    static boolean isDigitCompat(char ch) {
+        return isDigit(ch);
+    }
+
+    static boolean isDigitCompat(int codePoint) {
+        return isDigit(codePoint);
+    }
+
+    static boolean isLetterOrDigitCompat(char ch) {
+        return isLetterOrDigit(ch);
+    }
+
+    static boolean isLetterOrDigitCompat(int codePoint) {
+        return isLetterOrDigit(codePoint);
+    }
+
     public static boolean isLetterOrDigit(char ch) {
         return isLetterOrDigit((int) ch);
     }

@@ -3,6 +3,8 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <limits.h>
 #include "cn1_class_method_index.h"
 #include <pthread.h>
 #include <setjmp.h>
@@ -750,6 +752,7 @@ struct TryBlock {
 };
 
 #define CN1_MAX_STACK_CALL_DEPTH 1024
+#define CN1_STACK_OVERFLOW_CALL_DEPTH_LIMIT CN1_MAX_STACK_CALL_DEPTH
 #define CN1_MAX_OBJECT_STACK_DEPTH 16536
 
 #define PER_THREAD_ALLOCATION_COUNT 4096
@@ -876,6 +879,8 @@ extern void throwException(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT exceptionArg);
 extern JAVA_INT  throwException_R_int(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT exceptionArg);
 extern JAVA_BOOLEAN  throwException_R_boolean(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT exceptionArg);
 extern JAVA_OBJECT __NEW_java_lang_NullPointerException(CODENAME_ONE_THREAD_STATE);
+extern JAVA_OBJECT __NEW_INSTANCE_java_lang_NullPointerException(CODENAME_ONE_THREAD_STATE);
+extern JAVA_OBJECT __NEW_INSTANCE_java_lang_StackOverflowError(CODENAME_ONE_THREAD_STATE);
 extern JAVA_OBJECT __NEW_java_lang_ArrayIndexOutOfBoundsException(CODENAME_ONE_THREAD_STATE);
 extern JAVA_VOID java_lang_ArrayIndexOutOfBoundsException___INIT_____int(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT __cn1ThisObject, JAVA_INT __cn1Arg1);
 extern void throwArrayIndexOutOfBoundsException(CODENAME_ONE_THREAD_STATE, int index);
@@ -919,30 +924,152 @@ extern JAVA_BOOLEAN throwArrayIndexOutOfBoundsException_R_boolean(CODENAME_ONE_T
 #else
 #define CN1_ARRAY_LENGTH(array) ((*((JAVA_ARRAY)array)).length)
 #endif
-#define CN1_ARRAY_ELEMENT_INT(array, index) (CHECK_ARRAY_ACCESS_EXPR(array,index) ? ((JAVA_ARRAY_INT*) (*(JAVA_ARRAY)array).data)[index] : 0)
-#define CN1_ARRAY_ELEMENT_BYTE(array, index) (CHECK_ARRAY_ACCESS_EXPR(array,index) ? ((JAVA_ARRAY_BYTE*) (*(JAVA_ARRAY)array).data)[index] : 0)
-#define CN1_ARRAY_ELEMENT_FLOAT(array, index) (CHECK_ARRAY_ACCESS_EXPR(array,index) ? ((JAVA_ARRAY_FLOAT*) (*(JAVA_ARRAY)array).data)[index] : 0)
-#define CN1_ARRAY_ELEMENT_DOUBLE(array, index) (CHECK_ARRAY_ACCESS_EXPR(array,index) ? ((JAVA_ARRAY_DOUBLE*) (*(JAVA_ARRAY)array).data)[index] : 0)
-#define CN1_ARRAY_ELEMENT_LONG(array, index) (CHECK_ARRAY_ACCESS_EXPR(array,index) ? ((JAVA_ARRAY_LONG*) (*(JAVA_ARRAY)array).data)[index] : 0)
-#define CN1_ARRAY_ELEMENT_OBJECT(array, index) (CHECK_ARRAY_ACCESS_EXPR(array,index) ? ((JAVA_ARRAY_OBJECT*) (*(JAVA_ARRAY)array).data)[index] : 0)
-#define CN1_ARRAY_ELEMENT_SHORT(array, index) (CHECK_ARRAY_ACCESS_EXPR(array,index) ? ((JAVA_ARRAY_SHORT*) (*(JAVA_ARRAY)array).data)[index] : 0)
-#define CN1_ARRAY_ELEMENT_CHAR(array, index) (CHECK_ARRAY_ACCESS_EXPR(array,index) ? ((JAVA_ARRAY_CHAR*) (*(JAVA_ARRAY)array).data)[index] : 0)
-#define CN1_SET_ARRAY_ELEMENT_INT(array, index, value) CHECK_ARRAY_ACCESS_WITH_ARGS(array, index); \
+
+static inline JAVA_BOOLEAN cn1_array_access_in_bounds(JAVA_OBJECT array, JAVA_INT index) {
+    return array != JAVA_NULL && index >= 0 && index < ((JAVA_ARRAY)array)->length;
+}
+
+static inline JAVA_BOOLEAN cn1_array_access_validate(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index) {
+    if (array == JAVA_NULL) {
+        throwException(threadStateData, __NEW_java_lang_NullPointerException(threadStateData));
+        return JAVA_FALSE;
+    }
+    if (index < 0 || index >= ((JAVA_ARRAY)array)->length) {
+        throwArrayIndexOutOfBoundsException(threadStateData, index);
+        return JAVA_FALSE;
+    }
+    return JAVA_TRUE;
+}
+
+static inline JAVA_INT cn1_array_element_int(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return 0;
+    }
+    return ((JAVA_ARRAY_INT*) (*(JAVA_ARRAY)array).data)[index];
+}
+
+static inline JAVA_BYTE cn1_array_element_byte(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return 0;
+    }
+    return ((JAVA_ARRAY_BYTE*) (*(JAVA_ARRAY)array).data)[index];
+}
+
+static inline JAVA_FLOAT cn1_array_element_float(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return 0;
+    }
+    return ((JAVA_ARRAY_FLOAT*) (*(JAVA_ARRAY)array).data)[index];
+}
+
+static inline JAVA_DOUBLE cn1_array_element_double(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return 0;
+    }
+    return ((JAVA_ARRAY_DOUBLE*) (*(JAVA_ARRAY)array).data)[index];
+}
+
+static inline JAVA_LONG cn1_array_element_long(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return 0;
+    }
+    return ((JAVA_ARRAY_LONG*) (*(JAVA_ARRAY)array).data)[index];
+}
+
+static inline JAVA_OBJECT cn1_array_element_object(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return JAVA_NULL;
+    }
+    return ((JAVA_ARRAY_OBJECT*) (*(JAVA_ARRAY)array).data)[index];
+}
+
+static inline JAVA_SHORT cn1_array_element_short(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return 0;
+    }
+    return ((JAVA_ARRAY_SHORT*) (*(JAVA_ARRAY)array).data)[index];
+}
+
+static inline JAVA_CHAR cn1_array_element_char(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return 0;
+    }
+    return ((JAVA_ARRAY_CHAR*) (*(JAVA_ARRAY)array).data)[index];
+}
+
+static inline JAVA_VOID cn1_set_array_element_int(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index, JAVA_INT value) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return;
+    }
     ((JAVA_ARRAY_INT*) (*(JAVA_ARRAY)array).data)[index] = value;
-#define CN1_SET_ARRAY_ELEMENT_BYTE(array, index, value) CHECK_ARRAY_ACCESS_WITH_ARGS(array, index); \
+}
+
+static inline JAVA_VOID cn1_set_array_element_byte(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index, JAVA_BYTE value) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return;
+    }
     ((JAVA_ARRAY_BYTE*) (*(JAVA_ARRAY)array).data)[index] = value;
-#define CN1_SET_ARRAY_ELEMENT_FLOAT(array, index, value) CHECK_ARRAY_ACCESS_WITH_ARGS(array, index); \
+}
+
+static inline JAVA_VOID cn1_set_array_element_float(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index, JAVA_FLOAT value) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return;
+    }
     ((JAVA_ARRAY_FLOAT*) (*(JAVA_ARRAY)array).data)[index] = value;
-#define CN1_SET_ARRAY_ELEMENT_DOUBLE(array, index, value) CHECK_ARRAY_ACCESS_WITH_ARGS(array, index); \
+}
+
+static inline JAVA_VOID cn1_set_array_element_double(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index, JAVA_DOUBLE value) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return;
+    }
     ((JAVA_ARRAY_DOUBLE*) (*(JAVA_ARRAY)array).data)[index] = value;
-#define CN1_SET_ARRAY_ELEMENT_LONG(array, index, value) CHECK_ARRAY_ACCESS_WITH_ARGS(array, index); \
+}
+
+static inline JAVA_VOID cn1_set_array_element_long(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index, JAVA_LONG value) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return;
+    }
     ((JAVA_ARRAY_LONG*) (*(JAVA_ARRAY)array).data)[index] = value;
-#define CN1_SET_ARRAY_ELEMENT_OBJECT(array, index, value) CHECK_ARRAY_ACCESS_WITH_ARGS(array, index); \
+}
+
+static inline JAVA_VOID cn1_set_array_element_object(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index, JAVA_OBJECT value) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return;
+    }
     ((JAVA_ARRAY_OBJECT*) (*(JAVA_ARRAY)array).data)[index] = value;
-#define CN1_SET_ARRAY_ELEMENT_SHORT(array, index, value) CHECK_ARRAY_ACCESS_WITH_ARGS(array, index); \
+}
+
+static inline JAVA_VOID cn1_set_array_element_short(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index, JAVA_SHORT value) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return;
+    }
     ((JAVA_ARRAY_SHORT*) (*(JAVA_ARRAY)array).data)[index] = value;
-#define CN1_SET_ARRAY_ELEMENT_CHAR(array, index, value) CHECK_ARRAY_ACCESS_WITH_ARGS(array, index); \
+}
+
+static inline JAVA_VOID cn1_set_array_element_char(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array, JAVA_INT index, JAVA_CHAR value) {
+    if (!cn1_array_access_in_bounds(array, index) && !cn1_array_access_validate(threadStateData, array, index)) {
+        return;
+    }
     ((JAVA_ARRAY_CHAR*) (*(JAVA_ARRAY)array).data)[index] = value;
+}
+
+#define CN1_ARRAY_ELEMENT_INT(array, index) cn1_array_element_int(threadStateData, array, index)
+#define CN1_ARRAY_ELEMENT_BYTE(array, index) cn1_array_element_byte(threadStateData, array, index)
+#define CN1_ARRAY_ELEMENT_FLOAT(array, index) cn1_array_element_float(threadStateData, array, index)
+#define CN1_ARRAY_ELEMENT_DOUBLE(array, index) cn1_array_element_double(threadStateData, array, index)
+#define CN1_ARRAY_ELEMENT_LONG(array, index) cn1_array_element_long(threadStateData, array, index)
+#define CN1_ARRAY_ELEMENT_OBJECT(array, index) cn1_array_element_object(threadStateData, array, index)
+#define CN1_ARRAY_ELEMENT_SHORT(array, index) cn1_array_element_short(threadStateData, array, index)
+#define CN1_ARRAY_ELEMENT_CHAR(array, index) cn1_array_element_char(threadStateData, array, index)
+
+#define CN1_SET_ARRAY_ELEMENT_INT(array, index, value) cn1_set_array_element_int(threadStateData, array, index, value)
+#define CN1_SET_ARRAY_ELEMENT_BYTE(array, index, value) cn1_set_array_element_byte(threadStateData, array, index, value)
+#define CN1_SET_ARRAY_ELEMENT_FLOAT(array, index, value) cn1_set_array_element_float(threadStateData, array, index, value)
+#define CN1_SET_ARRAY_ELEMENT_DOUBLE(array, index, value) cn1_set_array_element_double(threadStateData, array, index, value)
+#define CN1_SET_ARRAY_ELEMENT_LONG(array, index, value) cn1_set_array_element_long(threadStateData, array, index, value)
+#define CN1_SET_ARRAY_ELEMENT_OBJECT(array, index, value) cn1_set_array_element_object(threadStateData, array, index, value)
+#define CN1_SET_ARRAY_ELEMENT_SHORT(array, index, value) cn1_set_array_element_short(threadStateData, array, index, value)
+#define CN1_SET_ARRAY_ELEMENT_CHAR(array, index, value) cn1_set_array_element_char(threadStateData, array, index, value)
 
 extern JAVA_VOID monitorEnter(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT obj);
 extern JAVA_VOID monitorExit(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT obj);
@@ -1004,6 +1131,31 @@ extern JAVA_OBJECT newStringFromCString(CODENAME_ONE_THREAD_STATE, const char *s
 extern void initConstantPool();
 
 extern void initMethodStack(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT __cn1ThisObject, int stackSize, int localsStackSize, int classNameId, int methodNameId);
+static inline void cn1_init_method_stack_fast(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT __cn1ThisObject, int stackSize, int localsStackSize, JAVA_BOOLEAN fullClear) {
+#ifdef CN1_INCLUDE_NPE_CHECKS
+    if(__cn1ThisObject == JAVA_NULL) {
+        THROW_NULL_POINTER_EXCEPTION();
+    }
+#endif
+    if (threadStateData->callStackOffset >= CN1_STACK_OVERFLOW_CALL_DEPTH_LIMIT - 1) {
+        throwException(threadStateData, __NEW_INSTANCE_java_lang_StackOverflowError(threadStateData));
+        return;
+    }
+    if (fullClear) {
+        memset(&threadStateData->threadObjectStack[threadStateData->threadObjectStackOffset], 0,
+                sizeof(struct elementStruct) * (localsStackSize + stackSize));
+    } else {
+        /*
+         * Primitive-only fast frames intentionally use the same memset strategy.
+         * A per-slot type-only loop was measurably slower in benchmarks and did
+         * not improve generated-code performance.
+         */
+        memset(&threadStateData->threadObjectStack[threadStateData->threadObjectStackOffset], 0,
+                sizeof(struct elementStruct) * (localsStackSize + stackSize));
+    }
+    threadStateData->threadObjectStackOffset += localsStackSize + stackSize;
+    threadStateData->callStackOffset++;
+}
 
 // we need to zero out the values with memset otherwise we will run into a problem
 // when invoking release on pre-existing object which might be garbage
@@ -1025,8 +1177,49 @@ extern void initMethodStack(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT __cn1ThisObje
     const int currentCodenameOneCallStackOffset = threadStateData->callStackOffset;\
     int methodBlockOffset = threadStateData->tryBlockOffset;
 
+#define DEFINE_METHOD_STACK_FAST_REF(stackSize, localsStackSize, spPosition) \
+    const int cn1LocalsBeginInThread = threadStateData->threadObjectStackOffset; \
+    struct elementStruct* locals = &threadStateData->threadObjectStack[cn1LocalsBeginInThread]; \
+    struct elementStruct* stack = &threadStateData->threadObjectStack[threadStateData->threadObjectStackOffset + localsStackSize]; \
+    struct elementStruct* SP = &stack[spPosition]; \
+    cn1_init_method_stack_fast(threadStateData, (JAVA_OBJECT)1, stackSize, localsStackSize, JAVA_TRUE); \
+    const int currentCodenameOneCallStackOffset = threadStateData->callStackOffset;\
+    int methodBlockOffset = threadStateData->tryBlockOffset;
+
+#define DEFINE_INSTANCE_METHOD_STACK_FAST_REF(stackSize, localsStackSize, spPosition) \
+    const int cn1LocalsBeginInThread = threadStateData->threadObjectStackOffset; \
+    struct elementStruct* locals = &threadStateData->threadObjectStack[cn1LocalsBeginInThread]; \
+    struct elementStruct* stack = &threadStateData->threadObjectStack[threadStateData->threadObjectStackOffset + localsStackSize]; \
+    struct elementStruct* SP = &stack[spPosition]; \
+    cn1_init_method_stack_fast(threadStateData, __cn1ThisObject, stackSize, localsStackSize, JAVA_TRUE); \
+    const int currentCodenameOneCallStackOffset = threadStateData->callStackOffset;\
+    int methodBlockOffset = threadStateData->tryBlockOffset;
+
+#define DEFINE_METHOD_STACK_FAST_PRIMITIVE(stackSize, localsStackSize, spPosition) \
+    const int cn1LocalsBeginInThread = threadStateData->threadObjectStackOffset; \
+    struct elementStruct* locals = &threadStateData->threadObjectStack[cn1LocalsBeginInThread]; \
+    struct elementStruct* stack = &threadStateData->threadObjectStack[threadStateData->threadObjectStackOffset + localsStackSize]; \
+    struct elementStruct* SP = &stack[spPosition]; \
+    cn1_init_method_stack_fast(threadStateData, (JAVA_OBJECT)1, stackSize, localsStackSize, JAVA_FALSE); \
+    const int currentCodenameOneCallStackOffset = threadStateData->callStackOffset;\
+    int methodBlockOffset = threadStateData->tryBlockOffset;
+
+#define DEFINE_INSTANCE_METHOD_STACK_FAST_PRIMITIVE(stackSize, localsStackSize, spPosition) \
+    const int cn1LocalsBeginInThread = threadStateData->threadObjectStackOffset; \
+    struct elementStruct* locals = &threadStateData->threadObjectStack[cn1LocalsBeginInThread]; \
+    struct elementStruct* stack = &threadStateData->threadObjectStack[threadStateData->threadObjectStackOffset + localsStackSize]; \
+    struct elementStruct* SP = &stack[spPosition]; \
+    cn1_init_method_stack_fast(threadStateData, __cn1ThisObject, stackSize, localsStackSize, JAVA_FALSE); \
+    const int currentCodenameOneCallStackOffset = threadStateData->callStackOffset;\
+    int methodBlockOffset = threadStateData->tryBlockOffset;
+
+#define CN1_FAST_RETURN_RELEASE() \
+    threadStateData->threadObjectStackOffset = cn1LocalsBeginInThread; \
+    threadStateData->callStackOffset--;
+
 
 #if defined(__APPLE__) && defined(__OBJC__)
+@class NSString;
 extern JAVA_OBJECT fromNSString(CODENAME_ONE_THREAD_STATE, NSString* str);
 extern NSString* toNSString(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT o);
 #else

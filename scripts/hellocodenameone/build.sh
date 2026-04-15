@@ -2,6 +2,23 @@
 set -e
 MVNW="./mvnw"
 
+JAVA17_HOME=""
+if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ] && "$JAVA_HOME/bin/java" -version 2>&1 | head -n 1 | grep -q "\"17"; then
+  JAVA17_HOME="$JAVA_HOME"
+else
+  for candidate in /usr/lib/jvm/java-17-openjdk-amd64 /usr/lib/jvm/java-17-openjdk /usr/lib/jvm/jdk-17 /usr/lib/jvm/*17*; do
+    if [ -x "$candidate/bin/java" ] && "$candidate/bin/java" -version 2>&1 | head -n 1 | grep -q "\"17"; then
+      JAVA17_HOME="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ -n "$JAVA17_HOME" ]; then
+  export JAVA_HOME="$JAVA17_HOME"
+  export PATH="$JAVA_HOME/bin:$PATH"
+fi
+
 function mac_desktop {
   
   "$MVNW" "package" "-DskipTests" "-Dcodename1.platform=javase" "-Dcodename1.buildTarget=mac-os-x-desktop" "-U" "-e"
@@ -49,6 +66,10 @@ function jar {
   
   "$MVNW" "-Pexecutable-jar" "package" "-Dcodename1.platform=javase" "-DskipTests" "-U" "-e"
 }
+function compliance {
+  
+  "$MVNW" "-pl" "common" "-am" "process-classes" "-DskipTests" "-U" "-e"
+}
 function help {
   "echo" "-e" "build.sh [COMMAND]"
   "echo" "-e" "Local Build Commands:"
@@ -64,6 +85,8 @@ function help {
   "echo" "-e" "  ios_source"
   "echo" "-e" "    Generates an Xcode Project that you can open and build using Apple's development tools"
   "echo" "-e" "    *Requires a Mac with Xcode installed"
+  "echo" "-e" "  compliance"
+  "echo" "-e" "    Runs the common module process-classes phase (including cn1 compliance-check)"
   "echo" "-e" ""
   "echo" "-e" "Build Server Commands:"
   "echo" "-e" "  The following commands will build the app using the Codename One build server, and require"

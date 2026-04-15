@@ -34,18 +34,14 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.util.Arrays;
 
-/**
- * Implementation of the HTML components document request handler to allow simple
- * HTML support in CodenameOne.
- *
- * @author Shai Almog
- */
+/// Implementation of the HTML components document request handler to allow simple
+/// HTML support in CodenameOne.
+///
+/// @author Shai Almog
 public class AsyncDocumentRequestHandlerImpl extends DefaultDocumentRequestHandler {
     protected static final Object LOCK = new Object();
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void resourceRequestedAsync(final DocumentInfo docInfo, final IOCallback callback) {
         String url = docInfo.getUrl();
@@ -57,9 +53,7 @@ public class AsyncDocumentRequestHandlerImpl extends DefaultDocumentRequestHandl
         resourceRequested(docInfo, callback);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public InputStream resourceRequested(DocumentInfo docInfo) {
         return null;
@@ -170,8 +164,12 @@ public class AsyncDocumentRequestHandlerImpl extends DefaultDocumentRequestHandl
 
         @Override
         public final boolean equals(Object o) {
-            if (!(o instanceof AsyncDocumentConnectionRequest)) return false;
-            if (!super.equals(o)) return false;
+            if (!(o instanceof AsyncDocumentConnectionRequest)) {
+                return false;
+            }
+            if (!super.equals(o)) {
+                return false;
+            }
 
             AsyncDocumentConnectionRequest that = (AsyncDocumentConnectionRequest) o;
             return (docInfo == null ? that.docInfo == null : docInfo.equals(that.docInfo)) && (callback == null ? that.callback == null : callback.equals(that.callback)) && Arrays.equals(response, that.response);

@@ -1,0 +1,112 @@
+package com.codename1.ui.css;
+
+import com.codename1.junit.UITestBase;
+import com.codename1.ui.Button;
+import com.codename1.ui.Component;
+import com.codename1.ui.Image;
+import com.codename1.ui.plaf.CSSBorder;
+import com.codename1.ui.plaf.UIManager;
+import com.codename1.ui.util.MutableResource;
+import java.util.Hashtable;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+public class CSSThemeCompilerTest extends UITestBase {
+
+    @Test
+    public void testCompilesThemeConstantsDeriveAndMutableImages() {
+        CSSThemeCompiler compiler = new CSSThemeCompiler();
+        MutableResource resource = new MutableResource();
+
+        compiler.compile(
+                ":root{--primary:#abc;}"
+                + "@constants{spacing: 4px; primaryColor: var(--primary);}"
+                + "Button{color:var(--primary);background-color:#112233;padding:1px 2px;cn1-derive:Label;}"
+                + "Button:pressed{border-width:2px;border-style:solid;border-color:#ffffff;cn1-mutable-image:btnBg #ff00ff;}"
+                + "Label{margin:2px 4px 6px 8px;}"
+                + "Button{color:pink;text-align:center;border:1px solid #00ff00;}"
+                + "Button.pressed{color:#00ff00;}",
+                resource,
+                "Theme"
+        );
+
+        Hashtable theme = resource.getTheme("Theme");
+        assertEquals("ffc0cb", theme.get("Button.fgColor"));
+        assertEquals("112233", theme.get("Button.bgColor"));
+        assertEquals("255", theme.get("Button.transparency"));
+        assertEquals("1,2,1,2", theme.get("Button.padding"));
+        assertEquals("2,4,6,8", theme.get("Label.margin"));
+        assertEquals("Label", theme.get("Button.derive"));
+        assertEquals("#abc", theme.get("@primary"));
+        assertEquals("4px", theme.get("@spacing"));
+        assertEquals("#abc", theme.get("@primarycolor"));
+        assertEquals(Integer.valueOf(Component.CENTER), theme.get("Button.align"));
+        assertTrue(theme.get("Button.border") instanceof CSSBorder);
+        assertEquals("00ff00", theme.get("Button.press#fgColor"));
+
+        UIManager.getInstance().addThemeProps(theme);
+        Button runtimeButton = new Button("Runtime");
+        runtimeButton.setUIID("Button");
+        assertEquals(0xffc0cb, runtimeButton.getUnselectedStyle().getFgColor());
+        assertEquals(Component.CENTER, runtimeButton.getUnselectedStyle().getAlignment());
+        assertNotNull(runtimeButton.getUnselectedStyle().getBorder());
+
+        Image mutable = resource.getImage("btnBg");
+        assertNotNull(mutable);
+        assertNotNull(theme.get("Button.press#bgImage"));
+    }
+    @Test
+    public void testThrowsOnMalformedCss() {
+        CSSThemeCompiler compiler = new CSSThemeCompiler();
+        MutableResource resource = new MutableResource();
+
+        assertThrows(CSSThemeCompiler.CSSSyntaxException.class, () ->
+                compiler.compile("Button{color:#12;}", resource, "Theme")
+        );
+        assertThrows(CSSThemeCompiler.CSSSyntaxException.class, () ->
+                compiler.compile("Button{color:#ff00ff;text-align:middle;}", resource, "Theme")
+        );
+        assertThrows(CSSThemeCompiler.CSSSyntaxException.class, () ->
+                compiler.compile("Button:hover{color:#ff00ff;}", resource, "Theme")
+        );
+    }
+
+    @Test
+    public void testCompilesDarkModeMediaQueriesToDarkUiids() {
+        CSSThemeCompiler compiler = new CSSThemeCompiler();
+        MutableResource resource = new MutableResource();
+
+        compiler.compile(
+                "Button{color:#111111;}"
+                + "@media (prefers-color-scheme: dark){"
+                + "Button{color:#eeeeee;background-color:#000000;}"
+                + "Button:pressed{color:#ff0000;}"
+                + "}",
+                resource,
+                "Theme"
+        );
+
+        Hashtable theme = resource.getTheme("Theme");
+        assertEquals("111111", theme.get("Button.fgColor"));
+        assertEquals("eeeeee", theme.get("$DarkButton.fgColor"));
+        assertEquals("000000", theme.get("$DarkButton.bgColor"));
+        assertEquals("255", theme.get("$DarkButton.transparency"));
+        assertEquals("ff0000", theme.get("$DarkButton.press#fgColor"));
+    }
+
+    @Test
+    public void testCompilesUnselectedStateSelector() {
+        CSSThemeCompiler compiler = new CSSThemeCompiler();
+        MutableResource resource = new MutableResource();
+
+        compiler.compile("Button.unselected{color:white;}", resource, "Theme");
+
+        Hashtable theme = resource.getTheme("Theme");
+        assertEquals("ffffff", theme.get("Button.fgColor"));
+    }
+
+}

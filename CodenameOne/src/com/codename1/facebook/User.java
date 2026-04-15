@@ -25,12 +25,10 @@ package com.codename1.facebook;
 
 import java.util.Hashtable;
 
-/**
- * This class represents a Facebook User objject
- * http://developers.facebook.com/docs/reference/api/user/
- *
- * @author Chen Fishbein
- */
+/// This class represents a Facebook User objject
+/// http://developers.facebook.com/docs/reference/api/user/
+///
+/// @author Chen Fishbein
 public class User extends FBObject {
 
     private String username;
@@ -51,189 +49,191 @@ public class User extends FBObject {
     private FBObject location;
     private FBObject hometown;
 
-    /**
-     * Empty Contructor
-     */
+    /// Empty Contructor
     public User() {
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// Creates a user from a hashtable of Facebook user properties.
+    ///
+    /// #### Parameters
+    ///
+    /// - `props`: the properties map used to initialize the user.
     public User(Hashtable props) {
         super(props);
         init(props);
     }
 
 
-    /**
-     * @return the first_name
-     * @deprecated Use {@link #getFirstName()}.
-     */
+    /// #### Returns
+    ///
+    /// the first_name
+    ///
+    /// #### Deprecated
+    ///
+    /// Use `#getFirstName()`.
     @Deprecated
     @SuppressWarnings("PMD.MethodNamingConventions")
     public String getFirst_name() {
         return getFirstName();
     }
 
-    /**
-     * @return the first name
-     */
+    /// #### Returns
+    ///
+    /// the first name
     public String getFirstName() {
         return first_name;
     }
 
-    /**
-     * @return the last_name
-     * @deprecated Use {@link #getLastName()}.
-     */
+    /// #### Returns
+    ///
+    /// the last_name
+    ///
+    /// #### Deprecated
+    ///
+    /// Use `#getLastName()`.
     @Deprecated
     @SuppressWarnings("PMD.MethodNamingConventions")
     public String getLast_name() {
         return getLastName();
     }
 
-    /**
-     * @return the last name
-     */
+    /// #### Returns
+    ///
+    /// the last name
     public String getLastName() {
         return last_name;
     }
 
-    /**
-     * @return the link
-     */
+    /// #### Returns
+    ///
+    /// the link
     public String getLink() {
         return link;
     }
 
-    /**
-     * @return the about
-     */
+    /// #### Returns
+    ///
+    /// the about
     public String getAbout() {
         return about;
     }
 
-    /**
-     * @return the birthday
-     */
+    /// #### Returns
+    ///
+    /// the birthday
     public String getBirthday() {
         return birthday;
     }
 
-    /**
-     * @return the email
-     */
+    /// #### Returns
+    ///
+    /// the email
     public String getEmail() {
         return email;
     }
 
-    /**
-     * @return the website
-     */
+    /// #### Returns
+    ///
+    /// the website
     public String getWebsite() {
         return website;
     }
 
-    /**
-     * @return the bio
-     */
+    /// #### Returns
+    ///
+    /// the bio
     public String getBio() {
         return bio;
     }
 
-    /**
-     * @return the quotes
-     */
+    /// #### Returns
+    ///
+    /// the quotes
     public String getQuotes() {
         return quotes;
     }
 
-    /**
-     * @return the gender
-     */
+    /// #### Returns
+    ///
+    /// the gender
     public String getGender() {
         return gender;
     }
 
-    /**
-     * @return the relationship_status
-     * @deprecated Use {@link #getRelationshipStatus()}.
-     */
+    /// #### Returns
+    ///
+    /// the relationship_status
+    ///
+    /// #### Deprecated
+    ///
+    /// Use `#getRelationshipStatus()`.
     @Deprecated
     @SuppressWarnings("PMD.MethodNamingConventions")
     public String getRelationship_status() {
         return getRelationshipStatus();
     }
 
-    /**
-     * @return the relationship status
-     */
+    /// #### Returns
+    ///
+    /// the relationship status
     public String getRelationshipStatus() {
         return relationship_status;
     }
 
-    /**
-     * @return the timezone
-     */
+    /// #### Returns
+    ///
+    /// the timezone
     public long getTimezone() {
         return timezone;
     }
 
-    /**
-     * @return the last_updated
-     * @deprecated Use {@link #getLastUpdated()}.
-     */
+    /// #### Returns
+    ///
+    /// the last_updated
+    ///
+    /// #### Deprecated
+    ///
+    /// Use `#getLastUpdated()`.
     @Deprecated
     @SuppressWarnings("PMD.MethodNamingConventions")
     public String getLast_updated() {
         return getLastUpdated();
     }
 
-    /**
-     * @return the last updated
-     */
+    /// #### Returns
+    ///
+    /// the last updated
     public String getLastUpdated() {
         return last_updated;
     }
 
-    /**
-     * @return the locale
-     */
+    /// #### Returns
+    ///
+    /// the locale
     public String getLocale() {
         return locale;
     }
 
-    /**
-     * Returns the username
-     */
+    /// Returns the username
     public String getUsername() {
         return username;
     }
 
-    /**
-     * Gets the user City if available
-     *
-     * @return
-     */
+    /// Gets the user City if available
     public FBObject getLocation() {
         return location;
     }
 
-    /**
-     * Gets the user Hometown if available
-     *
-     * @return
-     */
+    /// Gets the user Hometown if available
     public FBObject getHometown() {
         return hometown;
     }
 
-    /**
-     * copies the relevant values from the given hashtable
-     *
-     * @param props an hashtable to copy from
-     */
+    /// copies the relevant values from the given hashtable
+    ///
+    /// #### Parameters
+    ///
+    /// - `props`: an hashtable to copy from
     @Override
     public void copy(Hashtable props) {
         super.copy(props);
@@ -286,9 +286,7 @@ public class User extends FBObject {
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -300,12 +298,26 @@ public class User extends FBObject {
         return super.equals(o);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public int hashCode() {
-        return super.hashCode();
+        int result = super.hashCode();
+        result = 31 * result + (username != null ? username.hashCode() : 0);
+        result = 31 * result + (first_name != null ? first_name.hashCode() : 0);
+        result = 31 * result + (last_name != null ? last_name.hashCode() : 0);
+        result = 31 * result + (link != null ? link.hashCode() : 0);
+        result = 31 * result + (about != null ? about.hashCode() : 0);
+        result = 31 * result + (birthday != null ? birthday.hashCode() : 0);
+        result = 31 * result + (email != null ? email.hashCode() : 0);
+        result = 31 * result + (website != null ? website.hashCode() : 0);
+        result = 31 * result + (bio != null ? bio.hashCode() : 0);
+        result = 31 * result + (quotes != null ? quotes.hashCode() : 0);
+        result = 31 * result + (gender != null ? gender.hashCode() : 0);
+        result = 31 * result + (relationship_status != null ? relationship_status.hashCode() : 0);
+        result = 31 * result + (int) (timezone ^ (timezone >>> 32));
+        result = 31 * result + (last_updated != null ? last_updated.hashCode() : 0);
+        result = 31 * result + (locale != null ? locale.hashCode() : 0);
+        result = 31 * result + (location != null ? location.hashCode() : 0);
+        result = 31 * result + (hometown != null ? hometown.hashCode() : 0);
+        return result;
     }
-
 }

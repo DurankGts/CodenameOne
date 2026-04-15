@@ -36,17 +36,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * This class provides a similar API to {@code URL} making it almost into a "drop in" replacement.
- * It is placed in a different package because it is incompatible to {@code URL} by definition.  It is useful
- * in getting some simple code to work without too many changes
- *
- * @author Shai Almog
- */
+/// This class provides a similar API to `URL` making it almost into a "drop in" replacement.
+/// It is placed in a different package because it is incompatible to `URL` by definition.  It is useful
+/// in getting some simple code to work without too many changes
+///
+/// @author Shai Almog
 public class URL {
     private final URI u;
 
-    public URL(java.lang.String url) throws URISyntaxException {
+    public URL(String url) throws URISyntaxException {
         u = new URI(url);
     }
 
@@ -54,19 +52,19 @@ public class URL {
         this.u = u;
     }
 
-    public java.lang.String getQuery() {
+    public String getQuery() {
         return u.getQuery();
     }
 
-    public java.lang.String getPath() {
+    public String getPath() {
         return u.getPath();
     }
 
-    public java.lang.String getUserInfo() {
+    public String getUserInfo() {
         return u.getUserInfo();
     }
 
-    public java.lang.String getAuthority() {
+    public String getAuthority() {
         return u.getAuthority();
     }
 
@@ -81,7 +79,7 @@ public class URL {
         return 80;
     }
 
-    public java.lang.String getProtocol() {
+    public String getProtocol() {
         String s = u.toASCIIString();
         if (s.startsWith("https")) {
             return "https";
@@ -92,16 +90,16 @@ public class URL {
         return "http";
     }
 
-    public java.lang.String getHost() {
+    public String getHost() {
         return u.getHost();
     }
 
-    public java.lang.String getFile() {
+    public String getFile() {
         return u.toASCIIString();
     }
 
     @Override
-    public boolean equals(java.lang.Object o) {
+    public boolean equals(Object o) {
         return o instanceof URL && u.equals(((URL) o).u);
     }
 
@@ -115,26 +113,26 @@ public class URL {
     }
 
     @Override
-    public java.lang.String toString() {
+    public String toString() {
         return u.toASCIIString();
     }
 
-    public java.lang.String toExternalForm() {
+    public String toExternalForm() {
         return u.toASCIIString();
     }
 
-    public java.net.URI toURI() throws java.net.URISyntaxException {
+    public URI toURI() throws URISyntaxException {
         return u;
     }
 
-    public URLConnection openConnection() throws java.io.IOException {
+    public URLConnection openConnection() throws IOException {
         if ("file".equals(getProtocol())) {
             return new FileURLConnection(new File(u));
         }
         return new HttpURLConnection(u.toASCIIString());
     }
 
-    public final java.io.InputStream openStream() throws java.io.IOException {
+    public final InputStream openStream() throws IOException {
         return openConnection().getInputStream();
     }
 
@@ -146,7 +144,7 @@ public class URL {
         boolean doInput = true;
         boolean doOutput;
 
-        public abstract void connect() throws java.io.IOException;
+        public abstract void connect() throws IOException;
 
         public int getConnectTimeout() {
             return connectTimeout;
@@ -174,23 +172,27 @@ public class URL {
             return getContentLength();
         }
 
-        public abstract java.lang.String getContentType();
+        public abstract String getContentType();
 
-        public abstract java.lang.String getHeaderField(java.lang.String s);
+        public abstract String getHeaderField(String s);
 
-        public abstract java.util.Map<java.lang.String, java.util.List<java.lang.String>> getHeaderFields();
+        public abstract Map<String, List<String>> getHeaderFields();
 
-        public abstract java.io.InputStream getInputStream() throws java.io.IOException;
+        public abstract InputStream getInputStream() throws IOException;
 
-        public abstract java.io.OutputStream getOutputStream() throws java.io.IOException;
+        public abstract OutputStream getOutputStream() throws IOException;
 
-        /**
-         * Sets the request property, replacing existing property with same key, if it already exists.
-         *
-         * @param key   The key of the request property.
-         * @param value The value of the request property.
-         * @since 7.0
-         */
+        /// Sets the request property, replacing existing property with same key, if it already exists.
+        ///
+        /// #### Parameters
+        ///
+        /// - `key`: The key of the request property.
+        ///
+        /// - `value`: The value of the request property.
+        ///
+        /// #### Since
+        ///
+        /// 7.0
         public void setRequestProperty(String key,
                                        String value) {
             properties.put(key, value);
@@ -262,8 +264,8 @@ public class URL {
 
     public class HttpURLConnection extends URLConnection {
         private final String url;
-        private Object connection;
         private final CodenameOneImplementation impl;
+        private Object connection;
         private String requestMethod = "GET";
 
         HttpURLConnection(String url) {
@@ -288,7 +290,7 @@ public class URL {
                 try {
                     impl.setHttpMethod(connection, requestMethod);
                 } catch (IOException ex) {
-                    throw new IllegalArgumentException("Failed to set request method " + method + ". " + ex.getMessage());
+                    throw new IllegalArgumentException("Failed to set request method " + method + ". " + ex.getMessage(), ex);
                 }
             }
         }

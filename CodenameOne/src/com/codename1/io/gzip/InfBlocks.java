@@ -37,29 +37,19 @@ package com.codename1.io.gzip;
 final class InfBlocks {
     // Table for deflate from PKZIP's appnote.txt.
     static final int[] border = { // Order of the bit length code lengths
-            16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15
-    };
+            16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
     static final private int MANY = 1440;
     // And'ing with mask[n] masks the lower n bits
-    static final private int[] inflate_mask = {
-            0x00000000, 0x00000001, 0x00000003, 0x00000007, 0x0000000f,
-            0x0000001f, 0x0000003f, 0x0000007f, 0x000000ff, 0x000001ff,
-            0x000003ff, 0x000007ff, 0x00000fff, 0x00001fff, 0x00003fff,
-            0x00007fff, 0x0000ffff
-    };
+    static final private int[] inflate_mask = {0x00000000, 0x00000001, 0x00000003, 0x00000007, 0x0000000f, 0x0000001f, 0x0000003f, 0x0000007f, 0x000000ff, 0x000001ff, 0x000003ff, 0x000007ff, 0x00000fff, 0x00001fff, 0x00003fff, 0x00007fff, 0x0000ffff};
     static final private int Z_OK = 0;
     static final private int Z_STREAM_END = 1;
-    static final private int Z_NEED_DICT = 2;
-    static final private int Z_ERRNO = -1;
     static final private int Z_STREAM_ERROR = -2;
     static final private int Z_DATA_ERROR = -3;
-    static final private int Z_MEM_ERROR = -4;
     static final private int Z_BUF_ERROR = -5;
-    static final private int Z_VERSION_ERROR = -6;
 
     static final private int TYPE = 0;  // get type bits (3, including end bit)
     static final private int LENS = 1;  // get lengths for stored
-    static final private int STORED = 2;// processing stored block
+    static final private int STORED = 2; // processing stored block
     static final private int TABLE = 3; // get table lengths
     static final private int BTREE = 4; // get bit lengths tree for a dynamic block
     static final private int DTREE = 5; // get length, distance trees for a dynamic block
@@ -70,6 +60,7 @@ final class InfBlocks {
     private final InfCodes codes;      // if CODES, current state
     private final InfTree inftree = new InfTree();
     private final ZStream z;
+    private final boolean check;
     int mode;            // current inflate_block mode
     int left;            // if STORED, bytes left to copy
     int table;           // table lengths (14 bits)
@@ -92,7 +83,6 @@ final class InfBlocks {
     int end;             // one byte after sliding window
     int read;            // window read pointer
     int write;           // window write pointer
-    private final boolean check;
 
     InfBlocks(ZStream z, int w) {
         this.z = z;
@@ -118,6 +108,7 @@ final class InfBlocks {
         }
     }
 
+    @SuppressWarnings("PMD.SwitchStmtsShouldHaveDefault")
     int proc(int r) {
         int t;              // temporary storage
         int b;              // bit buffer
@@ -291,15 +282,20 @@ final class InfBlocks {
                     r = Z_OK;
 
                     t = left;
-                    if (t > n) t = n;
-                    if (t > m) t = m;
+                    if (t > n) {
+                        t = n;
+                    }
+                    if (t > m) {
+                        t = m;
+                    }
                     System.arraycopy(z.nextIn, p, window, q, t);
                     p += t;
                     n -= t;
                     q += t;
                     m -= t;
-                    if ((left -= t) != 0)
+                    if ((left -= t) != 0) { //NOPMD AssignmentInOperand
                         break;
+                    }
                     mode = last != 0 ? DRY : TYPE;
                     break;
                 case TABLE:
@@ -405,44 +401,15 @@ final class InfBlocks {
                 case DTREE:
                     while (true) {
                         t = table;
-                        if (!(index < 258 + (t & 0x1f) + ((t >> 5) & 0x1f))) {
-                            break;
-                        }
+                        if (index < 258 + (t & 0x1f) + ((t >> 5) & 0x1f)) {
+                            int[] h;
+                            int i;
+                            int j;
+                            int c;
 
-                        int[] h;
-                        int i, j, c;
+                            t = bb[0];
 
-                        t = bb[0];
-
-                        while (k < (t)) {
-                            if (n != 0) {
-                                r = Z_OK;
-                            } else {
-                                bitb = b;
-                                bitk = k;
-                                z.availIn = n;
-                                z.totalIn += p - z.nextInIndex;
-                                z.nextInIndex = p;
-                                write = q;
-                                return inflateFlush(r);
-                            }
-                            n--;
-                            b |= (z.nextIn[p++] & 0xff) << k;
-                            k += 8;
-                        }
-
-                        t = hufts[(tb[0] + (b & inflate_mask[t])) * 3 + 1];
-                        c = hufts[(tb[0] + (b & inflate_mask[t])) * 3 + 2];
-
-                        if (c < 16) {
-                            b >>>= (t);
-                            k -= (t);
-                            blens[index++] = c;
-                        } else { // c == 16..18
-                            i = c == 18 ? 7 : c - 14;
-                            j = c == 18 ? 11 : 3;
-
-                            while (k < (t + i)) {
+                            while (k < (t)) {
                                 if (n != 0) {
                                     r = Z_OK;
                                 } else {
@@ -459,38 +426,67 @@ final class InfBlocks {
                                 k += 8;
                             }
 
-                            b >>>= (t);
-                            k -= (t);
+                            t = hufts[(tb[0] + (b & inflate_mask[t])) * 3 + 1];
+                            c = hufts[(tb[0] + (b & inflate_mask[t])) * 3 + 2];
 
-                            j += (b & inflate_mask[i]);
+                            if (c < 16) {
+                                b >>>= (t);
+                                k -= (t);
+                                blens[index++] = c;
+                            } else { // c == 16..18
+                                i = c == 18 ? 7 : c - 14;
+                                j = c == 18 ? 11 : 3;
 
-                            b >>>= (i);
-                            k -= (i);
+                                while (k < (t + i)) {
+                                    if (n != 0) {
+                                        r = Z_OK;
+                                    } else {
+                                        bitb = b;
+                                        bitk = k;
+                                        z.availIn = n;
+                                        z.totalIn += p - z.nextInIndex;
+                                        z.nextInIndex = p;
+                                        write = q;
+                                        return inflateFlush(r);
+                                    }
+                                    n--;
+                                    b |= (z.nextIn[p++] & 0xff) << k;
+                                    k += 8;
+                                }
 
-                            i = index;
-                            t = table;
-                            if (i + j > 258 + (t & 0x1f) + ((t >> 5) & 0x1f) ||
-                                    (c == 16 && i < 1)) {
-                                blens = null;
-                                mode = BAD;
-                                z.msg = "invalid bit length repeat";
-                                r = Z_DATA_ERROR;
+                                b >>>= (t);
+                                k -= (t);
 
-                                bitb = b;
-                                bitk = k;
-                                z.availIn = n;
-                                z.totalIn += p - z.nextInIndex;
-                                z.nextInIndex = p;
-                                write = q;
-                                return inflateFlush(r);
+                                j += (b & inflate_mask[i]);
+
+                                b >>>= (i);
+                                k -= (i);
+
+                                i = index;
+                                t = table;
+                                if (i + j > 258 + (t & 0x1f) + ((t >> 5) & 0x1f) || (c == 16 && i < 1)) {
+                                    blens = null;
+                                    mode = BAD;
+                                    z.msg = "invalid bit length repeat";
+                                    r = Z_DATA_ERROR;
+
+                                    bitb = b;
+                                    bitk = k;
+                                    z.availIn = n;
+                                    z.totalIn += p - z.nextInIndex;
+                                    z.nextInIndex = p;
+                                    write = q;
+                                    return inflateFlush(r);
+                                }
+
+                                c = c == 16 ? blens[i - 1] : 0;
+                                do {
+                                    blens[i++] = c;
+                                } while (--j != 0);
+                                index = i;
                             }
-
-                            c = c == 16 ? blens[i - 1] : 0;
-                            do {
-                                blens[i++] = c;
-                            }
-                            while (--j != 0);
-                            index = i;
+                        } else {
+                            break;
                         }
                     }
 
@@ -498,9 +494,7 @@ final class InfBlocks {
                 {
                     bl[0] = 9;         // must be <= 9 for lookahead assumptions
                     bd[0] = 6;         // must be <= 9 for lookahead assumptions
-                    t = inftree.inflateTreesDynamic(257 + (t & 0x1f),
-                            1 + ((t >> 5) & 0x1f),
-                            blens, bl, bd, tli, tdi, hufts, z);
+                    t = inftree.inflateTreesDynamic(257 + (t & 0x1f), 1 + ((t >> 5) & 0x1f), blens, bl, bd, tli, tdi, hufts, z);
 
                     if (t != Z_OK) {
                         if (t == Z_DATA_ERROR) {
@@ -528,7 +522,7 @@ final class InfBlocks {
                     z.nextInIndex = p;
                     write = q;
 
-                    if ((r = codes.proc(r)) != Z_STREAM_END) {
+                    if ((r = codes.proc(r)) != Z_STREAM_END) { //NOPMD AssignmentInOperand
                         return inflateFlush(r);
                     }
                     r = Z_OK;
@@ -624,8 +618,12 @@ final class InfBlocks {
 
         // compute number of bytes to copy as far as end of window
         n = (q <= write ? write : end) - q;
-        if (n > z.availOut) n = z.availOut;
-        if (n != 0 && r == Z_BUF_ERROR) r = Z_OK;
+        if (n > z.availOut) {
+            n = z.availOut;
+        }
+        if (n != 0 && r == Z_BUF_ERROR) {
+            r = Z_OK;
+        }
 
         // update counters
         z.availOut -= n;
@@ -645,13 +643,18 @@ final class InfBlocks {
         if (q == end) {
             // wrap pointers
             q = 0;
-            if (write == end)
+            if (write == end) {
                 write = 0;
+            }
 
             // compute bytes to copy
             n = write - q;
-            if (n > z.availOut) n = z.availOut;
-            if (n != 0 && r == Z_BUF_ERROR) r = Z_OK;
+            if (n > z.availOut) {
+                n = z.availOut;
+            }
+            if (n != 0 && r == Z_BUF_ERROR) {
+                r = Z_OK;
+            }
 
             // update counters
             z.availOut -= n;

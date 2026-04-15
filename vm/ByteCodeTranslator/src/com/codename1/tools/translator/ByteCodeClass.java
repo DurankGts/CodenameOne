@@ -66,6 +66,7 @@ public class ByteCodeClass {
     private String clsName;
     private String originalClassName;
     private String baseClass;
+    private String concreteClass;
     private List<String> baseInterfaces;
     private boolean isInterface;
     private boolean isAbstract;
@@ -93,6 +94,13 @@ public class ByteCodeClass {
     private boolean finalClass;
     private boolean isEnum;
     private static Set<String> writableFields = new HashSet<String>();
+
+    static void cleanup() {
+        arrayTypes.clear();
+        writableFields.clear();
+        mainClass = null;
+        saveUnitTests = false;
+    }
     
     /**
      * 
@@ -170,6 +178,10 @@ public class ByteCodeClass {
     public String generateCSharpCode() {
         return "";
     }
+
+    public String generateJavascriptCode(List<ByteCodeClass> allClasses) {
+        return JavascriptMethodGenerator.generateClassJavascript(this, allClasses);
+    }
     
     public void addWritableField(String field) {
         writableFields.add(field);
@@ -230,6 +242,10 @@ public class ByteCodeClass {
                 bc.markDependent(lst);
                 continue;
             }
+            if(bc.clsName.equals("java_lang_StackOverflowError")) {
+                bc.markDependent(lst);
+                continue;
+            }
             if(bc.clsName.equals("java_text_DateFormat")) {
                 bc.markDependent(lst);
                 continue;
@@ -287,6 +303,49 @@ public class ByteCodeClass {
             }
         }
         return false;
+    }
+
+    public ByteCodeClass findMethodOwner(String name, String desc) {
+        return findMethodOwner(name, desc, new HashSet<ByteCodeClass>());
+    }
+
+    private ByteCodeClass findMethodOwner(String name, String desc, Set<ByteCodeClass> visited) {
+        if (!visited.add(this)) {
+            return null;
+        }
+        BytecodeMethod declaredMethod = findDeclaredMethod(name, desc);
+        if (declaredMethod != null && !declaredMethod.isAbstract()) {
+            return this;
+        }
+        if (baseClassObject != null) {
+            ByteCodeClass owner = baseClassObject.findMethodOwner(name, desc, visited);
+            if (owner != null) {
+                return owner;
+            }
+        }
+        if (baseInterfacesObject != null) {
+            for (ByteCodeClass iface : baseInterfacesObject) {
+                ByteCodeClass owner = iface.findMethodOwner(name, desc, visited);
+                if (owner != null) {
+                    return owner;
+                }
+            }
+        }
+        return null;
+    }
+
+    private BytecodeMethod findDeclaredMethod(String name, String desc) {
+        for (BytecodeMethod meth : methods) {
+            if (meth.getMethodName().equals(name) && desc.equals(meth.getSignature())) {
+                return meth;
+            }
+        }
+        return null;
+    }
+
+    public boolean hasDeclaredNonAbstractMethod(String name, String desc) {
+        BytecodeMethod declaredMethod = findDeclaredMethod(name, desc);
+        return declaredMethod != null && !declaredMethod.isAbstract();
     }
 
     public void unmark() {
@@ -380,9 +439,24 @@ public class ByteCodeClass {
                     dependsClassesInterfaces.add(s);
                 }
             }
-            //for (String s : m.getExportedClasses()) {
-            //    exportsClassesInterfaces.add(s);
-            //}
+        }
+        
+        // Resolve concrete invoke dependencies.  Invoke.addDependencies runs at
+        // parse time when classes with @Concrete annotations may not yet be
+        // loaded, so the concrete target is missed.  Re-scan here — all classes
+        // have been parsed by the time updateAllDependencies is called.
+        List<String> concreteExtras = new ArrayList<String>();
+        for (String dep : dependsClassesInterfaces) {
+            ByteCodeClass depClass = Parser.getClassObject(dep);
+            if (depClass != null && depClass.getConcreteClass() != null) {
+                String concrete = depClass.getConcreteClass().replace('/', '_').replace('$', '_');
+                if (!dependsClassesInterfaces.contains(concrete) && !concreteExtras.contains(concrete)) {
+                    concreteExtras.add(concrete);
+                }
+            }
+        }
+        for (String c : concreteExtras) {
+            dependsClassesInterfaces.add(c);
         }
     }
     
@@ -650,7 +724,7 @@ public class ByteCodeClass {
                     b.append(clsName);
                     b.append("_");
                     b.append(bf.getFieldName().replace('$', '_'));
-                    b.append("(CODENAME_ONE_THREAD_STATE) {\n    return ");
+                    b.append("() {\n    return ");
                     if(bf.getValue() instanceof String) {
                         b.append("STRING_FROM_CONSTANT_POOL_OFFSET(");
                         b.append(Parser.addToConstantPool((String)bf.getValue()));
@@ -725,39 +799,47 @@ public class ByteCodeClass {
                     b.append(clsName);
                     b.append("_");
                     b.append(bf.getFieldName().replace('$', '_'));
-                    b.append("(CODENAME_ONE_THREAD_STATE) {\n    __STATIC_INITIALIZER_");
+                    b.append("() {\n    __STATIC_INITIALIZER_");
                     b.append(bf.getClsName());
                     if (bf.isVolatile()) {
-                        b.append("(threadStateData);\n     return atomic_load_explicit(&STATIC_FIELD_");
+                        b.append("(getThreadLocalData());\n     return atomic_load_explicit(&STATIC_FIELD_");
                         b.append(bf.getClsName());
                         b.append("_");
                         b.append(bf.getFieldName());
                         b.append(", memory_order_acquire);\n}\n\n");
                     } else {
-                        b.append("(threadStateData);\n     return STATIC_FIELD_");
+                        b.append("(getThreadLocalData());\n     return STATIC_FIELD_");
                         b.append(bf.getClsName());
                         b.append("_");
                         b.append(bf.getFieldName());
                         b.append(";\n}\n\n");
                     }
 
-                    // static setter
+                    // Static object fields may interact with heap bookkeeping, so they keep thread context.
                     b.append("void set_static_");
                     b.append(clsName);
                     b.append("_");
                     b.append(bf.getFieldName().replace('$', '_'));
-                    b.append("(CODENAME_ONE_THREAD_STATE, ");
+                    b.append("(");
+                    if (bf.isObjectType()) {
+                        b.append("CODENAME_ONE_THREAD_STATE, ");
+                    }
                     b.append(bf.getCDefinition());
                     b.append(" __cn1StaticVal) {\n    __STATIC_INITIALIZER_");
                     b.append(bf.getClsName());
+                    if (bf.isObjectType()) {
+                        b.append("(threadStateData);\n    ");
+                    } else {
+                        b.append("(getThreadLocalData());\n    ");
+                    }
                     if (bf.isVolatile()) {
-                        b.append("(threadStateData);\n    atomic_store_explicit(&STATIC_FIELD_");
+                        b.append("atomic_store_explicit(&STATIC_FIELD_");
                         b.append(bf.getClsName());
                         b.append("_");
                         b.append(bf.getFieldName());
                         b.append(", __cn1StaticVal, memory_order_release);");
                     } else {
-                        b.append("(threadStateData);\n    STATIC_FIELD_");
+                        b.append("STATIC_FIELD_");
                         b.append(bf.getClsName());
                         b.append("_");
                         b.append(bf.getFieldName());
@@ -814,11 +896,12 @@ public class ByteCodeClass {
                 b.append(";\n}\n\n");
             }
 
+            // Instance field setters don't use thread context directly.
             b.append("void set_field_");
             b.append(clsName);
             b.append("_");
             b.append(fld.getFieldName());
-            b.append("(CODENAME_ONE_THREAD_STATE, ");
+            b.append("(");
             b.append(fld.getCDefinition());
             if(fld.isObjectType()) {
                 b.append(" __cn1Val, JAVA_OBJECT __cn1T) {\n ").append(nullCheck).append("   ");
@@ -1051,7 +1134,7 @@ public class ByteCodeClass {
             
             b.append("JAVA_OBJECT __VALUE_OF_").append(clsName).append("(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT value) {\n    ");
             if (enumValuesField != null) {
-                b.append("    JAVA_ARRAY values = (JAVA_ARRAY)get_static_").append(clsName).append("_").append(enumValuesField.replace('$', '_')).append("(threadStateData);\n");
+                b.append("    JAVA_ARRAY values = (JAVA_ARRAY)get_static_").append(clsName).append("_").append(enumValuesField.replace('$', '_')).append("();\n");
                 b.append("    JAVA_ARRAY_OBJECT* data = (JAVA_ARRAY_OBJECT*)values->data;\n");
                 b.append("    int len = values->length;\n");
                 b.append("    for (int i=0; i<len; i++) {\n");
@@ -1503,35 +1586,46 @@ public class ByteCodeClass {
                         b.append(bf.getFieldName());
                         b.append(";\n");
 
-                        b.append("extern void");
-                        b.append(" set_static_");
-                        b.append(clsName);
-                        b.append("_");
-                        b.append(bf.getFieldName());
-                        b.append("(CODENAME_ONE_THREAD_STATE, ");
-                        b.append(bf.getCDefinition());
-                        b.append(" v);\n");
+                    b.append("extern void");
+                    b.append(" set_static_");
+                    b.append(clsName);
+                    b.append("_");
+                    b.append(bf.getFieldName());
+                    b.append("(");
+                    if (bf.isObjectType()) {
+                        b.append("CODENAME_ONE_THREAD_STATE, ");
+                    }
+                    b.append(bf.getCDefinition());
+                    b.append(" v);\n");
                     }
                 } else {
                     b.append("#define get_static_");
                     b.append(clsName);
                     b.append("_");
                     b.append(bf.getFieldName());
-                    b.append("(threadStateArgument) get_static_");
+                    b.append("() get_static_");
                     b.append(bf.getClsName());
                     b.append("_");
                     b.append(bf.getFieldName());
-                    b.append("(threadStateArgument)\n");
+                    b.append("()\n");
 
                     b.append("#define set_static_");
                     b.append(clsName);
                     b.append("_");
                     b.append(bf.getFieldName());
-                    b.append("(threadStateArgument, valueArgument) set_static_");
-                    b.append(bf.getClsName());
-                    b.append("_");
-                    b.append(bf.getFieldName());
-                    b.append("(threadStateArgument, valueArgument)\n");
+                    if (bf.isObjectType()) {
+                        b.append("(threadStateArgument, valueArgument) set_static_");
+                        b.append(bf.getClsName());
+                        b.append("_");
+                        b.append(bf.getFieldName());
+                        b.append("(threadStateArgument, valueArgument)\n");
+                    } else {
+                        b.append("(valueArgument) set_static_");
+                        b.append(bf.getClsName());
+                        b.append("_");
+                        b.append(bf.getFieldName());
+                        b.append("(valueArgument)\n");
+                    }
                 }
             }
         }
@@ -1548,7 +1642,7 @@ public class ByteCodeClass {
             b.append(clsName);
             b.append("_");
             b.append(fld.getFieldName());
-            b.append("(CODENAME_ONE_THREAD_STATE, ");
+            b.append("(");
             b.append(fld.getCDefinition());
             b.append(" __cn1Val, JAVA_OBJECT __cn1T);\n");
         }
@@ -1816,6 +1910,14 @@ public class ByteCodeClass {
      */
     public String getBaseClass() {
         return baseClass;
+    }
+
+    public String getConcreteClass() {
+        return concreteClass;
+    }
+
+    public void setConcreteClass(String concreteClass) {
+        this.concreteClass = concreteClass;
     }
 
     public void setSourceFile(String sourceFile) {

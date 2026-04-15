@@ -26,30 +26,25 @@ import com.codename1.ui.events.ActionListener;
 import com.codename1.ui.util.EventDispatcher;
 import com.codename1.util.SuccessCallback;
 
-/**
- * An abstract base class for AsyncMedia. Most media returned from {@link MediaManager} will
- * be descendants of this class.
- *
- * @author shannah
- * @since 7.0
- */
+/// An abstract base class for AsyncMedia. Most media returned from `MediaManager` will
+/// be descendants of this class.
+///
+/// @author shannah
+///
+/// #### Since
+///
+/// 7.0
 public abstract class AbstractMedia implements AsyncMedia {
     private final EventDispatcher stateChangeListeners = new EventDispatcher();
     private final EventDispatcher errorListeners = new EventDispatcher();
 
-    /**
-     * Currently pending play request
-     */
+    /// Currently pending play request
     private PlayRequest pendingPlayRequest;
 
-    /**
-     * Currently pending pause request.
-     */
+    /// Currently pending pause request.
     private PauseRequest pendingPauseRequest;
 
-    /**
-     * {@inheritDoc }
-     */
+    /// {@inheritDoc }
     @Override
     public State getState() {
         if (isPlaying()) {
@@ -59,88 +54,83 @@ public abstract class AbstractMedia implements AsyncMedia {
         }
     }
 
-    /**
-     * Fires a media state change event to the registered state change listeners.
-     *
-     * @param newState The new state
-     * @return The state change event.
-     */
+    /// Fires a media state change event to the registered state change listeners.
+    ///
+    /// #### Parameters
+    ///
+    /// - `newState`: The new state
+    ///
+    /// #### Returns
+    ///
+    /// The state change event.
     protected MediaStateChangeEvent fireMediaStateChange(State newState) {
         MediaStateChangeEvent evt = new MediaStateChangeEvent(this, getState(), newState);
         if (stateChangeListeners.hasListeners()) {
-
             stateChangeListeners.fireActionEvent(evt);
-
         }
         return evt;
     }
 
-    /**
-     * {@inheritDoc }
-     */
+    /// {@inheritDoc }
     @Override
     public void addMediaStateChangeListener(ActionListener<MediaStateChangeEvent> l) {
         stateChangeListeners.addListener(l);
     }
 
-    /**
-     * {@inheritDoc }
-     */
+    /// {@inheritDoc }
     @Override
     public void removeMediaStateChangeListener(ActionListener<MediaStateChangeEvent> l) {
         stateChangeListeners.removeListener(l);
     }
 
-    /**
-     * Fires a media error event to registered listeners.
-     *
-     * @param ex The MediaException to deliver
-     * @return The MediaErrorEvent object sent to listeners.
-     * @see #addMediaErrorListener(com.codename1.ui.events.ActionListener)
-     * @see #removeMediaErrorListener(com.codename1.ui.events.ActionListener)
-     */
+    /// Fires a media error event to registered listeners.
+    ///
+    /// #### Parameters
+    ///
+    /// - `ex`: The MediaException to deliver
+    ///
+    /// #### Returns
+    ///
+    /// The MediaErrorEvent object sent to listeners.
+    ///
+    /// #### See also
+    ///
+    /// - #addMediaErrorListener(com.codename1.ui.events.ActionListener)
+    ///
+    /// - #removeMediaErrorListener(com.codename1.ui.events.ActionListener)
     protected MediaErrorEvent fireMediaError(MediaException ex) {
         MediaErrorEvent evt = new MediaErrorEvent(this, ex);
         if (errorListeners.hasListeners()) {
             errorListeners.fireActionEvent(evt);
-
         }
         return evt;
     }
 
-    /**
-     * {@inheritDoc }
-     */
+    /// {@inheritDoc }
     @Override
     public void addMediaErrorListener(ActionListener<MediaErrorEvent> l) {
         errorListeners.addListener(l);
     }
 
-    /**
-     * {@inheritDoc }
-     */
+    /// {@inheritDoc }
     @Override
     public void removeMediaErrorListener(ActionListener<MediaErrorEvent> l) {
         errorListeners.removeListener(l);
     }
 
-    /**
-     * {@inheritDoc }
-     */
+    /// {@inheritDoc }
     @Override
     public void addMediaCompletionHandler(Runnable onComplete) {
         MediaManager.addCompletionHandler(this, onComplete);
     }
 
-    /**
-     * {@inheritDoc }
-     */
+    /// {@inheritDoc }
     @Override
     public PlayRequest playAsync() {
         return playAsync(new PlayRequest() {
             @Override
             public void complete(AsyncMedia value) {
-                if (this == pendingPlayRequest) {
+                if (this == pendingPlayRequest) { //NOPMD CompareObjectsWithEquals
                     pendingPlayRequest = null;
                 }
                 super.complete(value);
@@ -148,7 +138,7 @@ public abstract class AbstractMedia implements AsyncMedia {
 
             @Override
             public void error(Throwable t) {
-                if (this == pendingPlayRequest) {
+                if (this == pendingPlayRequest) { //NOPMD CompareObjectsWithEquals
                     pendingPlayRequest = null;
                 }
                 super.error(t);
@@ -161,7 +151,6 @@ public abstract class AbstractMedia implements AsyncMedia {
         if (out.isDone()) {
             return out;
         }
-
 
         if (pendingPauseRequest != null) {
             pendingPauseRequest.ready(new SuccessCallback<AsyncMedia>() {
@@ -184,7 +173,7 @@ public abstract class AbstractMedia implements AsyncMedia {
             return out;
         }
 
-        if (pendingPlayRequest != null && pendingPlayRequest != out) {
+        if (pendingPlayRequest != null && pendingPlayRequest != out) { //NOPMD CompareObjectsWithEquals
             pendingPlayRequest.ready(new PlayAsyncSuccessCallback(out))
                     .except(new PlayAsyncExceptSuccessCallback(out));
             return out;
@@ -202,7 +191,6 @@ public abstract class AbstractMedia implements AsyncMedia {
 
             @Override
             public void actionPerformed(MediaStateChangeEvent evt) {
-
                 if (!out.isDone()) {
                     if (evt.getNewState() == State.Playing) {
                         stateChangeListeners.removeListener(this);
@@ -237,15 +225,13 @@ public abstract class AbstractMedia implements AsyncMedia {
 
     }
 
-    /**
-     * {@inheritDoc }
-     */
+    /// {@inheritDoc }
     @Override
     public PauseRequest pauseAsync() {
         return pauseAsync(new PauseRequest() {
             @Override
             public void complete(AsyncMedia value) {
-                if (pendingPauseRequest == this) {
+                if (pendingPauseRequest == this) { //NOPMD CompareObjectsWithEquals
                     pendingPauseRequest = null;
                 }
                 super.complete(value);
@@ -253,7 +239,7 @@ public abstract class AbstractMedia implements AsyncMedia {
 
             @Override
             public void error(Throwable t) {
-                if (pendingPauseRequest == this) {
+                if (pendingPauseRequest == this) { //NOPMD CompareObjectsWithEquals
                     pendingPauseRequest = null;
                 }
                 super.error(t);
@@ -290,7 +276,7 @@ public abstract class AbstractMedia implements AsyncMedia {
             pendingPauseRequest = out;
             return out;
         }
-        if (pendingPauseRequest != null && pendingPauseRequest != out) {
+        if (pendingPauseRequest != null && pendingPauseRequest != out) { //NOPMD CompareObjectsWithEquals
             pendingPauseRequest.ready(new PauseAsyncSuccessCallback(out))
                     .except(new PauseAsyncExceptSuccessCallback(out));
             return out;
@@ -343,27 +329,19 @@ public abstract class AbstractMedia implements AsyncMedia {
         return out;
     }
 
-    /**
-     * Initiates a play request on the media.
-     */
+    /// Initiates a play request on the media.
     protected abstract void playImpl();
 
-    /**
-     * Initiates a pause request on the media.
-     */
+    /// Initiates a pause request on the media.
     protected abstract void pauseImpl();
 
-    /**
-     * {@inheritDoc }
-     */
+    /// {@inheritDoc }
     @Override
     public final void play() {
         playAsync();
     }
 
-    /**
-     * {@inheritDoc }
-     */
+    /// {@inheritDoc }
     @Override
     public final void pause() {
         pauseAsync();

@@ -19,6 +19,7 @@ import org.apache.tools.ant.types.ZipFileSet;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 
@@ -48,7 +49,7 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
 
     /**
      * The build target, corresponding to ANT build targets in build-template.xml.  E.g. javascript,
-     * mac-os-x-desktop, windows-desktop, windows-device, ios-device, ios-device-release, android-device, war
+     * mac-os-x-desktop, windows-desktop, ios-device, ios-device-release, android-device, war
      */
     @Parameter(property = "codename1.buildTarget", required = true, defaultValue = "${codename1.defaultBuildTarget}")
     private String buildTarget;
@@ -411,7 +412,9 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
                         try {
                             blackListJars.add(jar.getCanonicalPath());
                             getLog().debug("Added "+jar+" to blacklist");
-                        } catch (Exception ex){}
+                        } catch (Exception ex){
+                            getLog().debug("Failed to add " + jar + " to blacklist. This is not a fatal error: " + ex);
+                        }
                     }
                 }
 
@@ -423,7 +426,11 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
                 String canonicalEl = element;
                 try {
                     canonicalEl = new File(canonicalEl).getCanonicalPath();
-                } catch (Exception ex){}
+                } catch (Exception ex){
+                    if (getLog().isDebugEnabled()) {
+                        getLog().warn("Failed to resolve canonical path for " + element, ex);
+                    }
+                }
 
                 if (blackListJars.contains(element) || blackListJars.contains(canonicalEl)) {
                     getLog().debug("NOT adding jar "+element+" because it is on the blacklist");
@@ -532,7 +539,7 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
                     int no = out.available();
                     if (no > 0) {
                         int n = out.read(buffer, 0, Math.min(no, buffer.length));
-                        getLog().info(new String(buffer, 0, n));
+                        getLog().info(new String(buffer, 0, n, StandardCharsets.UTF_8));
                     }
 
 
@@ -578,6 +585,9 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
                     closingHypLog[0] = true;
                     proc[0].destroyForcibly();
                 } catch (Exception ex) {
+                    if (getLog().isDebugEnabled()) {
+                        getLog().warn("Failed to shut down hyperlog process cleanly", ex);
+                    }
                 }
             }
         }
@@ -665,7 +675,7 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
 
         Process p = pb.start();
         int res = p.waitFor();
-        //error occured
+        //error occurred
         if(res > 0){
             StringBuilder msg = new StringBuilder();
             final InputStream input = p.getInputStream();
@@ -674,19 +684,18 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
             byte[] buffer = new byte[8192];
             int i = input.read(buffer);
             while (i > -1) {
-                String str = new String(buffer, 0, i);
+                String str = new String(buffer, 0, i, StandardCharsets.UTF_8);
                 System.out.print(str);
                 msg.append(str);
                 i = stream.read(buffer);
             }
             i = stream.read(buffer);
             while (i > -1) {
-                String str = new String(buffer, 0, i);
+                String str = new String(buffer, 0, i, StandardCharsets.UTF_8);
                 System.out.print(str);
                 msg.append(str);
                 i = stream.read(buffer);
             }
-
 
             return null;
         }
@@ -736,8 +745,6 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
         e.setBuildDirectory(buildDirectory);
 
         e.setCodenameOneJar(codenameOneJar);
-
-        e.setPlatform("android");
 
         BuildRequest r = new BuildRequest();
         r.setDisplayName(props.getProperty("codename1.displayName"));
@@ -912,6 +919,18 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
         return new File(xcprojectRoot, props.getProperty("codename1.mainName")+".xcworkspace");
     }
 
+    private File getXcodeProject(Properties props, File xcprojectRoot) {
+        return new File(xcprojectRoot, props.getProperty("codename1.mainName")+".xcodeproj");
+    }
+
+    private File getWorkspaceOrProject(Properties props, File xcprojectRoot) {
+        File workspace = getWorkspace(props, xcprojectRoot);
+        if (workspace.exists()) {
+            return workspace;
+        }
+        return getXcodeProject(props, xcprojectRoot);
+    }
+
     private void openWorkspace(File workspace) throws MojoExecutionException {
         try {
             ProcessBuilder pb = new ProcessBuilder("open", workspace.getAbsolutePath());
@@ -937,8 +956,9 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
                     if (getSourcesModificationTime() <= lastModifiedRecursive(generatedProject)) {
                         getLog().info("Sources have not changed.  Skipping Xcode project generation");
                         if (open) {
-                            getLog().info("Opening workspace project "+getWorkspace(props, generatedProject));
-                            openWorkspace(getWorkspace(props, generatedProject));
+                            File projectToOpen = getWorkspaceOrProject(props, generatedProject);
+                            getLog().info("Opening Xcode project "+projectToOpen);
+                            openWorkspace(projectToOpen);
                         }
                         return;
 
@@ -958,8 +978,6 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
         e.setBuildDirectory(buildDirectory);
 
         e.setCodenameOneJar(codenameOneJar);
-
-        e.setPlatform("ios");
 
         BuildRequest r = new BuildRequest();
         r.setAppid(props.getProperty("codename1.ios.appid"));
@@ -1003,8 +1021,6 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
         String incSources = request.getArg("build.incSources", null);
         request.setIncludeSource(true);
 
-
-
         String testBuild = request.getArg("build.unitTest", null);
         if(testBuild != null && testBuild.equals("1")) {
             e.setUnitTestMode(true);
@@ -1013,6 +1029,10 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
         try {
             boolean result = e.build(distJar, request);
             if (!result) {
+                String builderLog = e.getErrorMessage();
+                if (builderLog != null && builderLog.trim().length() > 0) {
+                    getLog().error("iOS builder log:\n" + builderLog);
+                }
                 throw new MojoExecutionException("iOS build failed");
             }
 
@@ -1028,14 +1048,19 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
                 }
                 if (open) {
 
-                    getLog().info("Opening workspace project "+getWorkspace(props, output));
-                    openWorkspace(getWorkspace(props, output));
+                    File projectToOpen = getWorkspaceOrProject(props, output);
+                    getLog().info("Opening Xcode project "+projectToOpen);
+                    openWorkspace(projectToOpen);
 
                 }
             }
 
 
         } catch (BuildException ex) {
+            String builderLog = e.getErrorMessage();
+            if (builderLog != null && builderLog.trim().length() > 0) {
+                getLog().error("iOS builder log:\n" + builderLog);
+            }
             throw new MojoExecutionException("Failed to build ios app", ex);
         } finally {
 
@@ -1068,19 +1093,14 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
         }
     }
 
-
-
     private SortedProperties mergeRequiredProperties(String libraryName, Properties libProps, Properties projectProps) throws LibraryPropertiesException {
 
 
         String javaVersion = (String)projectProps.getProperty("codename1.arg.java.version", "8");
         String javaVersionLib = (String)libProps.get("codename1.arg.java.version");
         if(javaVersionLib != null){
-            int v1 = 5;
-            if(javaVersion != null){
-                v1 = Integer.parseInt(javaVersion);
-            }
-            int v2 = Integer.parseInt(javaVersionLib);
+            int v1 = JavaVersionUtil.parseJavaVersion(javaVersion, 5);
+            int v2 = JavaVersionUtil.parseJavaVersion(javaVersionLib, 5);
             //if the lib java version is bigger, this library cannot be used
             if(v1 < v2){
                 throw new VersionMismatchException(libraryName, "Cannot use a cn1lib with java version "
@@ -1100,6 +1120,12 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
                 //if this property already exists with a different value the
                 //install will fail
                 if(!merged.get(key).equals(libProps.getProperty(key))){
+                    if ("codename1.arg.java.version".equals(key)) {
+                        // Preserve the project's java version when it is equal to or greater than
+                        // the library requirement. This is validated above and allows using
+                        // Java 8 cn1libs in Java 11/17+ projects.
+                        continue;
+                    }
                     throw new PropertyConflictException(libraryName, "Property " + key + " has a conflict");
                 }
             }

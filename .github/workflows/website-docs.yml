@@ -1,0 +1,388 @@
+name: Build Hugo Website
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'docs/website/**'
+      - 'scripts/cn1playground/**'
+      - 'scripts/initializr/**'
+      - 'scripts/website/**'
+      - '.github/workflows/website-docs.yml'
+  push:
+    branches: [main, master]
+    paths:
+      - 'docs/website/**'
+      - 'scripts/cn1playground/**'
+      - 'scripts/initializr/**'
+      - 'scripts/website/**'
+      - '.github/workflows/website-docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_TOKEN: ${{ secrets.CLOUDFLARE_TOKEN || secrets.CF_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID }}
+      CF_PAGES_PROJECT_NAME: ${{ vars.CLOUDFLARE_PAGES_PROJECT_NAME || 'codenameone' }}
+      CF_PAGES_PRODUCTION_BRANCH: ${{ vars.CLOUDFLARE_PAGES_PRODUCTION_BRANCH || 'main' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Hugo
+        uses: peaceiris/actions-hugo@v3
+        with:
+          hugo-version: 'latest'
+          extended: true
+
+      - name: Set up Java 8 for Initializr build
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Asciidoctor tooling
+        run: |
+          set -euo pipefail
+          gem install --no-document asciidoctor rouge
+
+      - name: Download latest OTA skins
+        run: |
+          set -euo pipefail
+          scripts/website/fetch_ota_skins.sh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Update developer guide PDF redirect
+        run: |
+          set -euo pipefail
+          scripts/website/update_developer_guide_redirect.sh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Set up Java 25 for website build
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Build website
+        run: |
+          set -euo pipefail
+          scripts/website/build.sh
+        env:
+          WEBSITE_INCLUDE_JAVADOCS: "true"
+          WEBSITE_INCLUDE_DEVGUIDE: "true"
+          WEBSITE_INCLUDE_INITIALIZR: "auto"
+          WEBSITE_INCLUDE_PLAYGROUND: "auto"
+          CN1_USER: ${{ secrets.CN1_USER }}
+          CN1_TOKEN: ${{ secrets.CN1_TOKEN }}
+
+      - name: Validate Initializr page output
+        run: |
+          set -euo pipefail
+          test -f docs/website/public/initializr/index.html
+
+      - name: Validate Playground page output
+        run: |
+          set -euo pipefail
+          test -f docs/website/public/playground/index.html
+
+      - name: Validate Initializr JS bundle output
+        run: |
+          set -euo pipefail
+          if [ -n "${CN1_USER}" ] && [ -n "${CN1_TOKEN}" ]; then
+            test -f docs/website/public/initializr-app/index.html
+          else
+            echo "CN1 credentials not configured; skipping Initializr JS bundle output validation."
+          fi
+        env:
+          CN1_USER: ${{ secrets.CN1_USER }}
+          CN1_TOKEN: ${{ secrets.CN1_TOKEN }}
+
+      - name: Validate Playground JS bundle output
+        run: |
+          set -euo pipefail
+          if [ -n "${CN1_USER}" ] && [ -n "${CN1_TOKEN}" ]; then
+            test -f docs/website/public/playground-app/index.html
+          else
+            echo "CN1 credentials not configured; skipping Playground JS bundle output validation."
+          fi
+        env:
+          CN1_USER: ${{ secrets.CN1_USER }}
+          CN1_TOKEN: ${{ secrets.CN1_TOKEN }}
+
+      - name: Validate redirects against local Pages runtime
+        run: |
+          set -euo pipefail
+          PORT=8788
+          cd docs/website
+          npx --yes wrangler@4 pages dev public \
+            --port "${PORT}" \
+            --ip 127.0.0.1 \
+            --compatibility-date=2026-02-18 > /tmp/wrangler-pages-dev.log 2>&1 &
+          WRANGLER_PID=$!
+          cleanup() {
+            kill "${WRANGLER_PID}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          print_log_on_error() {
+            echo "wrangler pages dev log (tail):" >&2
+            tail -n 200 /tmp/wrangler-pages-dev.log >&2 || true
+          }
+          trap print_log_on_error ERR
+          for i in $(seq 1 60); do
+            if curl -sSf "http://127.0.0.1:${PORT}/" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if ! curl -sSf "http://127.0.0.1:${PORT}/" >/dev/null; then
+            echo "wrangler pages dev did not become ready on port ${PORT}" >&2
+            exit 1
+          fi
+          cd ../..
+          python3 scripts/website/test_redirects.py \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --redirects-file docs/website/public/_redirects \
+            --skip-auto-cases
+
+      - name: Validate internal links and images
+        uses: lycheeverse/lychee-action@v2
+        with:
+          lycheeVersion: latest
+          workingDirectory: docs/website
+          args: >-
+            --offline
+            --no-progress
+            --root-dir public
+            public/**/*.html
+
+      - name: Reject absolute codenameone.com links
+        run: |
+          set -euo pipefail
+          report="docs/website/reports/disallowed-codenameone-links.txt"
+          mkdir -p "$(dirname "$report")"
+          rg -n --no-heading -S '\]\((https?:)?//(www\.)?codenameone\.com([/:?#)]|$)|<https?://(www\.)?codenameone\.com([/:?#>]|$)|(href|src)=["'"'"']https?://(www\.)?codenameone\.com([/:?#]|$)' \
+            docs/website/content docs/website/layouts docs/website/static > "$report" || true
+          if [ -s "$report" ]; then
+            echo "Disallowed absolute codenameone.com links found (use relative URLs or non-www subdomains):" >&2
+            sed -n '1,200p' "$report" >&2
+            exit 1
+          fi
+
+      - name: Upload codenameone link policy report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: codenameone-link-policy-report
+          path: docs/website/reports/disallowed-codenameone-links.txt
+          if-no-files-found: ignore
+
+      - name: Validate OTA skin output
+        run: |
+          set -euo pipefail
+          test -f docs/website/public/OTA/Skins.xml
+
+      - name: Validate developer guide redirect output
+        run: |
+          set -euo pipefail
+          test -f docs/website/public/_redirects
+          test -f docs/website/public/developer-guide/index.html
+          grep -Eq '^/files/developer-guide\.pdf https://github\.com/codenameone/CodenameOne/releases/download/.+/developer-guide\.pdf 302$' docs/website/public/_redirects
+          grep -Eq '^/manual /developer-guide/ 301$' docs/website/public/_redirects
+          grep -Eq '^/manual/ /developer-guide/ 301$' docs/website/public/_redirects
+          grep -Eq '^/developer-guide /developer-guide/ 301$' docs/website/public/_redirects
+
+      - name: Validate RSS output and alias
+        run: |
+          set -euo pipefail
+          test -f docs/website/public/blog/index.xml
+          test ! -f docs/website/public/index.xml
+          grep -Eq '^/feed\.xml /blog/index\.xml 302$' docs/website/public/_redirects
+
+      - name: Upload built site artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: website-preview
+          path: docs/website/public
+          if-no-files-found: error
+
+      - name: Check Cloudflare preview deploy credentials
+        if: ${{ github.event_name == 'pull_request' && env.CLOUDFLARE_TOKEN == '' }}
+        run: |
+          echo "::warning::Skipping Cloudflare Pages preview deploy because no API token secret is configured. Set CLOUDFLARE_TOKEN (preferred) or CF_API_TOKEN."
+
+      - name: Deploy PR preview to Cloudflare Pages
+        id: cf_preview
+        if: ${{ github.event_name == 'pull_request' && env.CLOUDFLARE_TOKEN != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_TOKEN }}
+          PREVIEW_BRANCH: pr-${{ github.event.pull_request.number }}-website-preview
+        run: |
+          set -euo pipefail
+          deploy_output="$(npx --yes wrangler@4 pages deploy docs/website/public \
+            --project-name "${CF_PAGES_PROJECT_NAME}" \
+            --branch "${PREVIEW_BRANCH}" 2>&1)"
+          echo "${deploy_output}"
+          preview_url="$(printf '%s\n' "${deploy_output}" | grep -Eo 'https://[A-Za-z0-9._-]+\.pages\.dev' | tail -n1 || true)"
+          if [ -z "${preview_url}" ]; then
+            echo "Could not determine Cloudflare preview URL from deploy output." >&2
+            exit 1
+          fi
+          echo "preview_url=${preview_url}" >> "${GITHUB_OUTPUT}"
+          echo "preview_branch=${PREVIEW_BRANCH}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish Cloudflare preview link in CI summary
+        if: ${{ steps.cf_preview.outputs.preview_url != '' }}
+        run: |
+          {
+            echo "## Cloudflare Preview"
+            echo
+            echo "- URL: ${{ steps.cf_preview.outputs.preview_url }}"
+            echo "- Branch: \`${{ steps.cf_preview.outputs.preview_branch }}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Comment Cloudflare preview link on PR
+        if: ${{ github.event_name == 'pull_request' && steps.cf_preview.outputs.preview_url != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- cn1-cloudflare-preview -->';
+            const body = [
+              marker,
+              '## Cloudflare Preview',
+              '',
+              `- URL: ${{ steps.cf_preview.outputs.preview_url }}`,
+              `- Branch: \`${{ steps.cf_preview.outputs.preview_branch }}\``,
+            ].join('\n');
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) =>
+              comment.user?.type === 'Bot' && comment.body?.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
+
+      - name: Prune older Cloudflare preview deployments for this PR branch
+        if: ${{ steps.cf_preview.outputs.preview_url != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_TOKEN }}
+          PREVIEW_BRANCH: ${{ steps.cf_preview.outputs.preview_branch }}
+          PREVIEW_URL: ${{ steps.cf_preview.outputs.preview_url }}
+        run: |
+          set -euo pipefail
+          api_base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${CF_PAGES_PROJECT_NAME}/deployments"
+          tmp_json="$(mktemp)"
+          curl -sS \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "${api_base}" > "${tmp_json}"
+
+          cat > /tmp/cf_preview_cleanup.py <<'PY'
+          import json
+          import sys
+
+          path, preview_branch, preview_url = sys.argv[1:]
+          data = json.load(open(path, encoding="utf-8"))
+          result = data.get("result", []) or []
+
+          def aliases_of(dep):
+              aliases = dep.get("aliases") or []
+              out = []
+              for a in aliases:
+                  if isinstance(a, str):
+                      out.append(a)
+                  elif isinstance(a, dict):
+                      v = a.get("url")
+                      if isinstance(v, str):
+                          out.append(v)
+              return out
+
+          def branch_of(dep):
+              trig = dep.get("deployment_trigger") or {}
+              meta = trig.get("metadata") or {}
+              return meta.get("branch")
+
+          current_id = None
+          for dep in result:
+              if preview_url in aliases_of(dep):
+                  current_id = dep.get("id")
+                  break
+
+          for dep in result:
+              dep_id = dep.get("id")
+              if not dep_id or dep_id == current_id:
+                  continue
+              if branch_of(dep) == preview_branch:
+                  print(dep_id)
+          PY
+
+          python3 /tmp/cf_preview_cleanup.py "${tmp_json}" "${PREVIEW_BRANCH}" "${PREVIEW_URL}" > /tmp/cf_deployments_to_delete.txt
+
+          while IFS= read -r dep_id; do
+            [ -z "${dep_id}" ] && continue
+            echo "Deleting old preview deployment: ${dep_id}"
+            curl -sS -X DELETE \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              "${api_base}/${dep_id}" >/dev/null
+          done < /tmp/cf_deployments_to_delete.txt
+
+      - name: Check Cloudflare deploy credentials
+        if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master') && env.CLOUDFLARE_TOKEN == '' }}
+        run: |
+          echo "::warning::Skipping Cloudflare Pages deploy because no API token secret is configured. Set CLOUDFLARE_TOKEN (preferred) or CF_API_TOKEN."
+
+      - name: Deploy to Cloudflare Pages
+        if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master') && env.CLOUDFLARE_TOKEN != '' }}
+        uses: cloudflare/wrangler-action@v3
+        env:
+          # Keep these env vars explicit so Wrangler can authenticate in non-interactive CI.
+          CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+        with:
+          # Also pass through action inputs for compatibility with wrangler-action versions.
+          apiToken: ${{ env.CLOUDFLARE_TOKEN }}
+          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy docs/website/public
+            --project-name=${{ env.CF_PAGES_PROJECT_NAME }}
+            --branch=${{ env.CF_PAGES_PRODUCTION_BRANCH }}

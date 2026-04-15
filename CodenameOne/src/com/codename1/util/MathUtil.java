@@ -11,26 +11,33 @@ package com.codename1.util;
  * ====================================================
  */
 
-/**
- * MathUtil for Java ME.
- * This fills the gap in Java ME Math with a port of Sun's public FDLIBM C-library for IEEE-754.
- *
- * @author kmashint
- * @see <a href="http://www.netlib.org/fdlibm/readme">http://www.netlib.org/fdlibm/readme</a>
- * For the Freely Distributable C-library conforming to IEEE-754 floating point math.
- * @see <a href="http://web.mit.edu/source/third/gcc/libjava/java/lang/">http://web.mit.edu/source/third/gcc/libjava/java/lang/</a>
- * For the GNU C variant of the same IEEE-754 routines.
- * @see <a href="http://www.dclausen.net/projects/microfloat/">http://www.dclausen.net/projects/microfloat/</a>
- * Another take on the IEEE-754 routines.
- * @see <a href="http://real-java.sourceforge.net/Real.html">http://real-java.sourceforge.net/Real.html</a>
- * Yet another take on the IEEE-754 routines.
- * @see <a href="http://today.java.net/pub/a/today/2007/11/06/creating-java-me-math-pow-method.html">http://today.java.net/pub/a/today/2007/11/06/creating-java-me-math-pow-method.html</a>
- * For other approximations.
- * @see <a href="http://martin.ankerl.com/2007/10/04/optimized-pow-approximation-for-java-and-c-c/">http://martin.ankerl.com/2007/10/04/optimized-pow-approximation-for-java-and-c-c/</a>
- * For fast but rough approximations.
- * @see <a href="http://martin.ankerl.com/2007/02/11/optimized-exponential-functions-for-java/">http://martin.ankerl.com/2007/02/11/optimized-exponential-functions-for-java/</a>
- * For more fast but rough approximations.
- */
+/// MathUtil for Java ME.
+/// This fills the gap in Java ME Math with a port of Sun's public FDLIBM C-library for IEEE-754.
+///
+/// @author kmashint
+///
+/// #### See also
+///
+/// - @see [http://www.netlib.org/fdlibm/readme](http://www.netlib.org/fdlibm/readme)
+/// For the Freely Distributable C-library conforming to IEEE-754 floating point math.
+///
+/// - @see [http://web.mit.edu/source/third/gcc/libjava/java/lang/](http://web.mit.edu/source/third/gcc/libjava/java/lang/)
+/// For the GNU C variant of the same IEEE-754 routines.
+///
+/// - @see [http://www.dclausen.net/projects/microfloat/](http://www.dclausen.net/projects/microfloat/)
+/// Another take on the IEEE-754 routines.
+///
+/// - @see [http://real-java.sourceforge.net/Real.html](http://real-java.sourceforge.net/Real.html)
+/// Yet another take on the IEEE-754 routines.
+///
+/// - @see [http://today.java.net/pub/a/today/2007/11/06/creating-java-me-math-pow-method.html](http://today.java.net/pub/a/today/2007/11/06/creating-java-me-math-pow-method.html)
+/// For other approximations.
+///
+/// - @see [http://martin.ankerl.com/2007/10/04/optimized-pow-approximation-for-java-and-c-c/](http://martin.ankerl.com/2007/10/04/optimized-pow-approximation-for-java-and-c-c/)
+/// For fast but rough approximations.
+///
+/// - @see [http://martin.ankerl.com/2007/02/11/optimized-exponential-functions-for-java/](http://martin.ankerl.com/2007/02/11/optimized-exponential-functions-for-java/)
+/// For more fast but rough approximations.
 public abstract class MathUtil {
 
     /* Common constants. */
@@ -51,8 +58,8 @@ public abstract class MathUtil {
     private static final double pio2_hi = 1.57079632679489655800e+00, /* 0x3FF921FB, 0x54442D18 */
             pio2_lo = 6.12323399573676603587e-17, /* 0x3C91A626, 0x33145C07 */
             pio4_hi = 7.85398163397448278999e-01, /* 0x3FE921FB, 0x54442D18 */
-    /* coefficient for R(x^2) */
-    pS0 = 1.66666666666666657415e-01, /* 0x3FC55555, 0x55555555 */
+            /* coefficient for R(x^2) */
+            pS0 = 1.66666666666666657415e-01, /* 0x3FC55555, 0x55555555 */
             pS1 = -3.25565818622400915405e-01, /* 0xBFD4D612, 0x03EB6F7D */
             pS2 = 2.01212532134862925881e-01, /* 0x3FC9C155, 0x0E884455 */
             pS3 = -4.00555345006794114027e-02, /* 0xBFA48228, 0xB5688F3B */
@@ -247,26 +254,26 @@ public abstract class MathUtil {
      * compiler will convert from decimal to binary accurately enough
      * to produce the hexadecimal values shown.
      */
-    private static final double[] bp = {1.0, 1.5,};
-    private static final double[] dp_h = {0.0, 5.84962487220764160156e-01,}; /* 0x3FE2B803, 0x40000000 */
-            private static final double[] dp_l = {0.0, 1.35003920212974897128e-08,}; /* 0x3E4CFDEB, 0x43CFD006 */
+    private static final double[] bp = {1.0, 1.5};
+    private static final double[] dp_h = {0.0, 5.84962487220764160156e-01}; /* 0x3FE2B803, 0x40000000 */
+    private static final double[] dp_l = {0.0, 1.35003920212974897128e-08}; /* 0x3E4CFDEB, 0x43CFD006 */
     private static final double/* poly coefs for (3/2)*(log(x)-2s-2/3*s**3 */
-    L1 = 5.99999999999994648725e-01; /* 0x3FE33333, 0x33333303 */
-            private static final double L2 = 4.28571428578550184252e-01; /* 0x3FDB6DB6, 0xDB6FABFF */
-            private static final double L3 = 3.33333329818377432918e-01; /* 0x3FD55555, 0x518F264D */
-            private static final double L4 = 2.72728123808534006489e-01; /* 0x3FD17460, 0xA91D4101 */
-            private static final double L5 = 2.30660745775561754067e-01; /* 0x3FCD864A, 0x93C9DB65 */
-            private static final double L6 = 2.06975017800338417784e-01; /* 0x3FCA7E28, 0x4A454EEF */
-            private static final double lg2 = 6.93147180559945286227e-01; /* 0x3FE62E42, 0xFEFA39EF */
-            private static final double lg2_h = 6.93147182464599609375e-01; /* 0x3FE62E43, 0x00000000 */
-            private static final double lg2_l = -1.90465429995776804525e-09; /* 0xBE205C61, 0x0CA86C39 */
-            private static final double ovt = 8.0085662595372944372e-0017; /* -(1024-log2(ovfl+.5ulp)) */
-            private static final double cp = 9.61796693925975554329e-01; /* 0x3FEEC709, 0xDC3A03FD =2/(3ln2) */
-            private static final double cp_h = 9.61796700954437255859e-01; /* 0x3FEEC709, 0xE0000000 =(float)cp */
-            private static final double cp_l = -7.02846165095275826516e-09; /* 0xBE3E2FE0, 0x145B01F5 =tail of cp_h*/
-            private static final double ivln2 = 1.44269504088896338700e+00; /* 0x3FF71547, 0x652B82FE =1/ln2 */
-            private static final double ivln2_h = 1.44269502162933349609e+00; /* 0x3FF71547, 0x60000000 =24b 1/ln2*/
-            private static final double ivln2_l = 1.92596299112661746887e-08; /* 0x3E54AE0B, 0xF85DDF44 =1/ln2 tail*/
+            L1 = 5.99999999999994648725e-01; /* 0x3FE33333, 0x33333303 */
+    private static final double L2 = 4.28571428578550184252e-01; /* 0x3FDB6DB6, 0xDB6FABFF */
+    private static final double L3 = 3.33333329818377432918e-01; /* 0x3FD55555, 0x518F264D */
+    private static final double L4 = 2.72728123808534006489e-01; /* 0x3FD17460, 0xA91D4101 */
+    private static final double L5 = 2.30660745775561754067e-01; /* 0x3FCD864A, 0x93C9DB65 */
+    private static final double L6 = 2.06975017800338417784e-01; /* 0x3FCA7E28, 0x4A454EEF */
+    private static final double lg2 = 6.93147180559945286227e-01; /* 0x3FE62E42, 0xFEFA39EF */
+    private static final double lg2_h = 6.93147182464599609375e-01; /* 0x3FE62E43, 0x00000000 */
+    private static final double lg2_l = -1.90465429995776804525e-09; /* 0xBE205C61, 0x0CA86C39 */
+    private static final double ovt = 8.0085662595372944372e-0017; /* -(1024-log2(ovfl+.5ulp)) */
+    private static final double cp = 9.61796693925975554329e-01; /* 0x3FEEC709, 0xDC3A03FD =2/(3ln2) */
+    private static final double cp_h = 9.61796700954437255859e-01; /* 0x3FEEC709, 0xE0000000 =(float)cp */
+    private static final double cp_l = -7.02846165095275826516e-09; /* 0xBE3E2FE0, 0x145B01F5 =tail of cp_h*/
+    private static final double ivln2 = 1.44269504088896338700e+00; /* 0x3FF71547, 0x652B82FE =1/ln2 */
+    private static final double ivln2_h = 1.44269502162933349609e+00; /* 0x3FF71547, 0x60000000 =24b 1/ln2*/
+    private static final double ivln2_l = 1.92596299112661746887e-08; /* 0x3E54AE0B, 0xF85DDF44 =1/ln2 tail*/
     /* atan(x)
      * Method
      *   1. Reduce x to positive by atan(x) = -atan(-x).
@@ -313,77 +320,66 @@ public abstract class MathUtil {
      */
     private static final double MAX_ULP = 1.9958403095347198E292;
 
-    /**
-     * Return Math.E to the exponent a.
-     * This in turn uses ieee7854_exp(double).
-     */
+    /// Return Math.E to the exponent a.
+    /// This in turn uses ieee7854_exp(double).
     public static final double exp(double a) {
         return ieee754Exp(a);
     }
 
-    /**
-     * Return the natural logarithm, ln(a), as it relates to Math.E.
-     * This in turn uses ieee7854_log(double).
-     */
+    /// Return the natural logarithm, ln(a), as it relates to Math.E.
+    /// This in turn uses ieee7854_log(double).
     public static final double log(double a) {
         return ieee754Log(a);
     }
 
-    /**
-     * Return the common base-10 logarithm, log10(a).
-     * This in turn uses ieee7854_log(double)/ieee7854_log(10.0).
-     */
+    /// Return the common base-10 logarithm, log10(a).
+    /// This in turn uses ieee7854_log(double)/ieee7854_log(10.0).
     public static final double log10(double a) {
         return ieee754Log(a) / log10;
     }
 
-    /**
-     * Return a to the power of b, sometimes written as a ** b
-     * but not to be confused with the bitwise ^ operator.
-     * This in turn uses ieee7854_log(double).
-     */
+    /// Return a to the power of b, sometimes written as a ** b
+    /// but not to be confused with the bitwise ^ operator.
+    /// This in turn uses ieee7854_log(double).
     public static final double pow(double a, double b) {
         return ieee754Pow(a, b);
     }
 
-    /**
-     * Return the arcsine of a.
-     */
+    /// Return the arcsine of a.
     public static final double asin(double a) {
         return ieee754Asin(a);
     }
 
-    /**
-     * Return the arccosine of a.
-     */
+    /// Return the arccosine of a.
     public static final double acos(double a) {
         return ieee754Acos(a);
     }
 
-    /**
-     * Return the arctangent of a, call it b, where a = tan(b).
-     */
+    /// Return the arctangent of a, call it b, where a = tan(b).
     public static final double atan(double a) {
         return ieee754Atan(a);
     }
 
-    /**
-     * For any real arguments x and y not both equal to zero, atan2(y, x)
-     * is the angle in radians between the positive x-axis of a plane
-     * and the point given by the coordinates (x, y) on it.
-     * The angle is positive for counter-clockwise angles (upper half-plane, y > 0),
-     * and negative for clockwise angles (lower half-plane, y < 0).
-     * This in turn uses ieee7854_arctan2(double).
-     */
+    /// For any real arguments x and y not both equal to zero, atan2(y, x)
+    /// is the angle in radians between the positive x-axis of a plane
+    /// and the point given by the coordinates (x, y) on it.
+    /// The angle is positive for counter-clockwise angles (upper half-plane, y > 0),
+    /// and negative for clockwise angles (lower half-plane, y < 0).
+    /// This in turn uses ieee7854_arctan2(double).
     public static final double atan2(double b, double a) {
         return ieee754Atan2(a, b);
     }
 
-    private static final double ieee754Exp(double x) {
-        double y, c, t;
-        double hi = 0, lo = 0;
+    private static double ieee754Exp(double x) {
+        double y;
+        double c;
+        double t;
+        double hi = 0;
+        double lo = 0;
         int k = 0;
-        int xsb, hx, lx;
+        int xsb;
+        int hx;
+        int lx;
         long yl;
         long xl = Double.doubleToLongBits(x);
 
@@ -441,14 +437,26 @@ public abstract class MathUtil {
             yl += ((long) k << (20 + HI_SHIFT)); /* add k to y's exponent */
             return Double.longBitsToDouble(yl);
         } else {
-            yl += ((long) (k + 1000) << (20 + HI_SHIFT));/* add k to y's exponent */
+            yl += ((long) (k + 1000) << (20 + HI_SHIFT)); /* add k to y's exponent */
             return Double.longBitsToDouble(yl) * twom1000;
         }
     }
 
     private static double ieee754Log(double x) {
-        double hfsq, f, s, z, r, w, t1, t2, dk;
-        int k, hx, lx, i, j;
+        double hfsq;
+        double f;
+        double s;
+        double z;
+        double r;
+        double w;
+        double t1;
+        double t2;
+        double dk;
+        int k;
+        int hx;
+        int lx;
+        int i;
+        int j;
         long xl = Double.doubleToLongBits(x);
 
         hx = (int) (xl >> HI_SHIFT);   /* high word of x */
@@ -520,12 +528,33 @@ public abstract class MathUtil {
     }
 
     private static double ieee754Pow(double x, double y) {
-        double z, ax, zH, zL, pH, pL;
-        double y1, t1, t2, r, s, t, u, v, w;
+        double z;
+        double ax;
+        double zH;
+        double zL;
+        double pH;
+        double pL;
+        double y1;
+        double t1;
+        double t2;
+        double r;
+        double s;
+        double t;
+        double u;
+        double v;
+        double w;
         //int i0,i1;
-        int i, j, k, yisint, n;
-        int hx, hy, ix, iy;
-        int lx, ly;
+        int i;
+        int j;
+        int k;
+        int yisint;
+        int n;
+        int hx;
+        int hy;
+        int ix;
+        int iy;
+        int lx;
+        int ly;
 
         //i0 = (int)((Double.doubleToLongBits(one)) >>> (29+HI_SHIFT))^1;
         //i1 = 1-i0;
@@ -628,7 +657,7 @@ public abstract class MathUtil {
 
         s = one; /* s (sign of result -ve**odd) = -1 else = 1 */
         if ((n | (yisint - 1)) == 0) {
-            s = -one;/* (-ve)**(odd int) */
+            s = -one; /* (-ve)**(odd int) */
         }
 
         /* |y| is huge */
@@ -657,7 +686,12 @@ public abstract class MathUtil {
             t1 = Double.longBitsToDouble(Double.doubleToLongBits(t1) & HI_MASK);
             t2 = v - (t1 - u);
         } else {
-            double ss, s2, sH, sL, tH, tL;
+            double ss;
+            double s2;
+            double sH;
+            double sL;
+            double tH;
+            double tL;
             n = 0;
             /* take care subnormal number */
             if (ix < 0x00100000) {
@@ -780,8 +814,7 @@ public abstract class MathUtil {
         j += (n << 20);
         if ((j >> 20) <= 0) {
             z = scalb(z, n); /* subnormal output */
-        } else //__HI(z) = j;
-        {
+        } else { //__HI(z) = j;
             z = Double.longBitsToDouble(((long) j << HI_SHIFT) | (Double.doubleToLongBits(z) & LO_MASK));
         }
         return s * z;
@@ -811,8 +844,16 @@ public abstract class MathUtil {
      * Function needed: sqrt
      */
     private static double ieee754Acos(double x) {
-        double z, p, q, r, w, s, c, df;
-        int hx, ix;
+        double z;
+        double p;
+        double q;
+        double r;
+        double w;
+        double s;
+        double c;
+        double df;
+        int hx;
+        int ix;
         hx = (int) (Double.doubleToLongBits(x) >>> HI_SHIFT);
         ix = hx & 0x7fffffff;
         if (ix >= 0x3ff00000) {  /* |x| >= 1 */
@@ -827,7 +868,7 @@ public abstract class MathUtil {
         }
         if (ix < 0x3fe00000) { /* |x| < 0.5 */
             if (ix <= 0x3c600000) {
-                return pio2_hi + pio2_lo;/*if|x|<2**-57*/
+                return pio2_hi + pio2_lo; /*if|x|<2**-57*/
             }
             z = x * x;
             p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * pS5)))));
@@ -887,8 +928,15 @@ public abstract class MathUtil {
      *
      */
     private static double ieee754Asin(double x) {
-        double t, w, p, q, c, r, s;
-        int hx, ix;
+        double t;
+        double w;
+        double p;
+        double q;
+        double c;
+        double r;
+        double s;
+        int hx;
+        int ix;
         hx = (int) (Double.doubleToLongBits(x) >>> HI_SHIFT);
         ix = hx & 0x7fffffff;
         if (ix >= 0x3ff00000) {   /* |x|>= 1 */
@@ -898,7 +946,7 @@ public abstract class MathUtil {
             return 1.0;   /* asin(|x|>1) is NaN */
         } else if (ix < 0x3fe00000) { /* |x|<0.5 */
             if (ix < 0x3e400000) {   /* if |x| < 2**-27 */
-                return x;/* return x with inexact if x!=0*/
+                return x; /* return x with inexact if x!=0*/
             } else {
                 t = x * x;
                 p = t * (pS0 + t * (pS1 + t * (pS2 + t * (pS3 + t * (pS4 + t * pS5)))));
@@ -934,8 +982,13 @@ public abstract class MathUtil {
     }
 
     private static double ieee754Atan(double x) {
-        double w, s1, s2, z;
-        int ix, hx, id;
+        double w;
+        double s1;
+        double s2;
+        double z;
+        int ix;
+        int hx;
+        int id;
 
         hx = (int) (Double.doubleToLongBits(x) >>> HI_SHIFT);
         ix = hx & 0x7fffffff;
@@ -952,7 +1005,7 @@ public abstract class MathUtil {
         }
         if (ix < 0x3fdc0000) {  /* |x| < 0.4375 */
             if (ix < 0x3e200000) {  /* |x| < 2^-29 */
-                return x;/* return x with inexact if x!=0*/
+                return x; /* return x with inexact if x!=0*/
             }
             id = -1;
         } else {
@@ -1017,9 +1070,14 @@ public abstract class MathUtil {
      */
     private static double ieee754Atan2(double x, double y) {
         double z;
-        int k, m;
-        int hx, hy, ix, iy;
-        int lx, ly;
+        int k;
+        int m;
+        int hx;
+        int hy;
+        int ix;
+        int iy;
+        int lx;
+        int ly;
 
         //i0 = (int)((Double.doubleToLongBits(one)) >> (29+HI_SHIFT))^1;
         //i1 = 1-i0;
@@ -1046,9 +1104,11 @@ public abstract class MathUtil {
                 case 1:
                     return y;   /* atan(+-0,+anything)=+-0 */
                 case 2:
-                    return pi + tiny;/* atan(+0,-anything) = pi */
+                    return pi + tiny; /* atan(+0,-anything) = pi */
                 case 3:
-                    return -pi - tiny;/* atan(-0,-anything) =-pi */
+                    return -pi - tiny; /* atan(-0,-anything) =-pi */
+                default:
+                    break;
             }
         }
         /* when x = 0 */
@@ -1061,13 +1121,15 @@ public abstract class MathUtil {
             if (iy == 0x7ff00000) {
                 switch (m) {
                     case 0:
-                        return pi_o_4 + tiny;/* atan(+INF,+INF) */
+                        return pi_o_4 + tiny; /* atan(+INF,+INF) */
                     case 1:
-                        return -pi_o_4 - tiny;/* atan(-INF,+INF) */
+                        return -pi_o_4 - tiny; /* atan(-INF,+INF) */
                     case 2:
-                        return 3.0 * pi_o_4 + tiny;/*atan(+INF,-INF)*/
+                        return 3.0 * pi_o_4 + tiny; /*atan(+INF,-INF)*/
                     case 3:
-                        return -3.0 * pi_o_4 - tiny;/*atan(-INF,-INF)*/
+                        return -3.0 * pi_o_4 - tiny; /*atan(-INF,-INF)*/
+                    default:
+                        break;
                 }
             } else {
                 switch (m) {
@@ -1079,6 +1141,8 @@ public abstract class MathUtil {
                         return pi + tiny;  /* atan(+...,-INF) */
                     case 3:
                         return -pi - tiny;  /* atan(-...,-INF) */
+                    default:
+                        break;
                 }
             }
         }
@@ -1102,20 +1166,20 @@ public abstract class MathUtil {
             case 1:
                 return -z; /* atan(-,+) */
             case 2:
-                return pi - (z - pi_lo);/* atan(+,-) */
+                return pi - (z - pi_lo); /* atan(+,-) */
             default: /* case 3 */
-                return (z - pi_lo) - pi;/* atan(-,-) */
+                return (z - pi_lo) - pi; /* atan(-,-) */
         }
     }
 
-    /**
-     * scalbn (double x, int n)
-     * scalbn(x,n) returns x* 2**n  computed by  exponent
-     * manipulation rather than by actually performing an
-     * exponentiation or a multiplication.
-     */
+    /// scalbn (double x, int n)
+    /// scalbn(x,n) returns x* 2**n  computed by  exponent
+    /// manipulation rather than by actually performing an
+    /// exponentiation or a multiplication.
     public static double scalb(double x, int n) {
-        int k, hx, lx;
+        int k;
+        int hx;
+        int lx;
         hx = (int) (Double.doubleToLongBits(x) >>> HI_SHIFT);
         lx = (int) (Double.doubleToLongBits(x) & LO_MASK);
         k = (hx & 0x7ff00000) >> 20;    /* extract exponent */
@@ -1155,14 +1219,21 @@ public abstract class MathUtil {
         return x * twom54;
     }
 
-    /**
-     * Please update your code to use scalb
-     *
-     * @param x
-     * @param n
-     * @return scalb(x, n)
-     * @deprecated Please update your code to use scalb
-     */
+    /// Please update your code to use scalb
+    ///
+    /// #### Parameters
+    ///
+    /// - `x`
+    ///
+    /// - `n`
+    ///
+    /// #### Returns
+    ///
+    /// scalb(x, n)
+    ///
+    /// #### Deprecated
+    ///
+    /// Please update your code to use scalb
     public static double scalbn(double x, int n) {
         return scalb(x, n);
     }
@@ -1190,24 +1261,34 @@ public abstract class MathUtil {
     }
      */
 
-    /**
-     * Please update your code to use copySign
-     *
-     * @param x
-     * @param y
-     * @return copySign(x, y)
-     * @deprecated Please update your code to use copySign
-     */
+    /// Please update your code to use copySign
+    ///
+    /// #### Parameters
+    ///
+    /// - `x`
+    ///
+    /// - `y`
+    ///
+    /// #### Returns
+    ///
+    /// copySign(x, y)
+    ///
+    /// #### Deprecated
+    ///
+    /// Please update your code to use copySign
     public static double copysign(final double x, final double y) {
         return copySign(x, y);
     }
 
-    /**
-     * Returns the size of an ulp (units in the last place) of the argument.
-     *
-     * @param d value whose ulp is to be returned
-     * @return size of an ulp for the argument
-     */
+    /// Returns the size of an ulp (units in the last place) of the argument.
+    ///
+    /// #### Parameters
+    ///
+    /// - `d`: value whose ulp is to be returned
+    ///
+    /// #### Returns
+    ///
+    /// size of an ulp for the argument
     public static double ulp(double d) {
         if (Double.isNaN(d)) {
             // If the argument is NaN, then the result is NaN.
@@ -1238,16 +1319,18 @@ public abstract class MathUtil {
         return copySign(x, y) == x;
     }
 
-    /**
-     * Returns the next representable floating point number after the first
-     * argument in the direction of the second argument.
-     *
-     * @param start     starting value
-     * @param direction value indicating which of the neighboring representable
-     *                  floating point number to return
-     * @return The floating-point number next to {@code start} in the
-     * direction of {@direction}.
-     */
+    /// Returns the next representable floating point number after the first
+    /// argument in the direction of the second argument.
+    ///
+    /// #### Parameters
+    ///
+    /// - `start`: starting value
+    ///
+    /// - `direction`: value indicating which of the neighboring representable floating point number to return.
+    ///
+    /// #### Returns
+    ///
+    /// The floating-point number next to `start` in the direction of `direction`.
     public static double nextAfter(final double start, final double direction) {
         if (Double.isNaN(start) || Double.isNaN(direction)) {
             // If either argument is a NaN, then NaN is returned.
@@ -1284,108 +1367,140 @@ public abstract class MathUtil {
         }
     }
 
-    /**
-     * Rounds the number to the closest integer
-     *
-     * @param a the number
-     * @return the closest integer
-     */
+    /// Rounds the number to the closest integer
+    ///
+    /// #### Parameters
+    ///
+    /// - `a`: the number
+    ///
+    /// #### Returns
+    ///
+    /// the closest integer
     public static int round(float a) {
         return Math.round(a);
     }
 
-    /**
-     * Rounds the number to the closest integer
-     *
-     * @param a the number
-     * @return the closest integer
-     */
+    /// Rounds the number to the closest integer
+    ///
+    /// #### Parameters
+    ///
+    /// - `a`: the number
+    ///
+    /// #### Returns
+    ///
+    /// the closest integer
     public static long round(double a) {
         return Math.round(a);
     }
 
-    /**
-     * Rounds the number down
-     *
-     * @param a the number
-     * @return a rounded down number
-     */
+    /// Rounds the number down
+    ///
+    /// #### Parameters
+    ///
+    /// - `a`: the number
+    ///
+    /// #### Returns
+    ///
+    /// a rounded down number
     public static int floor(float a) {
         return (int) a;
     }
 
-    /**
-     * Rounds the number down
-     *
-     * @param a the number
-     * @return a rounded down number
-     */
+    /// Rounds the number down
+    ///
+    /// #### Parameters
+    ///
+    /// - `a`: the number
+    ///
+    /// #### Returns
+    ///
+    /// a rounded down number
     public static long floor(double a) {
         return (long) a;
     }
 
-    /**
-     * Compares the two specified {@code float} values. The sign
-     * of the integer value returned is the same as that of the
-     * integer that would be returned by the call:
-     * <pre>
-     *    new Float(f1).compareTo(new Float(f2))
-     * </pre>
-     *
-     * @param   f1        the first {@code float} to compare.
-     * @param   f2        the second {@code float} to compare.
-     * @return  the value {@code 0} if {@code f1} is
-     *          numerically equal to {@code f2}; a value less than
-     *          {@code 0} if {@code f1} is numerically less than
-     *          {@code f2}; and a value greater than {@code 0}
-     *          if {@code f1} is numerically greater than
-     *          {@code f2}.
-     * @since 1.4
-     */
+    /// Compares the two specified `float` values. The sign
+    /// of the integer value returned is the same as that of the
+    /// integer that would be returned by the call:
+    ///
+    /// ```java
+    ///    new Float(f1).compareTo(new Float(f2))
+    /// ```
+    ///
+    /// #### Parameters
+    ///
+    /// - `f1`: the first `float` to compare.
+    ///
+    /// - `f2`: the second `float` to compare.
+    ///
+    /// #### Returns
+    ///
+    /// @return the value `0` if `f1` is
+    /// numerically equal to `f2`; a value less than
+    /// `0` if `f1` is numerically less than
+    /// `f2`; and a value greater than `0`
+    /// if `f1` is numerically greater than
+    /// `f2`.
+    ///
+    /// #### Since
+    ///
+    /// 1.4
     public static int compare(float f1, float f2) {
-        if (f1 < f2)
+        if (f1 < f2) {
             return -1;           // Neither val is NaN, thisVal is smaller
-        if (f1 > f2)
+        }
+        if (f1 > f2) {
             return 1;            // Neither val is NaN, thisVal is larger
+        }
 
         // Cannot use floatToRawIntBits because of possibility of NaNs.
         int thisBits = Float.floatToIntBits(f1);
         int anotherBits = Float.floatToIntBits(f2);
 
-        return (thisBits == anotherBits ?  0 : // Values are equal
+        return (thisBits == anotherBits ? 0 : // Values are equal
                 (thisBits < anotherBits ? -1 : // (-0.0, 0.0) or (!NaN, NaN)
                         1));                          // (0.0, -0.0) or (NaN, !NaN)
     }
 
-    /**
-     * Compares the two specified {@code double} values. The sign
-     * of the integer value returned is the same as that of the
-     * integer that would be returned by the call:
-     * <pre>
-     *    new Double(d1).compareTo(new Double(d2))
-     * </pre>
-     *
-     * @param   d1        the first {@code double} to compare
-     * @param   d2        the second {@code double} to compare
-     * @return  the value {@code 0} if {@code d1} is
-     *          numerically equal to {@code d2}; a value less than
-     *          {@code 0} if {@code d1} is numerically less than
-     *          {@code d2}; and a value greater than {@code 0}
-     *          if {@code d1} is numerically greater than
-     *          {@code d2}.
-     * @since 1.4
-     */
+    /// Compares the two specified `double` values. The sign
+    /// of the integer value returned is the same as that of the
+    /// integer that would be returned by the call:
+    ///
+    /// ```java
+    ///    new Double(d1).compareTo(new Double(d2))
+    /// ```
+    ///
+    /// #### Parameters
+    ///
+    /// - `d1`: the first `double` to compare
+    ///
+    /// - `d2`: the second `double` to compare
+    ///
+    /// #### Returns
+    ///
+    /// @return the value `0` if `d1` is
+    /// numerically equal to `d2`; a value less than
+    /// `0` if `d1` is numerically less than
+    /// `d2`; and a value greater than `0`
+    /// if `d1` is numerically greater than
+    /// `d2`.
+    ///
+    /// #### Since
+    ///
+    /// 1.4
     public static int compare(double d1, double d2) {
-        if (d1 < d2)
+        if (d1 < d2) {
             return -1;           // Neither val is NaN, thisVal is smaller
-        if (d1 > d2)
+        }
+        if (d1 > d2) {
             return 1;            // Neither val is NaN, thisVal is larger
+        }
 
         // Cannot use doubleToRawLongBits because of possibility of NaNs.
         long thisBits = Double.doubleToLongBits(d1);
         long anotherBits = Double.doubleToLongBits(d2);
 
-        return (thisBits == anotherBits ?  0 : // Values are equal
+        return (thisBits == anotherBits ? 0 : // Values are equal
                 (thisBits < anotherBits ? -1 : // (-0.0, 0.0) or (!NaN, NaN)
                         1));                          // (0.0, -0.0) or (NaN, !NaN)
     }

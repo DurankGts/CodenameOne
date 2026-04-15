@@ -27,11 +27,9 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.TimeZone;
 
-/**
- * Utility class for working with dates and timezones.
- *
- * @author shannah, Diamond
- */
+/// Utility class for working with dates and timezones.
+///
+/// @author shannah, Diamond
 public class DateUtil {
 
     public static final long MILLISECOND = 1L;
@@ -43,32 +41,38 @@ public class DateUtil {
     public static final long YEAR = 31557600000L;
     private final TimeZone tz;
 
-    /**
-     * Constructor for timezone.
-     *
-     * @param tz Timezone
-     */
+    /// Constructor for timezone.
+    ///
+    /// #### Parameters
+    ///
+    /// - `tz`: Timezone
     public DateUtil(TimeZone tz) {
         this.tz = tz;
     }
 
-    /**
-     * Creates DateUtil object in default timezone.
-     */
+    /// Creates DateUtil object in default timezone.
     public DateUtil() {
         this(TimeZone.getDefault());
     }
 
-    /**
-     * Returns the earliest of a set of dates.
-     *
-     * @param dates
-     * @return The earliest of a set of dates.
-     * @since 6.0
-     */
+    /// Returns the earliest of a set of dates.
+    ///
+    /// #### Parameters
+    ///
+    /// - `dates`
+    ///
+    /// #### Returns
+    ///
+    /// The earliest of a set of dates.
+    ///
+    /// #### Since
+    ///
+    /// 6.0
     public static Date min(Date... dates) {
         int len = dates.length;
-        if (len == 0) return null;
+        if (len == 0) {
+            return null;
+        }
         Date out = null;
         for (int i = 0; i < len; i++) {
             if (dates[i] == null) {
@@ -81,17 +85,28 @@ public class DateUtil {
         return out;
     }
 
-    /**
-     * Compares two dates.
-     *
-     * @param d1 A date
-     * @param d2 A date
-     * @return -1 if first date is earlier.  1 if first date is later.  0 if they are the same.
-     * @since 6.0
-     */
+    /// Compares two dates.
+    ///
+    /// #### Parameters
+    ///
+    /// - `d1`: A date
+    ///
+    /// - `d2`: A date
+    ///
+    /// #### Returns
+    ///
+    /// -1 if first date is earlier.  1 if first date is later.  0 if they are the same.
+    ///
+    /// #### Since
+    ///
+    /// 6.0
     public static int compare(Date d1, Date d2) {
-        if (d1 == null) return d2 == null ? 0 : -1;
-        if (d2 == null) return 1;
+        if (d1 == null) {
+            return d2 == null ? 0 : -1;
+        }
+        if (d2 == null) {
+            return 1;
+        }
         if (d1.getTime() < d2.getTime()) {
             return -1;
         } else if (d1.getTime() > d2.getTime()) {
@@ -100,28 +115,49 @@ public class DateUtil {
         return 0;
     }
 
-    /**
-     * Compares two dates or sorts multiple dates by the granularity of a specific field.
-     * <p>Compare dates:<br/>
-     * {@code compareByDateField(DateUtil.MONTH).compare(date1, date2)}</p>
-     * <p>Sort dates:<br/>
-     * {@code dateList.sort(compareByDateField(DateUtil.MONTH))}</p>
-     *
-     * @param field One of the fields:
-     *              <ul>
-     *               <li>{@code DateUtil.MILLISECOND}
-     *               <li>{@code DateUtil.SECOND}
-     *               <li>{@code DateUtil.MINUTE}
-     *               <li>{@code DateUtil.HOUR}
-     *               <li>{@code DateUtil.DATE}
-     *               <li>{@code DateUtil.MONTH}
-     *               <li>{@code DateUtil.YEAR}
-     * @return <ul>
-     * <li>&gt; 0 - if first date is earlier.
-     * <li>&lt; 0 - if first date is later.
-     * <li>== 0 - if they are equal.
-     * @since 7.0
-     */
+    /// Compares two dates or sorts multiple dates by the granularity of a specific field.
+    ///
+    /// Compare dates:
+    ///
+    /// `compareByDateField(DateUtil.MONTH).compare(date1, date2)`
+    ///
+    /// Sort dates:
+    ///
+    /// `dateList.sort(compareByDateField(DateUtil.MONTH))`
+    ///
+    /// #### Parameters
+    ///
+    /// - `field`: @param field One of the fields:
+    ///
+    ///
+    ///
+    /// - `DateUtil.MILLISECOND`
+    ///
+    /// - `DateUtil.SECOND`
+    ///
+    /// - `DateUtil.MINUTE`
+    ///
+    /// - `DateUtil.HOUR`
+    ///
+    /// - `DateUtil.DATE`
+    ///
+    /// - `DateUtil.MONTH`
+    ///
+    /// - `DateUtil.YEAR`
+    ///
+    /// #### Returns
+    ///
+    /// @return
+    ///
+    /// - > 0 - if first date is earlier.
+    ///
+    /// - < 0 - if first date is later.
+    ///
+    /// - == 0 - if they are equal.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public static Comparator<Date> compareByDateField(final long field) {
         return new Comparator<Date>() {
             @Override
@@ -159,16 +195,24 @@ public class DateUtil {
         };
     }
 
-    /**
-     * Returns the latest of a set of dates.
-     *
-     * @param dates
-     * @return The latest of a set of dates.
-     * @since 6.0
-     */
+    /// Returns the latest of a set of dates.
+    ///
+    /// #### Parameters
+    ///
+    /// - `dates`
+    ///
+    /// #### Returns
+    ///
+    /// The latest of a set of dates.
+    ///
+    /// #### Since
+    ///
+    /// 6.0
     public static Date max(Date... dates) {
         int len = dates.length;
-        if (len == 0) return null;
+        if (len == 0) {
+            return null;
+        }
         Date out = null;
         for (int i = 0; i < len; i++) {
             if (dates[i] == null) {
@@ -181,12 +225,15 @@ public class DateUtil {
         return out;
     }
 
-    /**
-     * Gets the offset from GMT in milliseconds for the given date.
-     *
-     * @param date The date at which the offset is calculated.
-     * @return Millisecond offset from GMT in the current timezone for the given date.
-     */
+    /// Gets the offset from GMT in milliseconds for the given date.
+    ///
+    /// #### Parameters
+    ///
+    /// - `date`: The date at which the offset is calculated.
+    ///
+    /// #### Returns
+    ///
+    /// Millisecond offset from GMT in the current timezone for the given date.
     public int getOffset(long date) {
         Calendar cal = Calendar.getInstance(tz);
         cal.setTime(new Date(date));
@@ -207,37 +254,54 @@ public class DateUtil {
         );
     }
 
-    /**
-     * Checks whether the given date is in daylight savings time for the given date.
-     *
-     * @param date the date to check
-     * @return True if date is in daylight savings time
-     */
+    /// Checks whether the given date is in daylight savings time for the given date.
+    ///
+    /// #### Parameters
+    ///
+    /// - `date`: the date to check
+    ///
+    /// #### Returns
+    ///
+    /// True if date is in daylight savings time
     public boolean inDaylightTime(Date date) {
         return tz.useDaylightTime() && getOffset(date.getTime()) != tz.getRawOffset();
     }
 
-    /**
-     * Checks if two times are on the same year using {@link Calendar}.
-     *
-     * @param c1 First time to compare.
-     * @param c2 Second time to compare.
-     * @return True if the two times are on the same year.
-     * @since 7.0
-     */
+    /// Checks if two times are on the same year using `Calendar`.
+    ///
+    /// #### Parameters
+    ///
+    /// - `c1`: First time to compare.
+    ///
+    /// - `c2`: Second time to compare.
+    ///
+    /// #### Returns
+    ///
+    /// True if the two times are on the same year.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public boolean isSameYear(Calendar c1, Calendar c2) {
 
         return c1.get(Calendar.YEAR) == c2.get(Calendar.YEAR);
     }
 
-    /**
-     * Checks if two dates are on the same year in the current timezone.
-     *
-     * @param d1 First date to compare.
-     * @param d2 Second date to compare.
-     * @return True if the two dates are on the same year.
-     * @since 7.0
-     */
+    /// Checks if two dates are on the same year in the current timezone.
+    ///
+    /// #### Parameters
+    ///
+    /// - `d1`: First date to compare.
+    ///
+    /// - `d2`: Second date to compare.
+    ///
+    /// #### Returns
+    ///
+    /// True if the two dates are on the same year.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public boolean isSameYear(Date d1, Date d2) {
         Calendar c1 = Calendar.getInstance(tz);
         c1.setTime(d1);
@@ -247,28 +311,42 @@ public class DateUtil {
         return isSameYear(c1, c2);
     }
 
-    /**
-     * Checks if two times are on the same month using {@link Calendar}.
-     *
-     * @param c1 First time to compare.
-     * @param c2 Second time to compare.
-     * @return True if the two times are on the same month.
-     * @since 7.0
-     */
+    /// Checks if two times are on the same month using `Calendar`.
+    ///
+    /// #### Parameters
+    ///
+    /// - `c1`: First time to compare.
+    ///
+    /// - `c2`: Second time to compare.
+    ///
+    /// #### Returns
+    ///
+    /// True if the two times are on the same month.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public boolean isSameMonth(Calendar c1, Calendar c2) {
 
         return isSameYear(c1, c2)
                 && c1.get(Calendar.MONTH) == c2.get(Calendar.MONTH);
     }
 
-    /**
-     * Checks if two dates are on the same month in the current timezone.
-     *
-     * @param d1 First date to compare.
-     * @param d2 Second date to compare.
-     * @return True if the two dates are on the same month.
-     * @since 7.0
-     */
+    /// Checks if two dates are on the same month in the current timezone.
+    ///
+    /// #### Parameters
+    ///
+    /// - `d1`: First date to compare.
+    ///
+    /// - `d2`: Second date to compare.
+    ///
+    /// #### Returns
+    ///
+    /// True if the two dates are on the same month.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public boolean isSameMonth(Date d1, Date d2) {
         Calendar c1 = Calendar.getInstance(tz);
         c1.setTime(d1);
@@ -278,28 +356,42 @@ public class DateUtil {
         return isSameMonth(c1, c2);
     }
 
-    /**
-     * Checks if two times are on the same day using {@link Calendar}.
-     *
-     * @param c1 First time to compare.
-     * @param c2 Second time to compare.
-     * @return True if the two times are on the same day.
-     * @since 7.0
-     */
+    /// Checks if two times are on the same day using `Calendar`.
+    ///
+    /// #### Parameters
+    ///
+    /// - `c1`: First time to compare.
+    ///
+    /// - `c2`: Second time to compare.
+    ///
+    /// #### Returns
+    ///
+    /// True if the two times are on the same day.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public boolean isSameDay(Calendar c1, Calendar c2) {
 
         return isSameMonth(c1, c2)
                 && c1.get(Calendar.DATE) == c2.get(Calendar.DATE);
     }
 
-    /**
-     * Checks if two dates are on the same day in the current timezone.
-     *
-     * @param d1 First date to compare.
-     * @param d2 Second date to compare.
-     * @return True if the two dates are on the same day.
-     * @since 7.0
-     */
+    /// Checks if two dates are on the same day in the current timezone.
+    ///
+    /// #### Parameters
+    ///
+    /// - `d1`: First date to compare.
+    ///
+    /// - `d2`: Second date to compare.
+    ///
+    /// #### Returns
+    ///
+    /// True if the two dates are on the same day.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public boolean isSameDay(Date d1, Date d2) {
         Calendar c1 = Calendar.getInstance(tz);
         c1.setTime(d1);
@@ -309,28 +401,42 @@ public class DateUtil {
         return isSameDay(c1, c2);
     }
 
-    /**
-     * Checks if two times are on the same hour using {@link Calendar}.
-     *
-     * @param c1 First time to compare.
-     * @param c2 Second time to compare.
-     * @return True if the two times are on the same hour.
-     * @since 7.0
-     */
+    /// Checks if two times are on the same hour using `Calendar`.
+    ///
+    /// #### Parameters
+    ///
+    /// - `c1`: First time to compare.
+    ///
+    /// - `c2`: Second time to compare.
+    ///
+    /// #### Returns
+    ///
+    /// True if the two times are on the same hour.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public boolean isSameHour(Calendar c1, Calendar c2) {
 
         return isSameDay(c1, c2)
                 && c1.get(Calendar.HOUR_OF_DAY) == c2.get(Calendar.HOUR_OF_DAY);
     }
 
-    /**
-     * Checks if two dates are on the same hour in the current timezone.
-     *
-     * @param d1 First date to compare.
-     * @param d2 Second date to compare.
-     * @return True if the two dates are on the same hour.
-     * @since 7.0
-     */
+    /// Checks if two dates are on the same hour in the current timezone.
+    ///
+    /// #### Parameters
+    ///
+    /// - `d1`: First date to compare.
+    ///
+    /// - `d2`: Second date to compare.
+    ///
+    /// #### Returns
+    ///
+    /// True if the two dates are on the same hour.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public boolean isSameHour(Date d1, Date d2) {
         Calendar c1 = Calendar.getInstance(tz);
         c1.setTime(d1);
@@ -340,28 +446,42 @@ public class DateUtil {
         return isSameHour(c1, c2);
     }
 
-    /**
-     * Checks if two times are on the same minute using {@link Calendar}.
-     *
-     * @param c1 First time to compare.
-     * @param c2 Second time to compare.
-     * @return True if the two times are on the same minute.
-     * @since 7.0
-     */
+    /// Checks if two times are on the same minute using `Calendar`.
+    ///
+    /// #### Parameters
+    ///
+    /// - `c1`: First time to compare.
+    ///
+    /// - `c2`: Second time to compare.
+    ///
+    /// #### Returns
+    ///
+    /// True if the two times are on the same minute.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public boolean isSameMinute(Calendar c1, Calendar c2) {
 
         return isSameHour(c1, c2)
                 && c1.get(Calendar.MINUTE) == c2.get(Calendar.MINUTE);
     }
 
-    /**
-     * Checks if two dates are on the same minute in the current timezone.
-     *
-     * @param d1 First date to compare.
-     * @param d2 Second date to compare.
-     * @return True if the two dates are on the same minute.
-     * @since 7.0
-     */
+    /// Checks if two dates are on the same minute in the current timezone.
+    ///
+    /// #### Parameters
+    ///
+    /// - `d1`: First date to compare.
+    ///
+    /// - `d2`: Second date to compare.
+    ///
+    /// #### Returns
+    ///
+    /// True if the two dates are on the same minute.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public boolean isSameMinute(Date d1, Date d2) {
         Calendar c1 = Calendar.getInstance(tz);
         c1.setTime(d1);
@@ -371,28 +491,42 @@ public class DateUtil {
         return isSameMinute(c1, c2);
     }
 
-    /**
-     * Checks if two times are on the same second using {@link Calendar}.
-     *
-     * @param c1 First time to compare.
-     * @param c2 Second time to compare.
-     * @return True if the two times are on the same second.
-     * @since 7.0
-     */
+    /// Checks if two times are on the same second using `Calendar`.
+    ///
+    /// #### Parameters
+    ///
+    /// - `c1`: First time to compare.
+    ///
+    /// - `c2`: Second time to compare.
+    ///
+    /// #### Returns
+    ///
+    /// True if the two times are on the same second.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public boolean isSameSecond(Calendar c1, Calendar c2) {
 
         return isSameMinute(c1, c2)
                 && c1.get(Calendar.SECOND) == c2.get(Calendar.SECOND);
     }
 
-    /**
-     * Checks if two dates are on the same second in the current timezone.
-     *
-     * @param d1 First date to compare.
-     * @param d2 Second date to compare.
-     * @return True if the two dates are on the same second.
-     * @since 7.0
-     */
+    /// Checks if two dates are on the same second in the current timezone.
+    ///
+    /// #### Parameters
+    ///
+    /// - `d1`: First date to compare.
+    ///
+    /// - `d2`: Second date to compare.
+    ///
+    /// #### Returns
+    ///
+    /// True if the two dates are on the same second.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public boolean isSameSecond(Date d1, Date d2) {
         Calendar c1 = Calendar.getInstance(tz);
         c1.setTime(d1);
@@ -402,38 +536,58 @@ public class DateUtil {
         return isSameSecond(c1, c2);
     }
 
-    /**
-     * Checks if two times are on the same time using {@link Calendar}.
-     *
-     * @param c1 First time to compare.
-     * @param c2 Second time to compare.
-     * @return True if the two times are on the same time.
-     * @since 7.0
-     */
+    /// Checks if two times are on the same time using `Calendar`.
+    ///
+    /// #### Parameters
+    ///
+    /// - `c1`: First time to compare.
+    ///
+    /// - `c2`: Second time to compare.
+    ///
+    /// #### Returns
+    ///
+    /// True if the two times are on the same time.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public boolean isSameTime(Calendar c1, Calendar c2) {
 
         return c1.getTime().getTime() == c2.getTime().getTime();
     }
 
-    /**
-     * Checks if two dates are on the same time in the current timezone.
-     *
-     * @param d1 First date to compare.
-     * @param d2 Second date to compare.
-     * @return True if the two dates are on the same time.
-     * @since 7.0
-     */
+    /// Checks if two dates are on the same time in the current timezone.
+    ///
+    /// #### Parameters
+    ///
+    /// - `d1`: First date to compare.
+    ///
+    /// - `d2`: Second date to compare.
+    ///
+    /// #### Returns
+    ///
+    /// True if the two dates are on the same time.
+    ///
+    /// #### Since
+    ///
+    /// 7.0
     public boolean isSameTime(Date d1, Date d2) {
         return d1.getTime() == d2.getTime();
     }
 
-    /**
-     * Gets the date in "time ago" format.  E.g. "Just now", or "1 day ago", etc..
-     *
-     * @param date The date
-     * @return String representing how long ago from now the given date is.
-     * @since 6.0
-     */
+    /// Gets the date in "time ago" format.  E.g. "Just now", or "1 day ago", etc..
+    ///
+    /// #### Parameters
+    ///
+    /// - `date`: The date
+    ///
+    /// #### Returns
+    ///
+    /// String representing how long ago from now the given date is.
+    ///
+    /// #### Since
+    ///
+    /// 6.0
     public String getTimeAgo(Date date) {
         if (date == null) {
             return "N/A";
@@ -445,8 +599,8 @@ public class DateUtil {
         // Seconds
         if (seconds <= 60) {
             return "Just now";
-        } //Minutes
-        else {
+        } else {
+            //Minutes
             int minutes = (int) Math.round(seconds / 60.0d);
 
             if (minutes <= 60) {
@@ -455,8 +609,8 @@ public class DateUtil {
                 } else {
                     return minutes + " minutes ago";
                 }
-            } //Hours
-            else {
+            } else {
+                //Hours
                 int hours = (int) Math.round(seconds / 3600.0d);
                 if (hours <= 24) {
                     if (hours == 1) {
@@ -464,8 +618,8 @@ public class DateUtil {
                     } else {
                         return hours + " hours ago";
                     }
-                } //Days
-                else {
+                } else {
+                    //Days
                     int days = (int) Math.round(seconds / 86400.0d);
                     if (days <= 7) {
                         if (days == 1) {
@@ -473,8 +627,8 @@ public class DateUtil {
                         } else {
                             return days + " days ago";
                         }
-                    } //Weeks
-                    else {
+                    } else {
+                        //Weeks
                         int weeks = (int) Math.round(seconds / 604800.0d);
                         if (weeks <= 4.3) {
                             if (weeks == 1) {
@@ -482,8 +636,8 @@ public class DateUtil {
                             } else {
                                 return weeks + " weeks ago";
                             }
-                        } //Months
-                        else {
+                        } else {
+                            //Months
                             int months = (int) Math.round(seconds / 2600640.0d);
                             if (months <= 12) {
                                 if (months == 1) {
@@ -491,8 +645,8 @@ public class DateUtil {
                                 } else {
                                     return months + " months ago";
                                 }
-                            } //Years
-                            else {
+                            } else {
+                                //Years
                                 int years = (int) Math.round(seconds / 31207680.0d);
                                 if (years == 1) {
                                     return "1 year ago";

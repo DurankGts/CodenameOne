@@ -8,29 +8,36 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-/**
- * A class that can write raw PCM data to a WAV file.
- *
- * @author shannah
- * @since 7.0
- */
+/// A class that can write raw PCM data to a WAV file.
+///
+/// @author shannah
+///
+/// #### Since
+///
+/// 7.0
 public class WAVWriter implements AutoCloseable {
     private final File outputFile;
-    private OutputStream out;
     private final int samplingRate;
     private final int channels;
     private final int numBits;
+    private OutputStream out;
     private long dataLength;
 
-    /**
-     * Creates a new writer for writing a WAV file.
-     *
-     * @param outputFile   The output file.
-     * @param samplingRate The sampling rate.  E.g. 44100
-     * @param channels     The number of channels.  E.g. 1 or 2
-     * @param numBits      8 or 16
-     * @throws IOException
-     */
+    /// Creates a new writer for writing a WAV file.
+    ///
+    /// #### Parameters
+    ///
+    /// - `outputFile`: The output file.
+    ///
+    /// - `samplingRate`: The sampling rate.  E.g. 44100
+    ///
+    /// - `channels`: The number of channels.  E.g. 1 or 2
+    ///
+    /// - `numBits`: 8 or 16
+    ///
+    /// #### Throws
+    ///
+    /// - `IOException`
     public WAVWriter(final File outputFile, final int samplingRate, final int channels, final int numBits) throws IOException {
         this.outputFile = outputFile;
         this.out = FileSystemStorage.getInstance().openOutputStream(outputFile.getAbsolutePath());
@@ -88,14 +95,19 @@ public class WAVWriter implements AutoCloseable {
         this.out.write(header);
     }
 
-    /**
-     * Writes PCM data to the file.
-     *
-     * @param pcmData PCM data to write.  These are float values between -1 and 1.
-     * @param offset  Offset in pcmData array to start writing.
-     * @param len     Length in pcmData array to write.
-     * @throws IOException
-     */
+    /// Writes PCM data to the file.
+    ///
+    /// #### Parameters
+    ///
+    /// - `pcmData`: PCM data to write.  These are float values between -1 and 1.
+    ///
+    /// - `offset`: Offset in pcmData array to start writing.
+    ///
+    /// - `len`: Length in pcmData array to write.
+    ///
+    /// #### Throws
+    ///
+    /// - `IOException`
     public void write(final float[] pcmData, final int offset, final int len) throws IOException {
         for (int i = 0; i < len; ++i) {
             final float sample = pcmData[offset + i];
@@ -119,30 +131,25 @@ public class WAVWriter implements AutoCloseable {
         return this.outputFile.getAbsolutePath() + ".pcm";
     }
 
-    /**
-     * Closes the writer, and writes the WAV file.
-     *
-     * @throws Exception
-     */
+    /// Closes the writer, and writes the WAV file.
+    ///
+    /// #### Throws
+    ///
+    /// - `Exception`
     @Override
     public void close() throws Exception {
-        this.out.close();
         final FileSystemStorage fs = FileSystemStorage.getInstance();
+        Util.cleanup(this.out);
         fs.rename(this.outputFile.getAbsolutePath(), new File(this.getPCMFile()).getName());
+        InputStream in = null; //NOPMD CloseResource
         try {
             this.out = fs.openOutputStream(this.outputFile.getAbsolutePath());
-            final InputStream in = fs.openInputStream(this.getPCMFile());
+            in = fs.openInputStream(this.getPCMFile());
             this.writeHeader();
             Util.copy(in, this.out);
-            try {
-                this.out.close();
-            } catch (Throwable t) {
-            }
-            try {
-                in.close();
-            } catch (Throwable t2) {
-            }
         } finally {
+            Util.cleanup(this.out);
+            Util.cleanup(in);
             fs.delete(this.getPCMFile());
         }
     }

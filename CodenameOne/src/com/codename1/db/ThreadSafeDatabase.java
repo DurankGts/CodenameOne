@@ -29,31 +29,32 @@ import com.codename1.util.RunnableWithResultSync;
 
 import java.io.IOException;
 
-/**
- * Wraps all database calls in a single thread so they are all proxied thru that thread
- *
- * @author Shai Almog
- * @deprecated platform specific nuances prevented this approach from working out, we improved the native iOS support for thread safety instead
- */
+/// Wraps all database calls in a single thread so they are all proxied thru that thread
+///
+/// @author Shai Almog
+///
+/// #### Deprecated
+///
+/// platform specific nuances prevented this approach from working out, we improved the native iOS support for thread safety instead
 public class ThreadSafeDatabase extends Database {
     private final Database underlying;
     private final EasyThread et;
 
-    /**
-     * Wraps the given database with a threadsafe version
-     *
-     * @param db the database
-     */
+    /// Wraps the given database with a threadsafe version
+    ///
+    /// #### Parameters
+    ///
+    /// - `db`: the database
     public ThreadSafeDatabase(Database db) {
         underlying = db;
         et = EasyThread.start("Database");
     }
 
-    /**
-     * Returns the underlying easy thread we can use to pipe tasks to the db thread
-     *
-     * @return the easy thread object
-     */
+    /// Returns the underlying easy thread we can use to pipe tasks to the db thread
+    ///
+    /// #### Returns
+    ///
+    /// the easy thread object
     public EasyThread getThread() {
         return et;
     }
@@ -72,6 +73,7 @@ public class ThreadSafeDatabase extends Database {
     private void invokeWithException(final RunnableWithIOException r) throws IOException {
         IOException err = et.run(new RunnableWithResultSync<IOException>() {
             @Override
+            @SuppressWarnings("PMD.UnnecessaryLocalBeforeReturn")
             public IOException run() {
                 try {
                     r.run();
@@ -89,6 +91,7 @@ public class ThreadSafeDatabase extends Database {
     private Object invokeWithException(final RunnableWithResponseOrIOException r) throws IOException {
         Object ret = et.run(new RunnableWithResultSync<Object>() {
             @Override
+            @SuppressWarnings("PMD.UnnecessaryLocalBeforeReturn")
             public Object run() {
                 try {
                     return r.run();
@@ -310,7 +313,7 @@ public class ThreadSafeDatabase extends Database {
         public CursorWrapper(Cursor underlyingCursor) {
             this.underlyingCursor = underlyingCursor;
         }
-        
+
         @Override
         public boolean first() throws IOException {
             return (Boolean) invokeWithException(new RunnableWithResponseOrIOException() {

@@ -29,26 +29,24 @@ import com.codename1.io.Oauth2;
 import java.util.Arrays;
 import java.util.Hashtable;
 
-/**
- * The GoogleConnect Login class allows the sign in with google functionality.
- * The GoogleConnect requires to create a corresponding google cloud project.
- * To enable the GoogleConnect to sign-in on the Simulator create a corresponding
- * web login - https://developers.google.com/+/web/signin/
- * <p>
- * To enable the GoogleConnect to sign-in on Android
- * Follow step 1 from here - https://developers.google.com/+/mobile/android/getting-started
- * <p>
- * To enable the GoogleConnect to sign-in on iOS
- * follow step 1 from here - https://developers.google.com/+/mobile/ios/getting-started
- *
- * @author Chen
- */
+/// The GoogleConnect Login class allows the sign in with google functionality.
+/// The GoogleConnect requires to create a corresponding google cloud project.
+/// To enable the GoogleConnect to sign-in on the Simulator create a corresponding
+/// web login - https://developers.google.com/+/web/signin/
+///
+/// To enable the GoogleConnect to sign-in on Android
+/// Follow step 1 from here - https://developers.google.com/+/mobile/android/getting-started
+///
+/// To enable the GoogleConnect to sign-in on iOS
+/// follow step 1 from here - https://developers.google.com/+/mobile/ios/getting-started
+///
+/// @author Chen
 public class GoogleConnect extends Login {
 
-    static Class<?> implClass;
     private static final String tokenURL = "https://www.googleapis.com/oauth2/v3/token";
-    private static GoogleConnect instance;
     private static final Object INSTANCE_LOCK = new Object();
+    static Class<?> implClass;
+    private static GoogleConnect instance;
 
 
     GoogleConnect() {
@@ -56,12 +54,12 @@ public class GoogleConnect extends Login {
         setScope("profile email");
     }
 
-    /**
-     * Gets the GoogleConnect singleton instance
-     * .
-     *
-     * @return the GoogleConnect instance
-     */
+    /// Gets the GoogleConnect singleton instance
+    /// .
+    ///
+    /// #### Returns
+    ///
+    /// the GoogleConnect instance
     public static GoogleConnect getInstance() {
         synchronized (INSTANCE_LOCK) {
             if (instance == null) {
@@ -94,8 +92,7 @@ public class GoogleConnect extends Login {
         params.put("approval_prompt", "force");
         params.put("access_type", "offline");
 
-        Oauth2 auth = new Oauth2(oauth2URL, clientId, redirectURI, scope, tokenURL, clientSecret, params);
-        return auth;
+        return new Oauth2(oauth2URL, clientId, redirectURI, scope, tokenURL, clientSecret, params);
     }
 
     @Override
@@ -122,8 +119,12 @@ public class GoogleConnect extends Login {
 
         @Override
         public final boolean equals(Object o) {
-            if (!(o instanceof ValidateTokenConnectionRequest)) return false;
-            if (!super.equals(o)) return false;
+            if (!(o instanceof ValidateTokenConnectionRequest)) {
+                return false;
+            }
+            if (!super.equals(o)) {
+                return false;
+            }
 
             ValidateTokenConnectionRequest that = (ValidateTokenConnectionRequest) o;
             return Arrays.equals(retval, that.retval);

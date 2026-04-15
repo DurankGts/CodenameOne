@@ -36,6 +36,7 @@ import com.codename1.ui.Display;
 import com.codename1.ui.Font;
 import com.codename1.ui.Image;
 import com.codename1.ui.PeerComponent;
+import com.codename1.ui.Sheet;
 import com.codename1.ui.TextArea;
 import com.codename1.ui.TextField;
 import com.codename1.ui.geom.Dimension;
@@ -144,6 +145,7 @@ public class IOSImplementation extends CodenameOneImplementation {
     private String userAgent;
     private TextureCache textureCache = new TextureCache();
     private static boolean dropEvents;
+    private static boolean callInterruptionActive;
     
     private NativePathRenderer globalPathRenderer;
     private NativePathStroker globalPathStroker;
@@ -218,6 +220,14 @@ public class IOSImplementation extends CodenameOneImplementation {
             life = (Lifecycle)m;
         }
         VideoCaptureConstraints.init(new IOSVideoCaptureConstraintsCompiler());
+        if("true".equals(Display.getInstance().getProperty("DisableScreenshots", ""))) {
+            nativeInstance.setDisableScreenshots(true);
+        }
+    }
+    
+    @Override
+    public void setDisableScreenshots(boolean disable) {
+        nativeInstance.setDisableScreenshots(disable);
     }
 
     public void setThreadPriority(Thread t, int p) {
@@ -1154,7 +1164,10 @@ public class IOSImplementation extends CodenameOneImplementation {
         Form f = Display.getInstance().getCurrent();
         if (f != null) {
             Component cmp = f.getResponderAt(x, y);
-            return cmp == null || !(cmp instanceof PeerComponent);
+            if (cmp == null || !(cmp instanceof PeerComponent)) {
+                return true;
+            }
+            return Sheet.isSheetVisibleAt(x, y);
         }
         return true;
     }
@@ -1213,6 +1226,16 @@ public class IOSImplementation extends CodenameOneImplementation {
             return nativeInstance.isDarkMode();
         }
         return null;
+    }
+
+    @Override
+    public boolean isVPNDetectionSupported() {
+        return true;
+    }
+
+    @Override
+    public boolean isVPNActive() {
+        return nativeInstance.isVPNActive();
     }
 
     @Override
@@ -6407,8 +6430,6 @@ public class IOSImplementation extends CodenameOneImplementation {
                         callbacks.remove(callbackId);
                         super.error(t);
                     }
-                    
-                    
                 };
                 callbacks.put(callbackId, out);
                 userAgent = nativeInstance.getUserAgentString(callbackId);
@@ -6416,10 +6437,9 @@ public class IOSImplementation extends CodenameOneImplementation {
                     try {
                         userAgent = out.get();
                     } catch (Exception ex) {
-                        
+                        Log.e(ex);
                     }
                 }
-                
             }
             return userAgent;
         }
@@ -6655,7 +6675,15 @@ public class IOSImplementation extends CodenameOneImplementation {
         if (includeAddress) {
             // This is a hack to make sure that 
             // Address and its methods aren't stripped out by the BytecodeCompiler
-            Address tmp = new Address();
+            if (System.currentTimeMillis() == 0) {
+                Address tmp = new Address();
+                tmp.setCountry("");
+                tmp.setLocality("");
+                tmp.setRegion("");
+                tmp.setPostalCode("");
+                tmp.setStreetAddress("");
+                c.getAddresses().put("", tmp);
+            }
         }
 
         c.setEmails(new Hashtable());
@@ -6670,55 +6698,21 @@ public class IOSImplementation extends CodenameOneImplementation {
             throw new RuntimeException("Please add the ios.NSContactsUsageDescription build hint");
         }
         return getContactById(id, true, true, true, true, true);
-        
-        /*c.setId("" + id);
-        long person = nativeInstance.getPersonWithRecordID(recId);
-        String fname = nativeInstance.getPersonFirstName(person);
-        c.setFirstName(fname);
-        String sname = nativeInstance.getPersonSurnameName(person);
-        c.setFamilyName(sname);
-        if(c.getFirstName() != null) {
-            StringBuilder s = new StringBuilder();
-            if(fname != null && fname.length() > 0) {
-                if(sname != null && sname.length() > 0) {
-                    c.setDisplayName(fname + " " + sname);
-                } else {
-                    c.setDisplayName(fname);
-                }
-            } else {
-                if(sname != null && sname.length() > 0) {
-                    c.setDisplayName(sname);
-                }
-            }
-        }
-        c.setPrimaryEmail(nativeInstance.getPersonEmail(person));
-        
-        int phones = nativeInstance.getPersonPhoneCount(person);
-        Hashtable h = new Hashtable();
-        for(int iter = 0 ; iter < phones ; iter++) {
-            String t = nativeInstance.getPersonPhoneType(person, iter);
-            if(t == null) {
-                t = "work";
-            }
-            String phone = nativeInstance.getPersonPhone(person, iter);
-            if(phone != null) {
-                h.put(t, phone);
-            }
-        }
-        c.setPhoneNumbers(h);
-        
-        c.setPrimaryPhoneNumber(nativeInstance.getPersonPrimaryPhone(person));
-        
-        //h = new Hashtable();
-        //h.put("Work", h);
-        c.setAddresses(h);
-        nativeInstance.releasePeer(person);
-        return c;*/
     }
     
     @Override
     public void dial(String phoneNumber) {        
         nativeInstance.dial("tel://" + phoneNumber);
+    }
+
+    @Override
+    public boolean isCallDetectionSupported() {
+        return true;
+    }
+
+    @Override
+    public boolean isInCall() {
+        return callInterruptionActive;
     }
 
     @Override
@@ -6892,6 +6886,9 @@ public class IOSImplementation extends CodenameOneImplementation {
         if(key.equalsIgnoreCase("useragent")) {
             nativeInstance.setBrowserUserAgent(datePickerResult, (String)value);
             return;
+        }
+        if (BrowserComponent.BROWSER_PROPERTY_FOLLOW_TARGET_BLANK.equals(key)) {
+            nativeInstance.setBrowserFollowTargetBlank(get(browserPeer), Boolean.TRUE.equals(value));
         }
     }
 
@@ -8516,6 +8513,7 @@ public class IOSImplementation extends CodenameOneImplementation {
      */
     public static void applicationWillResignActive() {
         minimized = true;
+        callInterruptionActive = true;
         if(instance.life != null) {
             instance.life.applicationWillResignActive();
         }
@@ -8686,6 +8684,7 @@ public class IOSImplementation extends CodenameOneImplementation {
      * here you can undo many of the changes made on entering the background.
      */
     public static void applicationDidBecomeActive() {
+        callInterruptionActive = false;
         ArrayList<Runnable> callbacks = null;
         synchronized(instance.onActiveListeners) {
             instance.isActive = true;
@@ -9536,4 +9535,3 @@ public class IOSImplementation extends CodenameOneImplementation {
         IOSNative.announceForAccessibility(text);
     }
 }
-

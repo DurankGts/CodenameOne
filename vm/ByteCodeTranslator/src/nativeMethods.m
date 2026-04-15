@@ -1,8 +1,15 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "cn1_globals.h"
 #include <stdint.h>
 #include <ctype.h>
 #include <assert.h>
 #include <errno.h>
+#include <time.h>
+#include <stdlib.h>
+#include <string.h>
 
 #ifndef MAX
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
@@ -27,6 +34,7 @@
 #include "java_lang_NullPointerException.h"
 #include "java_lang_Class.h"
 #include "java_lang_System.h"
+#include "java_lang_StackOverflowError.h"
 
 #if defined(__APPLE__) && defined(__OBJC__)
 #import <Foundation/Foundation.h>
@@ -503,7 +511,7 @@ JAVA_OBJECT java_lang_String_charsToBytes___char_1ARRAY_char_1ARRAY_R_byte_1ARRA
 
 JAVA_VOID java_lang_Throwable_fillInStack__(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT  __cn1ThisObject) {
     if (get_field_java_lang_Throwable_stack(__cn1ThisObject) == JAVA_NULL) {
-        set_field_java_lang_Throwable_stack(threadStateData, java_lang_Throwable_getStack___R_java_lang_String(threadStateData, __cn1ThisObject), __cn1ThisObject);
+        set_field_java_lang_Throwable_stack(java_lang_Throwable_getStack___R_java_lang_String(threadStateData, __cn1ThisObject), __cn1ThisObject);
     }
     
 }
@@ -1550,9 +1558,12 @@ void initMethodStack(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT __cn1ThisObject, int
         THROW_NULL_POINTER_EXCEPTION();
     }
 #endif
+    if (threadStateData->callStackOffset >= CN1_STACK_OVERFLOW_CALL_DEPTH_LIMIT - 1) {
+        throwException(threadStateData, __NEW_INSTANCE_java_lang_StackOverflowError(threadStateData));
+        return;
+    }
     memset(&threadStateData->threadObjectStack[threadStateData->threadObjectStackOffset], 0, sizeof(struct elementStruct) * (localsStackSize + stackSize));
     threadStateData->threadObjectStackOffset += localsStackSize + stackSize;
-    CODENAME_ONE_ASSERT(threadStateData->callStackOffset < CN1_MAX_STACK_CALL_DEPTH - 1);
     threadStateData->callStackClass[threadStateData->callStackOffset] = classNameId;
     threadStateData->callStackMethod[threadStateData->callStackOffset] = methodNameId;
     threadStateData->callStackOffset++;
@@ -1625,6 +1636,169 @@ JAVA_OBJECT java_util_Locale_getOSLanguage___R_java_lang_String(CODENAME_ONE_THR
     return newStringFromCString(threadStateData, "en");
 #endif
 }
+
+#if !defined(__APPLE__) || !defined(__OBJC__)
+static char* cn1_strdup(const char* value) {
+    if (value == NULL) {
+        return NULL;
+    }
+    size_t len = strlen(value);
+    char* out = (char*)malloc(len + 1);
+    if (out != NULL) {
+        memcpy(out, value, len + 1);
+    }
+    return out;
+}
+
+static pthread_mutex_t cn1_timezone_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void cn1_with_timezone(const char* zoneId, void (*func)(void*), void* ctx) {
+    pthread_mutex_lock(&cn1_timezone_mutex);
+    char* original = cn1_strdup(getenv("TZ"));
+    if (zoneId != NULL && strlen(zoneId) > 0) {
+        setenv("TZ", zoneId, 1);
+    } else {
+        unsetenv("TZ");
+    }
+    tzset();
+    func(ctx);
+    if (original != NULL) {
+        setenv("TZ", original, 1);
+        free(original);
+    } else {
+        unsetenv("TZ");
+    }
+    tzset();
+    pthread_mutex_unlock(&cn1_timezone_mutex);
+}
+
+typedef struct {
+    int year;
+    int month;
+    int day;
+    int millis;
+    int result;
+} cn1_timezone_offset_ctx;
+
+static void cn1_compute_timezone_offset(void* data) {
+    cn1_timezone_offset_ctx* ctx = (cn1_timezone_offset_ctx*)data;
+    struct tm utc;
+    memset(&utc, 0, sizeof(utc));
+    utc.tm_year = ctx->year - 1900;
+    utc.tm_mon = ctx->month - 1;
+    utc.tm_mday = ctx->day;
+    utc.tm_hour = ctx->millis / 3600000;
+    utc.tm_min = (ctx->millis / 60000) % 60;
+    utc.tm_sec = (ctx->millis / 1000) % 60;
+    utc.tm_isdst = 0;
+    time_t epoch = timegm(&utc);
+    struct tm resolved;
+    localtime_r(&epoch, &resolved);
+#if defined(__APPLE__) || defined(__USE_MISC)
+    ctx->result = (int)resolved.tm_gmtoff * 1000;
+#else
+    ctx->result = 0;
+#endif
+}
+
+typedef struct {
+    long long millis;
+    int result;
+} cn1_timezone_dst_ctx;
+
+static void cn1_compute_timezone_dst(void* data) {
+    cn1_timezone_dst_ctx* ctx = (cn1_timezone_dst_ctx*)data;
+    time_t epoch = (time_t)(ctx->millis / 1000LL);
+    struct tm resolved;
+    localtime_r(&epoch, &resolved);
+    ctx->result = resolved.tm_isdst > 0 ? JAVA_TRUE : JAVA_FALSE;
+}
+
+typedef struct {
+    int januaryOffset;
+    int julyOffset;
+} cn1_timezone_raw_ctx;
+
+static void cn1_compute_timezone_raw(void* data) {
+    cn1_timezone_raw_ctx* ctx = (cn1_timezone_raw_ctx*)data;
+    time_t now = time(NULL);
+    struct tm sample;
+    localtime_r(&now, &sample);
+    sample.tm_year = 124;
+    sample.tm_mon = 0;
+    sample.tm_mday = 1;
+    sample.tm_hour = 12;
+    sample.tm_min = 0;
+    sample.tm_sec = 0;
+    sample.tm_isdst = -1;
+    time_t january = mktime(&sample);
+    localtime_r(&january, &sample);
+#if defined(__APPLE__) || defined(__USE_MISC)
+    ctx->januaryOffset = (int)sample.tm_gmtoff * 1000;
+#else
+    ctx->januaryOffset = 0;
+#endif
+    sample.tm_year = 124;
+    sample.tm_mon = 6;
+    sample.tm_mday = 1;
+    sample.tm_hour = 12;
+    sample.tm_min = 0;
+    sample.tm_sec = 0;
+    sample.tm_isdst = -1;
+    time_t july = mktime(&sample);
+    localtime_r(&july, &sample);
+#if defined(__APPLE__) || defined(__USE_MISC)
+    ctx->julyOffset = (int)sample.tm_gmtoff * 1000;
+#else
+    ctx->julyOffset = 0;
+#endif
+}
+#endif
+
+#if !defined(__APPLE__) || !defined(__OBJC__)
+JAVA_OBJECT java_util_TimeZone_getTimezoneId___R_java_lang_String(CODENAME_ONE_THREAD_STATE) {
+    time_t now = time(NULL);
+    struct tm localTm;
+    localtime_r(&now, &localTm);
+#if defined(__APPLE__) || defined(__USE_MISC)
+    if (localTm.tm_zone != NULL) {
+        return newStringFromCString(threadStateData, localTm.tm_zone);
+    }
+#endif
+    const char* tz = getenv("TZ");
+    return newStringFromCString(threadStateData, tz == NULL ? "GMT" : tz);
+}
+
+JAVA_INT java_util_TimeZone_getTimezoneOffset___java_lang_String_int_int_int_int_R_int(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT name, JAVA_INT year, JAVA_INT month, JAVA_INT day, JAVA_INT timeOfDayMillis) {
+    const char* buffer = stringToUTF8(threadStateData, name);
+    cn1_timezone_offset_ctx ctx;
+    ctx.year = year;
+    ctx.month = month;
+    ctx.day = day;
+    ctx.millis = timeOfDayMillis;
+    ctx.result = 0;
+    cn1_with_timezone(buffer, cn1_compute_timezone_offset, &ctx);
+    return ctx.result;
+}
+
+JAVA_INT java_util_TimeZone_getTimezoneRawOffset___java_lang_String_R_int(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT name) {
+    const char* buffer = stringToUTF8(threadStateData, name);
+    cn1_timezone_raw_ctx ctx;
+    ctx.januaryOffset = 0;
+    ctx.julyOffset = 0;
+    cn1_with_timezone(buffer, cn1_compute_timezone_raw, &ctx);
+    return abs(ctx.januaryOffset) <= abs(ctx.julyOffset) ? ctx.januaryOffset : ctx.julyOffset;
+}
+
+JAVA_BOOLEAN java_util_TimeZone_isTimezoneDST___java_lang_String_long_R_boolean(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT name, JAVA_LONG millis) {
+    const char* buffer = stringToUTF8(threadStateData, name);
+    cn1_timezone_dst_ctx ctx;
+    ctx.millis = millis;
+    ctx.result = JAVA_FALSE;
+    cn1_with_timezone(buffer, cn1_compute_timezone_dst, &ctx);
+    return ctx.result;
+}
+#endif
 
 /*JAVA_OBJECT java_util_Locale_getOSCountry___R_java_lang_String(CODENAME_ONE_THREAD_STATE) {
 }*/
@@ -1781,7 +1955,7 @@ JAVA_OBJECT java_lang_StringBuilder_append___char_R_java_lang_StringBuilder(CODE
     }
     JAVA_ARRAY_CHAR* d = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)value)->data;
     d[len] = __cn1Arg1;
-    set_field_java_lang_StringBuilder_count(threadStateData, len+1, __cn1ThisObject);
+    set_field_java_lang_StringBuilder_count(len+1, __cn1ThisObject);
     finishedNativeAllocations();
     return __cn1ThisObject;
 }
@@ -1847,155 +2021,45 @@ JAVA_OBJECT java_lang_String_format___java_lang_String_java_lang_Object_1ARRAY_R
     finishedNativeAllocations();
     return out;
 #else
-    // TODO: Implement stub
-    return format; // Stub
+    JAVA_OBJECT builder = __NEW_INSTANCE_java_lang_StringBuilder(threadStateData);
+    int formatLength = java_lang_String_length___R_int(threadStateData, format);
+    JAVA_ARRAY argsArray = (JAVA_ARRAY)args;
+    JAVA_ARRAY_OBJECT* values = argsArray == JAVA_NULL ? JAVA_NULL : (JAVA_ARRAY_OBJECT*)argsArray->data;
+    int valuesLength = argsArray == JAVA_NULL ? 0 : argsArray->length;
+    int argIndex = 0;
+
+    for (int i = 0; i < formatLength; i++) {
+        JAVA_CHAR ch = java_lang_String_charAt___int_R_char(threadStateData, format, i);
+        if (ch != '%' || i == formatLength - 1) {
+            java_lang_StringBuilder_append___char_R_java_lang_StringBuilder(threadStateData, builder, ch);
+            continue;
+        }
+
+        JAVA_CHAR token = java_lang_String_charAt___int_R_char(threadStateData, format, i + 1);
+        i++;
+        if (token == '%') {
+            java_lang_StringBuilder_append___char_R_java_lang_StringBuilder(threadStateData, builder, '%');
+            continue;
+        }
+
+        if (argIndex >= valuesLength || values == JAVA_NULL) {
+            java_lang_StringBuilder_append___char_R_java_lang_StringBuilder(threadStateData, builder, '%');
+            java_lang_StringBuilder_append___char_R_java_lang_StringBuilder(threadStateData, builder, token);
+            continue;
+        }
+
+        JAVA_OBJECT value = values[argIndex++];
+        JAVA_OBJECT valueText = java_lang_String_valueOf___java_lang_Object_R_java_lang_String(threadStateData, value);
+        if (token == 'c') {
+            int valueTextLength = java_lang_String_length___R_int(threadStateData, valueText);
+            if (valueTextLength > 0) {
+                JAVA_CHAR out = java_lang_String_charAt___int_R_char(threadStateData, valueText, 0);
+                java_lang_StringBuilder_append___char_R_java_lang_StringBuilder(threadStateData, builder, out);
+            }
+        } else {
+            java_lang_StringBuilder_append___java_lang_String_R_java_lang_StringBuilder(threadStateData, builder, valueText);
+        }
+    }
+    return java_lang_StringBuilder_toString___R_java_lang_String(threadStateData, builder);
 #endif
 }
-
-#ifndef __APPLE__
-
-// Additional Stubs for Linking
-
-struct clazz class_array1__JAVA_BOOLEAN = {0};
-struct clazz class_array1__JAVA_CHAR = {0};
-struct clazz class_array1__JAVA_BYTE = {0};
-struct clazz class_array1__JAVA_SHORT = {0};
-struct clazz class_array1__JAVA_INT = {0};
-struct clazz class_array1__JAVA_LONG = {0};
-struct clazz class_array1__JAVA_FLOAT = {0};
-struct clazz class_array1__JAVA_DOUBLE = {0};
-
-void gcMarkObject(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT obj, JAVA_BOOLEAN force) {} // TODO
-void gcMarkArrayObject(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT obj, JAVA_BOOLEAN force) {} // TODO
-void arrayFinalizerFunction(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array) {} // TODO
-
-void** initVtableForInterface() { return 0; }
-JAVA_OBJECT codenameOneGcMalloc(CODENAME_ONE_THREAD_STATE, int size, struct clazz* parent) {
-    JAVA_OBJECT o = (JAVA_OBJECT)calloc(1, size);
-    o->__codenameOneParentClsReference = parent;
-    return o;
-}
-void codenameOneGcFree(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT obj) { free(obj); }
-
-void throwException(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT exceptionArg) {
-    if (exceptionArg != JAVA_NULL && exceptionArg->__codenameOneParentClsReference != 0) {
-        printf("Exception thrown: %s\n", exceptionArg->__codenameOneParentClsReference->clsName);
-    } else {
-        printf("Exception thrown: %p\n", exceptionArg);
-    }
-    exit(1);
-}
-JAVA_INT throwException_R_int(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT exceptionArg) {
-    throwException(threadStateData, exceptionArg);
-    return 0;
-}
-JAVA_BOOLEAN throwException_R_boolean(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT exceptionArg) {
-    throwException(threadStateData, exceptionArg);
-    return 0;
-}
-
-void throwArrayIndexOutOfBoundsException(CODENAME_ONE_THREAD_STATE, int index) {
-    printf("ArrayIndexOutOfBoundsException: %d\n", index);
-    exit(1);
-}
-JAVA_BOOLEAN throwArrayIndexOutOfBoundsException_R_boolean(CODENAME_ONE_THREAD_STATE, int index) {
-    throwArrayIndexOutOfBoundsException(threadStateData, index);
-    return 0;
-}
-
-int byteSizeForArray(struct clazz* cls) {
-    return sizeof(JAVA_OBJECT); // Stub
-}
-
-JAVA_OBJECT allocArray(CODENAME_ONE_THREAD_STATE, int length, struct clazz* type, int primitiveSize, int dim) {
-    int size = sizeof(struct JavaArrayPrototype) + (length * primitiveSize);
-    JAVA_ARRAY arr = (JAVA_ARRAY)calloc(1, size);
-    arr->__codenameOneParentClsReference = type;
-    arr->length = length;
-    arr->data = (char*)arr + sizeof(struct JavaArrayPrototype);
-    return (JAVA_OBJECT)arr;
-}
-
-JAVA_OBJECT __NEW_ARRAY_JAVA_CHAR(CODENAME_ONE_THREAD_STATE, JAVA_INT size) {
-    return allocArray(threadStateData, size, &class_array1__JAVA_CHAR, sizeof(JAVA_CHAR), 1);
-}
-JAVA_OBJECT __NEW_ARRAY_JAVA_BYTE(CODENAME_ONE_THREAD_STATE, JAVA_INT size) {
-    return allocArray(threadStateData, size, &class_array1__JAVA_BYTE, sizeof(JAVA_BYTE), 1);
-}
-JAVA_OBJECT __NEW_ARRAY_JAVA_INT(CODENAME_ONE_THREAD_STATE, JAVA_INT size) {
-    return allocArray(threadStateData, size, &class_array1__JAVA_INT, sizeof(JAVA_INT), 1);
-}
-JAVA_OBJECT __NEW_ARRAY_JAVA_LONG(CODENAME_ONE_THREAD_STATE, JAVA_INT size) {
-    return allocArray(threadStateData, size, &class_array1__JAVA_LONG, sizeof(JAVA_LONG), 1);
-}
-JAVA_OBJECT __NEW_ARRAY_JAVA_DOUBLE(CODENAME_ONE_THREAD_STATE, JAVA_INT size) {
-    return allocArray(threadStateData, size, &class_array1__JAVA_DOUBLE, sizeof(JAVA_DOUBLE), 1);
-}
-JAVA_OBJECT __NEW_ARRAY_JAVA_FLOAT(CODENAME_ONE_THREAD_STATE, JAVA_INT size) {
-    return allocArray(threadStateData, size, &class_array1__JAVA_FLOAT, sizeof(JAVA_FLOAT), 1);
-}
-JAVA_OBJECT __NEW_ARRAY_JAVA_SHORT(CODENAME_ONE_THREAD_STATE, JAVA_INT size) {
-    return allocArray(threadStateData, size, &class_array1__JAVA_SHORT, sizeof(JAVA_SHORT), 1);
-}
-JAVA_OBJECT __NEW_ARRAY_JAVA_BOOLEAN(CODENAME_ONE_THREAD_STATE, JAVA_INT size) {
-    return allocArray(threadStateData, size, &class_array1__JAVA_BOOLEAN, sizeof(JAVA_BOOLEAN), 1);
-}
-
-JAVA_BOOLEAN removeObjectFromHeapCollection(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT o) { return JAVA_FALSE; }
-JAVA_OBJECT* constantPoolObjects = 0;
-
-int instanceofFunction(int sourceClass, int destId) { return 1; }
-
-void flushReleaseQueue() {} // TODO
-void codenameOneGCMark() {} // TODO
-void codenameOneGCSweep() {} // TODO
-JAVA_BOOLEAN lowMemoryMode = JAVA_FALSE;
-void collectThreadResources(struct ThreadLocalData *current) {} // TODO
-
-struct elementStruct* pop(struct elementStruct**sp) {
-    (*sp)--;
-    return *sp;
-}
-void popMany(CODENAME_ONE_THREAD_STATE, int count, struct elementStruct**sp) {
-    (*sp) -= count;
-}
-
-extern JAVA_OBJECT __NEW_INSTANCE_java_lang_String(CODENAME_ONE_THREAD_STATE);
-
-JAVA_OBJECT newStringFromCString(CODENAME_ONE_THREAD_STATE, const char *str) {
-    if (str == NULL) return JAVA_NULL;
-    int len = strlen(str);
-    JAVA_OBJECT charArr = __NEW_ARRAY_JAVA_CHAR(threadStateData, len);
-    JAVA_ARRAY_CHAR* chars = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)charArr)->data;
-    for(int i=0; i<len; i++) chars[i] = str[i];
-
-    JAVA_OBJECT s = __NEW_INSTANCE_java_lang_String(threadStateData);
-    struct obj__java_lang_String* stringObj = (struct obj__java_lang_String*)s;
-    stringObj->java_lang_String_value = charArr;
-    stringObj->java_lang_String_count = len;
-    stringObj->java_lang_String_offset = 0;
-    return s;
-}
-
-const char* stringToUTF8(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT str) {
-    if (str == JAVA_NULL) return NULL;
-    struct obj__java_lang_String* s = (struct obj__java_lang_String*)str;
-    JAVA_ARRAY_CHAR* chars = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)s->java_lang_String_value)->data;
-    int len = s->java_lang_String_count;
-    int offset = s->java_lang_String_offset;
-    char* buf = (char*)malloc(len + 1);
-    for(int i=0; i<len; i++) {
-        buf[i] = (char)chars[offset + i];
-    }
-    buf[len] = 0;
-    return buf;
-}
-
-void initConstantPool() {
-    // Allocate dummy pool to prevent segfaults, though contents will be null
-    constantPoolObjects = calloc(65536, sizeof(void*));
-}
-pthread_key_t recursionKey;
-int currentGcMarkValue = 0;
-
-#endif

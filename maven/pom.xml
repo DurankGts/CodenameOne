@@ -168,21 +168,21 @@
             <dependency>
                 <groupId>org.ow2.asm</groupId>
                 <artifactId>asm</artifactId>
-                <version>9.1</version>
+                <version>9.8</version>
             </dependency>
 
             <!-- https://mvnrepository.com/artifact/org.ow2.asm/asm-util -->
             <dependency>
                 <groupId>org.ow2.asm</groupId>
                 <artifactId>asm-util</artifactId>
-                <version>9.1</version>
+                <version>9.8</version>
             </dependency>
 
             <!-- https://mvnrepository.com/artifact/org.ow2.asm/asm-commons -->
             <dependency>
                 <groupId>org.ow2.asm</groupId>
                 <artifactId>asm-commons</artifactId>
-                <version>9.1</version>
+                <version>9.8</version>
             </dependency>
 
             <!-- https://mvnrepository.com/artifact/org.apache.commons/commons-vfs2 -->
@@ -339,6 +339,19 @@
                         <show>protected</show>
                         <failOnError>false</failOnError>
                         <doclint>none</doclint>
+                        <top><![CDATA[
+<script src="{@docRoot}/script-files/highlight.min.js"></script>
+<script src="{@docRoot}/script-files/javadoc-highlight-init.js"></script>
+                        ]]></top>
+                        <additionalOptions>
+                            <additionalOption>--allow-script-in-comments</additionalOption>
+                            <additionalOption>--add-stylesheet</additionalOption>
+                            <additionalOption>${maven.multiModuleProjectDirectory}/javadoc-resources/highlight.css</additionalOption>
+                            <additionalOption>--add-script</additionalOption>
+                            <additionalOption>${maven.multiModuleProjectDirectory}/javadoc-resources/highlight.min.js</additionalOption>
+                            <additionalOption>--add-script</additionalOption>
+                            <additionalOption>${maven.multiModuleProjectDirectory}/javadoc-resources/javadoc-highlight-init.js</additionalOption>
+                        </additionalOptions>
                     </configuration>
                 </plugin>
                 <plugin>
@@ -407,8 +420,18 @@
                 <configuration>
                     <doclint>none</doclint>
                     <failOnError>false</failOnError>
+                    <top><![CDATA[
+<script src="{@docRoot}/script-files/highlight.min.js"></script>
+<script src="{@docRoot}/script-files/javadoc-highlight-init.js"></script>
+                    ]]></top>
                     <additionalOptions>
                         <additionalOption>--allow-script-in-comments</additionalOption>
+                        <additionalOption>--add-stylesheet</additionalOption>
+                        <additionalOption>${maven.multiModuleProjectDirectory}/javadoc-resources/highlight.css</additionalOption>
+                        <additionalOption>--add-script</additionalOption>
+                        <additionalOption>${maven.multiModuleProjectDirectory}/javadoc-resources/highlight.min.js</additionalOption>
+                        <additionalOption>--add-script</additionalOption>
+                        <additionalOption>${maven.multiModuleProjectDirectory}/javadoc-resources/javadoc-highlight-init.js</additionalOption>
                     </additionalOptions>
                 </configuration>
             </plugin>
@@ -549,11 +572,22 @@
                                         <mkdir dir="${user.home}/.codenameone"/>
                                         <mkdir dir="${project.build.directory}/generated-sources/project" />
                                         <mkdir dir="${project.build.directory}/generated-sources/project/lib" />
-                                        <get src="https://www.codenameone.com/files/updates/UpdateCodenameOne.jar" dest="${user.home}/.codenameone/UpdateCodenameOne.jar" skipexisting="true"/>
+                                        <get src="https://www.codenameone.com/files/updates/UpdateCodenameOne.jar"
+                                             dest="${user.home}/UpdateCodenameOne.jar"
+                                             skipexisting="true"
+                                             ignoreerrors="true"/>
+
+                                        <get src="https://github.com/codenameone/CodenameOne/raw/refs/heads/master/maven/UpdateCodenameOne.jar"
+                                             dest="${user.home}/UpdateCodenameOne.jar"
+                                             skipexisting="true"
+                                             ignoreerrors="false"/>
                                         <java fork="true" jar="${user.home}/.codenameone/UpdateCodenameOne.jar">
                                             <arg value="${project.build.directory}/generated-sources/project"/>
                                             <arg value="force" />
                                         </java>
+                                        <copy file="${maven.multiModuleProjectDirectory}/CodeNameOneBuildClient.jar"
+                                              tofile="${user.home}/.codenameone/CodeNameOneBuildClient.jar"
+                                              overwrite="true"/>
                                     </target>
                                 </configuration>
                             </execution>

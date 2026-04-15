@@ -30,17 +30,15 @@ import com.codename1.ui.events.ActionEvent;
 import java.io.IOException;
 import java.io.InputStream;
 
-/**
- * This is an Ad service implementation by InnerActive see:
- * http://console.inner-active.com/iamp/publisher/register?ref_id=affiliate_CodenameOne
- *
- * @author Chen
- */
+/// This is an Ad service implementation by InnerActive see:
+/// http://console.inner-active.com/iamp/publisher/register?ref_id=affiliate_CodenameOne
+///
+/// @author Chen
 public class InnerActive extends AdsService { // PMD Fix: UnusedPrivateField removed obsolete field
 
     private static final String protocolVersion = "Sm2m-1.5.3";
     private static boolean testAds = true;
-    private final String REQUEST_URL = "http://m2m1.inner-active.com/simpleM2M/clientRequestHtmlAd";
+    private static final String REQUEST_URL = "http://m2m1.inner-active.com/simpleM2M/clientRequestHtmlAd";
     //Distribution channel ID
     private int po = 559;
     private String os;
@@ -48,39 +46,31 @@ public class InnerActive extends AdsService { // PMD Fix: UnusedPrivateField rem
     private String hid;
     private boolean banner = true;
 
-    /**
-     * Empty constructor of the inner active ads service.
-     */
-    public InnerActive() {
-    }
-
     private static void addParam(ConnectionRequest req, String key, String val) {
         if (val != null && val.length() > 0) {
             req.addArgument(key, val);
         }
     }
 
-    /**
-     * If true and no ads exists the network will return house holds ads
-     *
-     * @param test
-     */
+    /// If true and no ads exists the network will return house holds ads
+    ///
+    /// #### Parameters
+    ///
+    /// - `test`
     public static void setTestAds(boolean test) {
         testAds = test;
     }
 
-    /**
-     * Sets this ads type, by default this a banner type.
-     *
-     * @param banner sets the ads to banners or text ads
-     */
+    /// Sets this ads type, by default this a banner type.
+    ///
+    /// #### Parameters
+    ///
+    /// - `banner`: sets the ads to banners or text ads
     public void setBanner(boolean banner) {
         this.banner = banner;
     }
 
-    /**
-     * initialize the ads service
-     */
+    /// initialize the ads service
     @Override
     public void initService(Ads ads) {
         this.os = Display.getInstance().getPlatformName();
@@ -157,42 +147,20 @@ public class InnerActive extends AdsService { // PMD Fix: UnusedPrivateField rem
         setDuplicateSupported(true);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public boolean equals(Object o) {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
+        if (!(o instanceof InnerActive)) {
             return false;
         }
-        if (!super.equals(o)) {
-            return false;
-        }
-
         InnerActive that = (InnerActive) o;
-
-        if (po != that.po) {
-            return false;
-        }
-        if (banner != that.banner) {
-            return false;
-        }
-        if (os != null ? !os.equals(that.os) : that.os != null) {
-            return false;
-        }
-        if (hid != null ? !hid.equals(that.hid) : that.hid != null) {
-            return false;
-        }
-
-        return true;
+        return super.equals(o) &&
+                po == that.po &&
+                banner == that.banner &&
+                (os == null ? that.os == null : os.equals(that.os)) &&
+                (hid == null ? that.hid == null : hid.equals(that.hid));
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public int hashCode() {
         int result = super.hashCode();
@@ -203,9 +171,7 @@ public class InnerActive extends AdsService { // PMD Fix: UnusedPrivateField rem
         return result;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     protected void readResponse(InputStream input) throws IOException {
         StringBuffer buf = new StringBuffer();

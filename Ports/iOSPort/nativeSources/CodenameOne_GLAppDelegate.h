@@ -21,6 +21,9 @@
  * need additional information or have any questions.
  */
 #import <UIKit/UIKit.h>
+#ifdef CN1_USE_UI_SCENE
+#import <UIKit/UIScene.h>
+#endif
 //#define CN1_INCLUDE_NOTIFICATIONS
 #ifdef CN1_INCLUDE_NOTIFICATIONS
 #import <UserNotifications/UserNotifications.h>
@@ -39,5 +42,18 @@
 @property (nonatomic, retain) IBOutlet UIWindow *window;
 
 @property (nonatomic, retain) IBOutlet CodenameOne_GLViewController *viewController;
+
+#ifdef CN1_USE_UI_SCENE
+- (void)cn1InstallRootViewControllerIntoWindow:(UIWindow *)window;
+- (void)cn1ApplicationWillResignActive;
+- (void)cn1ApplicationDidEnterBackground;
+- (void)cn1ApplicationWillEnterForeground;
+- (void)cn1ApplicationDidBecomeActive;
+- (BOOL)cn1ContinueUserActivity:(NSUserActivity *)userActivity;
+- (BOOL)cn1OpenURL:(UIApplication *)application
+               url:(NSURL *)url
+ sourceApplication:(NSString *)sourceApplication
+        annotation:(id)annotation;
+#endif
 
 @end

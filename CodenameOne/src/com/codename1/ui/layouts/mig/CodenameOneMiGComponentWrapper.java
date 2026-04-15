@@ -53,65 +53,55 @@ import com.codename1.ui.geom.Dimension;
 import com.codename1.ui.spinner.BaseSpinner;
 import com.codename1.ui.table.Table;
 
-/**
- *
- */
+///
 class CodenameOneMiGComponentWrapper implements ComponentWrapper {
-    /**
-     * Property to use in LAF settings and as JComponent client property
-     * to specify the visual padding.
-     * <p>
-     */
-    private static final String VISUAL_PADDING_PROPERTY = com.codename1.ui.layouts.mig.PlatformDefaults.VISUAL_PADDING_PROPERTY;
-    /**
-     * Cache.
-     */
+    /// Cache.
     //private final static IdentityHashMap<FontMetrics, Point.Float> FM_MAP = new IdentityHashMap<FontMetrics, Point.Float>(4);
     private final static Font SUBST_FONT = Font.getDefaultFont();
 
-    /** Debug color for component bounds outline.
-     */
+    /// Debug color for component bounds outline.
     //private static final Color DB_COMP_OUTLINE = new Color(0, 0, 200);
     private static boolean maxSet = false;
     private static boolean vp = true;
     private final Component c;
     private int compType = TYPE_UNSET;
+
     public CodenameOneMiGComponentWrapper(Component c) {
         this.c = c;
     }
 
-    /**
-     * @deprecated Java 1.4 is not supported anymore
-     */
+    /// #### Deprecated
+    ///
+    /// Java 1.4 is not supported anymore
     @Deprecated
     @SuppressWarnings("PMD.MethodNamingConventions")
     public static boolean isMaxSizeSetOn1_4() {
         return isMaxSizeSetOn14();
     }
 
-    /**
-     * Java 1.4 is not supported anymore.
-     *
-     * @return whether max size was set for legacy mode
-     */
-    public static boolean isMaxSizeSetOn14() {
-        return maxSet;
-    }
-
-    /**
-     * @deprecated Java 1.4 is not supported anymore
-     */
+    /// #### Deprecated
+    ///
+    /// Java 1.4 is not supported anymore
     @Deprecated
     @SuppressWarnings("PMD.MethodNamingConventions")
     public static void setMaxSizeSetOn1_4(boolean b) {
         setMaxSizeSetOn14(b);
     }
 
-    /**
-     * Java 1.4 is not supported anymore.
-     *
-     * @param b whether max size was set for legacy mode
-     */
+    /// Java 1.4 is not supported anymore.
+    ///
+    /// #### Returns
+    ///
+    /// whether max size was set for legacy mode
+    public static boolean isMaxSizeSetOn14() {
+        return maxSet;
+    }
+
+    /// Java 1.4 is not supported anymore.
+    ///
+    /// #### Parameters
+    ///
+    /// - `b`: whether max size was set for legacy mode
     public static void setMaxSizeSetOn14(boolean b) {
         maxSet = b;
     }
@@ -143,22 +133,23 @@ class CodenameOneMiGComponentWrapper implements ComponentWrapper {
     public final float getPixelUnitFactor(boolean isHor) {
         switch (PlatformDefaults.getLogicalPixelBase()) {
             case PlatformDefaults.BASE_FONT_SIZE:
-				/*Font font = c.getFont();
-				FontMetrics fm = c.getFontMetrics(font != null ? font : SUBST_FONT);
-				Point.Float p = FM_MAP.get(fm);
-				if (p == null) {
-					Rectangle2D r = fm.getStringBounds("X", c.getGraphics());
-					p = new Point.Float(((float) r.getWidth()) / 6f, ((float) r.getHeight()) / 13.27734375f);
-					FM_MAP.put(fm, p);
-				}
-				return isHor ? p.x : p.y;*/
+                /*Font font = c.getFont();
+                FontMetrics fm = c.getFontMetrics(font != null ? font : SUBST_FONT);
+                Point.Float p = FM_MAP.get(fm);
+                if (p == null) {
+                    Rectangle2D r = fm.getStringBounds("X", c.getGraphics());
+                    p = new Point.Float(((float) r.getWidth()) / 6f, ((float) r.getHeight()) / 13.27734375f);
+                    FM_MAP.put(fm, p);
+                }
+                return isHor ? p.x : p.y;*/
                 return isHor ? ((float) SUBST_FONT.charWidth('X')) / 6f : ((float) SUBST_FONT.getHeight() / 13.27734375f);
 
             case PlatformDefaults.BASE_SCALE_FACTOR:
 
                 Float s = isHor ? PlatformDefaults.getHorizontalScaleFactor() : PlatformDefaults.getVerticalScaleFactor();
-                if (s == null)
+                if (s == null) {
                     s = Float.valueOf(1.0f);
+                }
                 return s * (isHor ? getHorizontalScreenDPI() : getVerticalScreenDPI()) / (float) PlatformDefaults.getDefaultDPI();
 
             default:
@@ -292,37 +283,37 @@ class CodenameOneMiGComponentWrapper implements ComponentWrapper {
     @Override
     public final int[] getVisualPadding() {
         // TOOD, optimize this
-        int[] padding = new int[]{c.getStyle().getMarginTop(), c.getStyle().getMarginLeftNoRTL(),
+        return new int[]{c.getStyle().getMarginTop(), c.getStyle().getMarginLeftNoRTL(),
                 c.getStyle().getMarginBottom(), c.getStyle().getMarginRightNoRTL()};
-        return padding;
     }
 
     @Override
     public final void paintDebugOutline(boolean showVisualPadding) {
-		/*if (c.isShowing() == false)
-			return;
+        /*if (c.isShowing() == false)
+            return;
 
-		Graphics2D g = (Graphics2D) c.getGraphics();
-		if (g == null)
-			return;
+        Graphics2D g = (Graphics2D) c.getGraphics();
+        if (g == null)
+            return;
 
-		g.setPaint(DB_COMP_OUTLINE);
-		g.setStroke(new BasicStroke(1f, BasicStroke.CAP_SQUARE, BasicStroke.JOIN_MITER, 10f, new float[] {2f, 4f}, 0));
-		g.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
+        g.setPaint(DB_COMP_OUTLINE);
+        g.setStroke(new BasicStroke(1f, BasicStroke.CAP_SQUARE, BasicStroke.JOIN_MITER, 10f, new float[] {2f, 4f}, 0));
+        g.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
 
-		if (showVisualPadding && isVisualPaddingEnabled()) {
-			int[] padding = getVisualPadding();
-			if (padding != null) {
-				g.setColor(Color.GREEN);
-				g.drawRect(padding[1], padding[0], (getWidth() - 1) - (padding[1] + padding[3]), (getHeight() - 1) - (padding[0] + padding[2]));
-			}
-		}*/
+        if (showVisualPadding && isVisualPaddingEnabled()) {
+            int[] padding = getVisualPadding();
+            if (padding != null) {
+                g.setColor(Color.GREEN);
+                g.drawRect(padding[1], padding[0], (getWidth() - 1) - (padding[1] + padding[3]), (getHeight() - 1) - (padding[0] + padding[2]));
+            }
+        }*/
     }
 
     @Override
     public int getComponentType(boolean disregardScrollPane) {
-        if (compType == TYPE_UNSET)
-            compType = checkType(disregardScrollPane);
+        if (compType == TYPE_UNSET) {
+            compType = checkType();
+        }
 
         return compType;
     }
@@ -332,17 +323,19 @@ class CodenameOneMiGComponentWrapper implements ComponentWrapper {
         Dimension d = c.getPreferredSize();
         int hash = (d.getWidth() << 10) + (d.getHeight() << 15);
 
-        if (c.isVisible())
+        if (c.isVisible()) {
             hash += 1324511;
+        }
 
         String id = getLinkId();
-        if (id != null)
+        if (id != null) {
             hash += id.hashCode();
+        }
 
         return hash;
     }
 
-    private int checkType(boolean disregardScrollPane) {
+    private int checkType() {
         Component c = this.c;
 
         if (c instanceof TextField) {
@@ -382,8 +375,9 @@ class CodenameOneMiGComponentWrapper implements ComponentWrapper {
 
     @Override
     public final boolean equals(Object o) {
-        if (!(o instanceof ComponentWrapper))
+        if (!(o instanceof ComponentWrapper)) {
             return false;
+        }
 
         return c.equals(((ComponentWrapper) o).getComponent());
     }

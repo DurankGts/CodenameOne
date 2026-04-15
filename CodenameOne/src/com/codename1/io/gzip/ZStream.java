@@ -35,11 +35,11 @@ EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 package com.codename1.io.gzip;
 
-/**
- * ZStream
- *
- * @deprecated Not for public use in the future.
- */
+/// ZStream
+///
+/// #### Deprecated
+///
+/// Not for public use in the future.
 @Deprecated
 public class ZStream {
 
@@ -109,11 +109,11 @@ public class ZStream {
 
     public int inflateInit(int w, JZlib.WrapperType wrapperType) {
         boolean nowrap = false;
-        if (wrapperType == JZlib.W_NONE) {
+        if (wrapperType == JZlib.W_NONE) { //NOPMD CompareObjectsWithEquals
             nowrap = true;
-        } else if (wrapperType == JZlib.W_GZIP) {
+        } else if (wrapperType == JZlib.W_GZIP) { //NOPMD CompareObjectsWithEquals
             w += 16;
-        } else if (wrapperType == JZlib.W_ANY) {
+        } else if (wrapperType == JZlib.W_ANY) { //NOPMD CompareObjectsWithEquals
             w |= Inflate.INFLATE_ANY;
         }
         return inflateInit(w, nowrap);
@@ -125,32 +125,38 @@ public class ZStream {
     }
 
     public int inflate(int f) {
-        if (istate == null) return Z_STREAM_ERROR;
+        if (istate == null) {
+            return Z_STREAM_ERROR;
+        }
         return istate.inflate(f);
     }
 
     public int inflateEnd() {
-        if (istate == null) return Z_STREAM_ERROR;
-        int ret = istate.inflateEnd();
+        if (istate == null) {
+            return Z_STREAM_ERROR;
+        }
 //    istate = null;
-        return ret;
+        return istate.inflateEnd();
     }
 
     public int inflateSync() {
-        if (istate == null)
+        if (istate == null) {
             return Z_STREAM_ERROR;
+        }
         return istate.inflateSync();
     }
 
     public int inflateSyncPoint() {
-        if (istate == null)
+        if (istate == null) {
             return Z_STREAM_ERROR;
+        }
         return istate.inflateSyncPoint();
     }
 
     public int inflateSetDictionary(byte[] dictionary, int dictLength) {
-        if (istate == null)
+        if (istate == null) {
             return Z_STREAM_ERROR;
+        }
         return istate.inflateSetDictionary(dictionary, dictLength);
     }
 
@@ -174,11 +180,11 @@ public class ZStream {
         if (bits < 9 || bits > 15) {
             return Z_STREAM_ERROR;
         }
-        if (wrapperType == JZlib.W_NONE) {
+        if (wrapperType == JZlib.W_NONE) { //NOPMD CompareObjectsWithEquals
             bits *= -1;
-        } else if (wrapperType == JZlib.W_GZIP) {
+        } else if (wrapperType == JZlib.W_GZIP) { //NOPMD CompareObjectsWithEquals
             bits += 16;
-        } else if (wrapperType == JZlib.W_ANY) {
+        } else if (wrapperType == JZlib.W_ANY) { //NOPMD CompareObjectsWithEquals
             return Z_STREAM_ERROR;
         }
         return this.deflateInit(level, bits, memlevel);
@@ -202,20 +208,25 @@ public class ZStream {
     }
 
     public int deflateEnd() {
-        if (dstate == null) return Z_STREAM_ERROR;
+        if (dstate == null) {
+            return Z_STREAM_ERROR;
+        }
         int ret = dstate.deflateEnd();
         dstate = null;
         return ret;
     }
 
     public int deflateParams(int level, int strategy) {
-        if (dstate == null) return Z_STREAM_ERROR;
+        if (dstate == null) {
+            return Z_STREAM_ERROR;
+        }
         return dstate.deflateParams(level, strategy);
     }
 
     public int deflateSetDictionary(byte[] dictionary, int dictLength) {
-        if (dstate == null)
+        if (dstate == null) {
             return Z_STREAM_ERROR;
+        }
         return dstate.deflateSetDictionary(dictionary, dictLength);
     }
 
@@ -226,8 +237,12 @@ public class ZStream {
     void flushPending() {
         int len = dstate.pending;
 
-        if (len > availOut) len = availOut;
-        if (len == 0) return;
+        if (len > availOut) {
+            len = availOut;
+        }
+        if (len == 0) {
+            return;
+        }
 
         System.arraycopy(dstate.pendingBuf, dstate.pendingOut,
                 nextOut, nextOutIndex, len);
@@ -250,8 +265,12 @@ public class ZStream {
     int readBuf(byte[] buf, int start, int size) {
         int len = availIn;
 
-        if (len > size) len = size;
-        if (len == 0) return 0;
+        if (len > size) {
+            len = size;
+        }
+        if (len == 0) {
+            return 0;
+        }
 
         availIn -= len;
 
@@ -293,7 +312,9 @@ public class ZStream {
     }
 
     public void setInput(byte[] buf, int off, int len, boolean append) {
-        if (len <= 0 && append && nextIn != null) return;
+        if (len <= 0 && append && nextIn != null) {
+            return;
+        }
 
         if (availIn > 0 && append) {
             byte[] tmp = new byte[availIn + len];
@@ -370,10 +391,8 @@ public class ZStream {
         return msg;
     }
 
-    /**
-     * Those methods are expected to be override by Inflater and Deflater.
-     * In the future, they will become abstract methods.
-     */
+    /// Those methods are expected to be override by Inflater and Deflater.
+    /// In the future, they will become abstract methods.
     public int end() {
         return Z_OK;
     }

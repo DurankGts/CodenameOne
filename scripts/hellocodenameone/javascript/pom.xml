@@ -14,8 +14,8 @@
   
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <maven.compiler.source>1.8</maven.compiler.source>
-    <maven.compiler.target>1.8</maven.compiler.target>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
     <codename1.platform>javascript</codename1.platform>
       <codename1.projectPlatform>javascript</codename1.projectPlatform>
       <codename1.defaultBuildTarget>javascript</codename1.defaultBuildTarget>
@@ -30,6 +30,17 @@
             </resource>
         </resources>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.1</version>
+                <executions>
+                    <execution>
+                        <id>default-jar</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>com.codenameone</groupId>
                 <artifactId>codenameone-maven-plugin</artifactId>

@@ -50,6 +50,18 @@ public class Field extends Instruction implements AssignableExpression {
         char c = desc.charAt(0);
         return c == '[' || c == 'L';
     }
+
+    public String getOwner() {
+        return owner;
+    }
+
+    public String getFieldName() {
+        return name;
+    }
+
+    public String getDesc() {
+        return desc;
+    }
     
     @Override
     public void addDependencies(List<String> dependencyList) {
@@ -73,17 +85,18 @@ public class Field extends Instruction implements AssignableExpression {
     }
 
     public String setFieldFromThis(int arg) {
+        // Instance field setters only need value/target operands.
         // special case for this
         if(arg == 0) {
             return "    set_field_" + owner.replace('/', '_').replace('$', '_') + 
-                    "_" + name + "(threadStateData, __cn1ThisObject, __cn1ThisObject);\n";
+                    "_" + name + "(__cn1ThisObject, __cn1ThisObject);\n";
         }
         if(isObject()) {
             return "    set_field_" + owner.replace('/', '_').replace('$', '_') + 
-                    "_" + name + "(threadStateData, __cn1Arg" + arg + ", __cn1ThisObject);\n";
+                    "_" + name + "(__cn1Arg" + arg + ", __cn1ThisObject);\n";
         }
         return "    set_field_" + owner.replace('/', '_').replace('$', '_') + 
-                "_" + name + "(threadStateData, __cn1Arg" + arg + ", __cn1ThisObject);\n";        
+                "_" + name + "(__cn1Arg" + arg + ", __cn1ThisObject);\n";        
     }
 
     
@@ -133,7 +146,7 @@ public class Field extends Instruction implements AssignableExpression {
                 b.append(owner.replace('/', '_').replace('$', '_'));
                 b.append("_");
                 b.append(name.replace('/', '_').replace('$', '_'));
-                b.append("(threadStateData)");
+                b.append("()");
             } else {
                 
                 b.append("get_field_");
@@ -214,7 +227,7 @@ public class Field extends Instruction implements AssignableExpression {
                 b.append(owner.replace('/', '_').replace('$', '_'));
                 b.append("_");
                 b.append(name.replace('/', '_').replace('$', '_'));
-                b.append("(threadStateData));\n");
+                b.append("());\n");
                 break;
             case Opcodes.PUTSTATIC: {
                 //b.append("SAFE_RETAIN(1);\n    ");
@@ -222,7 +235,11 @@ public class Field extends Instruction implements AssignableExpression {
                 b.append(owner.replace('/', '_').replace('$', '_'));
                 b.append("_");
                 b.append(name.replace('/', '_').replace('$', '_'));
-                b.append("(threadStateData, ");
+                if (isObject()) {
+                    b.append("(threadStateData, ");
+                } else {
+                    b.append("(");
+                }
                 StringBuilder sb2 = new StringBuilder();
                 StringBuilder sb3 = new StringBuilder();
                 if (valueOp != null && valueOp instanceof AssignableExpression && ((AssignableExpression)valueOp).assignTo(null, sb2)) {
@@ -303,7 +320,7 @@ public class Field extends Instruction implements AssignableExpression {
                 b.append(owner.replace('/', '_').replace('$', '_'));
                 b.append("_");
                 b.append(name);
-                b.append("(threadStateData, ");
+                b.append("(");
                 
                 
                 

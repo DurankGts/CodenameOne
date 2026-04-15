@@ -38,11 +38,9 @@ import java.io.InputStreamReader;
 import java.util.Hashtable;
 import java.util.Vector;
 
-/**
- * Invokes the Facebook REST API documented here http://developers.facebook.com/docs/guides/mobile/
- *
- * @author Shai Almog
- */
+/// Invokes the Facebook REST API documented here http://developers.facebook.com/docs/guides/mobile/
+///
+/// @author Shai Almog
 class FacebookRESTService extends ConnectionRequest implements JSONParseCallback {
 
     // PMD Fix (UnusedPrivateField): Removed redundant token storage; the access token is forwarded directly via request arguments.
@@ -61,8 +59,8 @@ class FacebookRESTService extends ConnectionRequest implements JSONParseCallback
     public static String EVENTS = "events";
     public static String NOTES = "notes";
     private final Hashtable entry = new Hashtable();
-    private Hashtable currentData = entry;
     private final Vector stack = new Vector();
+    private Hashtable currentData = entry;
     private String connectionType = "";
     private DefaultListModel responseDestination;
     private int responseOffset = -1;
@@ -113,17 +111,22 @@ class FacebookRESTService extends ConnectionRequest implements JSONParseCallback
     @Override
     protected void readResponse(InputStream input) throws IOException {
         //BufferedInputStream i = new BufferedInputStream(new InputStreamReader(input, ));
-        BufferedInputStream i;
+        BufferedInputStream i; //NOPMD CloseResource
         if (input instanceof BufferedInputStream) {
             i = (BufferedInputStream) input;
         } else {
             i = new BufferedInputStream(input);
         }
         i.setYield(-1);
-        InputStreamReader reader = new InputStreamReader(i, "UTF-8");
-        JSONParser.parse(reader, this);
-        Util.cleanup(reader);
-        if (stack.size() > 0) {
+        InputStreamReader reader = null; //NOPMD CloseResource
+        try {
+            reader = new InputStreamReader(i, "UTF-8");
+            JSONParser.parse(reader, this);
+        } finally {
+            Util.cleanup(reader);
+            Util.cleanup(i);
+        }
+        if (!stack.isEmpty()) {
             fireResponseListener(new NetworkEvent(this, stack.elementAt(0)));
         }
     }
@@ -134,7 +137,7 @@ class FacebookRESTService extends ConnectionRequest implements JSONParseCallback
             return;
         }
         Object node;
-        if (stack.size() == 0) {
+        if (stack.isEmpty()) {
             if (root == null) {
                 root = "entry";
             }
@@ -185,7 +188,7 @@ class FacebookRESTService extends ConnectionRequest implements JSONParseCallback
         if (stack.size() == 1) {
             return;
         } else {
-            if (stack.size() == 0) {
+            if (stack.isEmpty()) {
                 node = new Vector() {
 
                     @Override
@@ -281,9 +284,7 @@ class FacebookRESTService extends ConnectionRequest implements JSONParseCallback
         return -1;
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void longToken(long tok) {
     }
@@ -292,39 +293,22 @@ class FacebookRESTService extends ConnectionRequest implements JSONParseCallback
     public void booleanToken(boolean tok) {
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public boolean equals(Object o) {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
+        if (!(o instanceof FacebookRESTService)) {
             return false;
         }
-        if (!super.equals(o)) {
-            return false;
-        }
-
         FacebookRESTService that = (FacebookRESTService) o;
-
-        if (responseOffset != that.responseOffset) {
-            return false;
-        }
-        if (connectionType != null ? !connectionType.equals(that.connectionType) : that.connectionType != null) {
-            return false;
-        }
-        if (root != null ? !root.equals(that.root) : that.root != null) {
-            return false;
-        }
-
-        return true;
+        return super.equals(o) && responseOffset == that.responseOffset &&
+                entry.equals(that.entry) &&
+                stack.equals(that.stack) &&
+                (currentData == null ? that.currentData == null : currentData.equals(that.currentData)) &&
+                (connectionType == null ? that.connectionType == null : connectionType.equals(that.connectionType)) &&
+                (responseDestination == null ? that.responseDestination == null : responseDestination.equals(that.responseDestination)) &&
+                (root == null ? that.root == null : root.equals(that.root));
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public int hashCode() {
         int result = super.hashCode();

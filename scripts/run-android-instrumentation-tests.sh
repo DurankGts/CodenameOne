@@ -8,6 +8,24 @@ ra_log() { echo "[run-android-instrumentation-tests] $1"; }
 
 ensure_dir() { mkdir -p "$1" 2>/dev/null || true; }
 
+extract_base64_stats() {
+  local log_file="$1"
+  local out_file="$2"
+  [ -f "$log_file" ] || return 0
+
+  local lines
+  lines="$(grep 'CN1SS:STAT:' "$log_file" 2>/dev/null | sed -E 's/^.*CN1SS:STAT://')" || true
+  if [ -z "${lines:-}" ]; then
+    return 0
+  fi
+
+  : > "$out_file"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    echo "$line" >> "$out_file"
+  done <<< "$lines"
+}
+
 # CN1SS helpers are implemented in Java for easier maintenance
 # (Defaults for class names are provided by cn1ss.sh)
 
@@ -69,6 +87,34 @@ cn1ss_setup "$TARGET_JAVA_BIN" "$CN1SS_HELPER_SOURCE_DIR"
 [ -d "$GRADLE_PROJECT_DIR" ] || { ra_log "Gradle project directory not found: $GRADLE_PROJECT_DIR"; exit 4; }
 [ -x "$GRADLE_PROJECT_DIR/gradlew" ] || chmod +x "$GRADLE_PROJECT_DIR/gradlew"
 
+ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+if [ -z "$ANDROID_SDK_ROOT" ]; then
+  if [ -d "/usr/local/lib/android/sdk" ]; then ANDROID_SDK_ROOT="/usr/local/lib/android/sdk"
+  elif [ -d "$HOME/Android/Sdk" ]; then ANDROID_SDK_ROOT="$HOME/Android/Sdk"; fi
+fi
+if [ -n "$ANDROID_SDK_ROOT" ] && [ -d "$ANDROID_SDK_ROOT" ]; then
+  export ANDROID_SDK_ROOT ANDROID_HOME="$ANDROID_SDK_ROOT"
+  SDKMANAGER_BIN=""
+  if [ -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+    SDKMANAGER_BIN="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+  elif command -v sdkmanager >/dev/null 2>&1; then
+    SDKMANAGER_BIN="$(command -v sdkmanager)"
+  fi
+  if [ -n "$SDKMANAGER_BIN" ]; then
+    ra_log "Ensuring Android SDK platform/build-tools 36 are installed"
+    SDK_INSTALL_LOG="$ARTIFACTS_DIR/sdkmanager-android-36.log"
+    if yes | "$SDKMANAGER_BIN" "platforms;android-36" "build-tools;36.0.0" >"$SDK_INSTALL_LOG" 2>&1; then
+      ra_log "Android SDK 36 components installed"
+    else
+      ra_log "Warning: unable to install Android SDK 36 components (see $SDK_INSTALL_LOG)"
+    fi
+  else
+    ra_log "Warning: sdkmanager not found; cannot install API 36 components"
+  fi
+else
+  ra_log "Warning: Android SDK root not found; cannot install API 36 components"
+fi
+
 # ---- Prepare app + emulator state -----------------------------------------
 MANIFEST="$GRADLE_PROJECT_DIR/app/src/main/AndroidManifest.xml"
 if [ ! -f "$MANIFEST" ]; then
@@ -112,14 +158,24 @@ LOGCAT_PID=$!
 sleep 2
 
 GRADLEW="./gradlew"
-GRADLE_CMD=("$GRADLEW" --stacktrace --info --no-daemon connectedDebugAndroidTest)
+GRADLE_CMD=("$GRADLEW" --stacktrace --info --warning-mode all --no-daemon connectedDebugAndroidTest)
+GRADLE_LOG="$ARTIFACTS_DIR/connectedDebugAndroidTest-gradle.log"
+ANDROID_TEST_REPORT_DIR="$GRADLE_PROJECT_DIR/app/build/reports/androidTests/connected"
+ANDROID_TEST_REPORT_DEST="$ARTIFACTS_DIR/android-test-report"
 
 ra_log "Executing connectedDebugAndroidTest via Gradle"
 if ! (
   cd "scripts/hellocodenameone/android/target/hellocodenameone-android-1.0-SNAPSHOT-android-source"
-  JAVA_HOME="${JDK_HOME:-$JAVA17_HOME}" "${GRADLE_CMD[@]}"
+  JAVA_HOME="${JDK_HOME:-$JAVA17_HOME}" "${GRADLE_CMD[@]}" 2>&1 | tee "$GRADLE_LOG"
 ); then
-  ra_log "FATAL: connectedDebugAndroidTest failed"
+  if [ -d "$ANDROID_TEST_REPORT_DIR" ]; then
+    rm -rf "$ANDROID_TEST_REPORT_DEST"
+    cp -R "$ANDROID_TEST_REPORT_DIR" "$ANDROID_TEST_REPORT_DEST"
+    ra_log "Saved Android test report to $ANDROID_TEST_REPORT_DEST"
+  else
+    ra_log "Android test report directory not found at $ANDROID_TEST_REPORT_DIR"
+  fi
+  ra_log "FATAL: connectedDebugAndroidTest failed (see $GRADLE_LOG)"
   exit 10
 fi
 
@@ -196,6 +252,7 @@ ensure_dir "$SCREENSHOT_PREVIEW_DIR"
 
 cn1ss_print_log "$TEST_LOG"
 
+declare -a FAILED_TESTS=()
 for test in "${TEST_NAMES[@]}"; do
   dest="$SCREENSHOT_TMP_DIR/${test}.png"
   if source_label="$(cn1ss_decode_test_png "$test" "$dest" "${CN1SS_SOURCES[@]}")"; then
@@ -210,7 +267,8 @@ for test in "${TEST_NAMES[@]}"; do
       rm -f "$preview_dest" 2>/dev/null || true
     fi
   else
-    ra_log "FATAL: Failed to extract/decode CN1SS payload for test '$test'"
+    ra_log "ERROR: Failed to extract/decode CN1SS payload for test '$test'"
+    FAILED_TESTS+=("$test")
     RAW_B64_OUT="$SCREENSHOT_TMP_DIR/${test}.raw.b64"
     if cn1ss_extract_base64 "$TEST_LOG" "$test" > "$RAW_B64_OUT" 2>/dev/null; then
       if [ -s "$RAW_B64_OUT" ]; then
@@ -218,7 +276,7 @@ for test in "${TEST_NAMES[@]}"; do
         ra_log "Partial base64 saved at: $RAW_B64_OUT"
       fi
     fi
-    exit 12
+    continue
   fi
 done
 
@@ -234,6 +292,12 @@ done
 COMPARE_JSON="$SCREENSHOT_TMP_DIR/screenshot-compare.json"
 SUMMARY_FILE="$SCREENSHOT_TMP_DIR/screenshot-summary.txt"
 COMMENT_FILE="$SCREENSHOT_TMP_DIR/screenshot-comment.md"
+
+BASE64_STATS_FILE="$ARTIFACTS_DIR/base64-performance-stats.txt"
+extract_base64_stats "$TEST_LOG" "$BASE64_STATS_FILE"
+if [ -s "$BASE64_STATS_FILE" ]; then
+  ra_log "Base64 benchmark stats captured at $BASE64_STATS_FILE"
+fi
 
 export CN1SS_PREVIEW_DIR="$SCREENSHOT_PREVIEW_DIR"
 export CN1SS_COMMENT_MARKER="<!-- CN1SS_ANDROID_COMMENT -->"
@@ -254,6 +318,12 @@ cn1ss_process_and_report \
   "$ARTIFACTS_DIR" \
   "${COMPARE_ENTRIES[@]}"
 comment_rc=$?
+
+# Surface any decode failures after report generation.
+if [ "${#FAILED_TESTS[@]}" -gt 0 ]; then
+  ra_log "ERROR: CN1SS decode failures for tests: ${FAILED_TESTS[*]}"
+  comment_rc=12
+fi
 
 # Copy useful artifacts for GH Actions
 cp -f "$TEST_LOG" "$ARTIFACTS_DIR/device-runner-logcat.txt" 2>/dev/null || true

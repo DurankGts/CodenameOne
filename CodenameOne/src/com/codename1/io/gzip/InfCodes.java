@@ -45,13 +45,8 @@ final class InfCodes {
 
     static final private int Z_OK = 0;
     static final private int Z_STREAM_END = 1;
-    static final private int Z_NEED_DICT = 2;
-    static final private int Z_ERRNO = -1;
     static final private int Z_STREAM_ERROR = -2;
     static final private int Z_DATA_ERROR = -3;
-    static final private int Z_MEM_ERROR = -4;
-    static final private int Z_BUF_ERROR = -5;
-    static final private int Z_VERSION_ERROR = -6;
 
     // waiting for "i:"=input,
     //             "o:"=output,
@@ -60,12 +55,12 @@ final class InfCodes {
     static final private int LEN = 1;    // i: get length/literal/eob next
     static final private int LENEXT = 2; // i: getting length extra (have base)
     static final private int DIST = 3;   // i: get distance next
-    static final private int DISTEXT = 4;// i: getting distance extra
+    static final private int DISTEXT = 4; // i: getting distance extra
     static final private int COPY = 5;   // o: copying bytes in window, waiting for space
     static final private int LIT = 6;    // o: got literal, waiting for output space
     static final private int WASH = 7;   // o: got eob, possibly still output waiting
     static final private int END = 8;    // x: got eob and all data flushed
-    static final private int BADCODE = 9;// x: got error
+    static final private int BADCODE = 9; // x: got error
     private final ZStream z;
     private final InfBlocks s;
     int mode;      // current inflate_codes mode
@@ -163,8 +158,9 @@ final class InfCodes {
                     j = need;
 
                     while (k < (j)) {
-                        if (n != 0) r = Z_OK;
-                        else {
+                        if (n != 0) {
+                            r = Z_OK;
+                        } else {
 
                             s.bitb = b;
                             s.bitk = k;
@@ -222,8 +218,9 @@ final class InfCodes {
                     j = get;
 
                     while (k < (j)) {
-                        if (n != 0) r = Z_OK;
-                        else {
+                        if (n != 0) {
+                            r = Z_OK;
+                        } else {
 
                             s.bitb = b;
                             s.bitk = k;
@@ -251,8 +248,9 @@ final class InfCodes {
                     j = need;
 
                     while (k < (j)) {
-                        if (n != 0) r = Z_OK;
-                        else {
+                        if (n != 0) {
+                            r = Z_OK;
+                        } else {
 
                             s.bitb = b;
                             s.bitk = k;
@@ -300,8 +298,9 @@ final class InfCodes {
                     j = get;
 
                     while (k < (j)) {
-                        if (n != 0) r = Z_OK;
-                        else {
+                        if (n != 0) {
+                            r = Z_OK;
+                        } else {
 
                             s.bitb = b;
                             s.bitk = k;
@@ -360,8 +359,9 @@ final class InfCodes {
                         s.window[q++] = s.window[f++];
                         m--;
 
-                        if (f == s.end)
+                        if (f == s.end) {
                             f = 0;
+                        }
                         len--;
                     }
                     mode = START;
@@ -466,9 +466,9 @@ final class InfCodes {
     // distance pair plus four bytes for overloading the bit buffer.
 
     int inflateFast(int bl, int bd,
-                     int[] tl, int tlIndex,
-                     int[] td, int tdIndex,
-                     InfBlocks s, ZStream z) {
+                    int[] tl, int tlIndex,
+                    int[] td, int tdIndex,
+                    InfBlocks s, ZStream z) {
         int t;                // temporary pointer
         int[] tp;             // temporary pointer
         int tpIndex;         // temporary pointer
@@ -512,7 +512,7 @@ final class InfCodes {
             tp = tl;
             tpIndex = tlIndex;
             tpIndexT3 = (tpIndex + t) * 3;
-            if ((e = tp[tpIndexT3]) == 0) {
+            if ((e = tp[tpIndexT3]) == 0) { //NOPMD AssignmentInOperand
                 b >>= (tp[tpIndexT3 + 1]);
                 k -= (tp[tpIndexT3 + 1]);
 
@@ -648,7 +648,7 @@ final class InfCodes {
                     t += tp[tpIndexT3 + 2];
                     t += (b & inflate_mask[e]);
                     tpIndexT3 = (tpIndex + t) * 3;
-                    if ((e = tp[tpIndexT3]) == 0) {
+                    if ((e = tp[tpIndexT3]) == 0) { //NOPMD AssignmentInOperand
 
                         b >>= (tp[tpIndexT3 + 1]);
                         k -= (tp[tpIndexT3 + 1]);

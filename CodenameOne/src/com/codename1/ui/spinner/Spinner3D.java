@@ -27,30 +27,27 @@ import java.util.Date;
 
 import static com.codename1.ui.ComponentSelector.$;
 
-/**
- * A spinner widget that tries to look and feel like the iOS picker.
- * <p>
- * This is used by the Picker widget when in lightweight mode.
- *
- * @author Steve Hannah
- */
+/// A spinner widget that tries to look and feel like the iOS picker.
+///
+/// This is used by the Picker widget when in lightweight mode.
+///
+/// @author Steve Hannah
 class Spinner3D extends Container implements InternalPickerWidget {
     private final SpinnerNode root;
 
-    private final Scene scene;
     private final ScrollingContainer scroller;
 
 
-    /**
-     * Creates a new Spinner3D with the given listModel.
-     *
-     * @param listModel
-     */
+    /// Creates a new Spinner3D with the given listModel.
+    ///
+    /// #### Parameters
+    ///
+    /// - `listModel`
     public Spinner3D(ListModel<String> listModel) {
         super(BoxLayout.y());
         setScrollableY(false);
         root = new SpinnerNode();
-        scene = new Scene() {
+        Scene scene = new Scene() {
             @Override
             public void setWidth(int width) {
                 super.setWidth(width);
@@ -142,39 +139,47 @@ class Spinner3D extends Container implements InternalPickerWidget {
     }
 
     private static boolean usePerspective() {
-        return false;//Transform.isPerspectiveSupported();
+        return false; //Transform.isPerspectiveSupported();
     }
 
-    /**
-     * Creates a new numeric spinner instance
-     *
-     * @param min          lowest value allowed
-     * @param max          maximum value allowed
-     * @param currentValue the starting value for the mode
-     * @param step         the value by which we increment the entries in the model
-     * @return new spinner instance
-     */
+    /// Creates a new numeric spinner instance
+    ///
+    /// #### Parameters
+    ///
+    /// - `min`: lowest value allowed
+    ///
+    /// - `max`: maximum value allowed
+    ///
+    /// - `currentValue`: the starting value for the mode
+    ///
+    /// - `step`: the value by which we increment the entries in the model
+    ///
+    /// #### Returns
+    ///
+    /// new spinner instance
     public static Spinner3D create(double min, double max, double currentValue, double step) {
-        Spinner3D s = new Spinner3D(new SpinnerNumberModel(min, max, currentValue, step));
-        return s;
+        return new Spinner3D(new SpinnerNumberModel(min, max, currentValue, step));
     }
 
     public static Spinner3D create(int min, int max, int currentValue, int step) {
-        Spinner3D s = new Spinner3D(new SpinnerNumberModel(min, max, currentValue, step));
-        return s;
+        return new Spinner3D(new SpinnerNumberModel(min, max, currentValue, step));
     }
 
-    /**
-     * Creates a new date spinner instance
-     *
-     * @param min          lowest value allowed
-     * @param max          maximum value allowed
-     * @param currentValue the starting value for the mode
-     * @return new spinner instance
-     */
+    /// Creates a new date spinner instance
+    ///
+    /// #### Parameters
+    ///
+    /// - `min`: lowest value allowed
+    ///
+    /// - `max`: maximum value allowed
+    ///
+    /// - `currentValue`: the starting value for the mode
+    ///
+    /// #### Returns
+    ///
+    /// new spinner instance
     public static Spinner3D createDate(long min, long max, long currentValue) {
-        Spinner3D s = new Spinner3D(new SpinnerDateModel(min, max, currentValue));
-        return s;
+        return new Spinner3D(new SpinnerDateModel(min, max, currentValue));
     }
 
     public int getSelectedIndex() {
@@ -201,9 +206,7 @@ class Spinner3D extends Container implements InternalPickerWidget {
         if (lm instanceof NumberModelAdapter) {
             NumberModelAdapter adapter = (NumberModelAdapter) lm;
             int selectedIndex = adapter.getSelectedIndex();
-            Object out = adapter.inner.getItemAt(selectedIndex);
-
-            return out;
+            return adapter.inner.getItemAt(selectedIndex);
         }
         if (lm instanceof DateModelAdapter) {
             DateModelAdapter adapter = (DateModelAdapter) lm;
@@ -407,4 +410,3 @@ class Spinner3D extends Container implements InternalPickerWidget {
 
     }
 }
-

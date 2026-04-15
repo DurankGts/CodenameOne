@@ -41,9 +41,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
-/**
- * @author Chen
- */
+/// @author Chen
 class ShareForm extends Form {
 
     private final TextField to = new TextField();
@@ -74,7 +72,7 @@ class ShareForm extends Form {
             Label im = new Label();
             ImageIO scale = ImageIO.getImageIO();
             if (scale != null) {
-                InputStream is = null;
+                InputStream is = null; //NOPMD CloseResource
                 ByteArrayOutputStream os = new ByteArrayOutputStream();
                 try {
                     is = FileSystemStorage.getInstance().openInputStream(image);
@@ -118,8 +116,12 @@ class ShareForm extends Form {
 
         @Override
         public final boolean equals(Object o) {
-            if (!(o instanceof BackCommand)) return false;
-            if (!super.equals(o)) return false;
+            if (!(o instanceof BackCommand)) {
+                return false;
+            }
+            if (!super.equals(o)) {
+                return false;
+            }
 
             BackCommand that = (BackCommand) o;
             return (contacts == null ? that.contacts == null : contacts.equals(that.contacts));

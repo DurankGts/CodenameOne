@@ -30,30 +30,26 @@ import com.codename1.ui.events.SelectionListener;
 import java.util.ArrayList;
 import java.util.Map;
 
-/**
- * This class allows filtering/sorting a list model dynamically using a text field
- *
- * @author Shai Almog
- */
+/// This class allows filtering/sorting a list model dynamically using a text field
+///
+/// @author Shai Almog
 public class FilterProxyListModel<T> implements ListModel<T>, DataChangedListener {
     private final ListModel<T> underlying;
-    private ArrayList<Integer> filter;
     private final ArrayList<DataChangedListener> listeners = new ArrayList<DataChangedListener>();
+    private ArrayList<Integer> filter;
     private boolean startsWithMode;
 
-    /**
-     * The proxy is applied to the actual model and effectively hides it
-     *
-     * @param underlying the "real" model for the list
-     */
+    /// The proxy is applied to the actual model and effectively hides it
+    ///
+    /// #### Parameters
+    ///
+    /// - `underlying`: the "real" model for the list
     public FilterProxyListModel(ListModel<T> underlying) {
         this.underlying = underlying;
         underlying.addDataChangedListener(this);
     }
 
-    /**
-     * Installs a search field on a list making sure the filter method is invoked properly
-     */
+    /// Installs a search field on a list making sure the filter method is invoked properly
     public static void install(final TextField search, final List l) {
         search.addDataChangedListener(new DataChangedListener() {
             @Override
@@ -77,9 +73,7 @@ public class FilterProxyListModel<T> implements ListModel<T>, DataChangedListene
         });
     }
 
-    /**
-     * Installs a search field on a list making sure the filter method is invoked properly
-     */
+    /// Installs a search field on a list making sure the filter method is invoked properly
     public static void install(final TextField search, final ContainerList l) {
         search.addDataChangedListener(new DataChangedListener() {
             @Override
@@ -113,12 +107,12 @@ public class FilterProxyListModel<T> implements ListModel<T>, DataChangedListene
         return -1;
     }
 
-    /**
-     * This method performs a sort of the list, to determine the sort order this class should be derived
-     * and the compare() method should be overriden
-     *
-     * @param ascending sort in ascending order
-     */
+    /// This method performs a sort of the list, to determine the sort order this class should be derived
+    /// and the compare() method should be overriden
+    ///
+    /// #### Parameters
+    ///
+    /// - `ascending`: sort in ascending order
     public void sort(boolean ascending) {
         if (filter == null) {
             filterImpl("");
@@ -142,15 +136,20 @@ public class FilterProxyListModel<T> implements ListModel<T>, DataChangedListene
                 underlying.getItemAt(((Integer) b).intValue()), ascending);
     }
 
-    /**
-     * This method can be overriden by subclasses to allow sorting arbitrary objects within
-     * the list, it follows the traditional contract of the compare method in Java
-     *
-     * @param a         first object
-     * @param b         second object
-     * @param ascending direction of sort
-     * @return 1, 0 or -1 to indicate the larger/smaller object
-     */
+    /// This method can be overriden by subclasses to allow sorting arbitrary objects within
+    /// the list, it follows the traditional contract of the compare method in Java
+    ///
+    /// #### Parameters
+    ///
+    /// - `a`: first object
+    ///
+    /// - `b`: second object
+    ///
+    /// - `ascending`: direction of sort
+    ///
+    /// #### Returns
+    ///
+    /// 1, 0 or -1 to indicate the larger/smaller object
     protected int compare(Object a, Object b, boolean ascending) {
 
         String s1;
@@ -188,10 +187,12 @@ public class FilterProxyListModel<T> implements ListModel<T>, DataChangedListene
 
         // Insertion sort on smallest arrays
         if (length < 7) {
-            for (int i = low; i < high; i++)
+            for (int i = low; i < high; i++) {
                 for (int j = i; j > low &&
-                        compareObj(dest[j - 1], dest[j], ascending) > 0; j--)
+                        compareObj(dest[j - 1], dest[j], ascending) > 0; j--) {
                     swap(dest, j, j - 1);
+                }
+            }
             return;
         }
 
@@ -213,10 +214,11 @@ public class FilterProxyListModel<T> implements ListModel<T>, DataChangedListene
 
         // Merge sorted halves (now in src) into dest
         for (int i = destLow, p = low, q = mid; i < destHigh; i++) {
-            if (q >= high || p < mid && compareObj(src[p], src[q], ascending) <= 0)
+            if (q >= high || p < mid && compareObj(src[p], src[q], ascending) <= 0) {
                 dest[i] = src[p++];
-            else
+            } else {
                 dest[i] = src[q++];
+            }
         }
     }
 
@@ -227,11 +229,11 @@ public class FilterProxyListModel<T> implements ListModel<T>, DataChangedListene
         return filter.indexOf(Integer.valueOf(index));
     }
 
-    /**
-     * Returns the underlying model which is needed to perform mutations on the list.
-     *
-     * @return the underlying model
-     */
+    /// Returns the underlying model which is needed to perform mutations on the list.
+    ///
+    /// #### Returns
+    ///
+    /// the underlying model
     public ListModel getUnderlying() {
         return underlying;
     }
@@ -249,14 +251,18 @@ public class FilterProxyListModel<T> implements ListModel<T>, DataChangedListene
         }
     }
 
-    /**
-     * Checks whether the filter condition is matched, receives an uppercase version of the
-     * filter string to match against
-     *
-     * @param o   the object being compared
-     * @param str the string
-     * @return true if match is checked
-     */
+    /// Checks whether the filter condition is matched, receives an uppercase version of the
+    /// filter string to match against
+    ///
+    /// #### Parameters
+    ///
+    /// - `o`: the object being compared
+    ///
+    /// - `str`: the string
+    ///
+    /// #### Returns
+    ///
+    /// true if match is checked
     protected boolean check(Object o, String str) {
         if (o instanceof Map) {
             Map h = (Map) o;
@@ -278,27 +284,23 @@ public class FilterProxyListModel<T> implements ListModel<T>, DataChangedListene
         return val != null && ((String) val).toUpperCase().indexOf(str) > -1;
     }
 
-    /**
-     * Filters the list based on the given string
-     *
-     * @param str the string to filter the list by
-     */
+    /// Filters the list based on the given string
+    ///
+    /// #### Parameters
+    ///
+    /// - `str`: the string to filter the list by
     public void filter(String str) {
         filterImpl(str);
         dataChanged(DataChangedListener.CHANGED, -1);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public T getItemAt(int index) {
         return underlying.getItemAt(getFilterOffset(index));
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public int getSize() {
         if (filter == null) {
@@ -307,17 +309,13 @@ public class FilterProxyListModel<T> implements ListModel<T>, DataChangedListene
         return filter.size();
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public int getSelectedIndex() {
         return Math.max(0, getUnderlyingOffset(underlying.getSelectedIndex()));
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void setSelectedIndex(int index) {
         if (index < 0) {
@@ -327,57 +325,43 @@ public class FilterProxyListModel<T> implements ListModel<T>, DataChangedListene
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void addDataChangedListener(DataChangedListener l) {
         listeners.add(l);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void removeDataChangedListener(DataChangedListener l) {
         listeners.remove(l);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void addSelectionListener(SelectionListener l) {
         underlying.addSelectionListener(l);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void removeSelectionListener(SelectionListener l) {
         underlying.removeSelectionListener(l);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void addItem(T item) {
         underlying.addItem(item);
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void removeItem(int index) {
         underlying.removeItem(getFilterOffset(index));
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    /// {@inheritDoc}
     @Override
     public void dataChanged(int type, int index) {
         if (index > -1) {
@@ -386,25 +370,25 @@ public class FilterProxyListModel<T> implements ListModel<T>, DataChangedListene
                 return;
             }
         }
-        for (int iter = 0; iter < listeners.size(); iter++) {
-            listeners.get(iter).dataChanged(type, index);
+        for (DataChangedListener listener : listeners) {
+            listener.dataChanged(type, index);
         }
     }
 
-    /**
-     * When enabled this makes the filter check that the string starts with rather than within the index
-     *
-     * @return the startsWithMode
-     */
+    /// When enabled this makes the filter check that the string starts with rather than within the index
+    ///
+    /// #### Returns
+    ///
+    /// the startsWithMode
     public boolean isStartsWithMode() {
         return startsWithMode;
     }
 
-    /**
-     * When enabled this makes the filter check that the string starts with rather than within the index
-     *
-     * @param startsWithMode the startsWithMode to set
-     */
+    /// When enabled this makes the filter check that the string starts with rather than within the index
+    ///
+    /// #### Parameters
+    ///
+    /// - `startsWithMode`: the startsWithMode to set
     public void setStartsWithMode(boolean startsWithMode) {
         this.startsWithMode = startsWithMode;
     }

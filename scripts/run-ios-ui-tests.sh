@@ -6,6 +6,24 @@ ri_log() { echo "[run-ios-ui-tests] $1"; }
 
 ensure_dir() { mkdir -p "$1" 2>/dev/null || true; }
 
+extract_base64_stats() {
+  local log_file="$1"
+  local out_file="$2"
+  [ -f "$log_file" ] || return 0
+
+  local lines
+  lines="$(grep 'CN1SS:STAT:' "$log_file" 2>/dev/null | sed -E 's/^.*CN1SS:STAT://')" || true
+  if [ -z "${lines:-}" ]; then
+    return 0
+  fi
+
+  : > "$out_file"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    echo "$line" >> "$out_file"
+  done <<< "$lines"
+}
+
 if [ $# -lt 1 ]; then
   ri_log "Usage: $0 <workspace_path> [app_bundle] [scheme]" >&2
   exit 2
@@ -22,8 +40,13 @@ if [ -n "$APP_BUNDLE_PATH" ] && [ ! -d "$APP_BUNDLE_PATH" ] && [ -z "$REQUESTED_
 fi
 
 if [ ! -d "$WORKSPACE_PATH" ]; then
-  ri_log "Workspace not found at $WORKSPACE_PATH" >&2
+  ri_log "Xcode workspace/project not found at $WORKSPACE_PATH" >&2
   exit 3
+fi
+
+XCODE_CONTAINER_FLAG="-workspace"
+if [[ "$WORKSPACE_PATH" == *.xcodeproj ]]; then
+  XCODE_CONTAINER_FLAG="-project"
 fi
 
 if [ -n "$APP_BUNDLE_PATH" ]; then
@@ -53,9 +76,19 @@ ri_log "Loading workspace environment from $ENV_FILE"
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 
-# Use the same Xcode as the build step
-export DEVELOPER_DIR="/Applications/Xcode_16.4.app/Contents/Developer"
+# Pin Xcode 26 for CI validation.
+if [ -z "${XCODE_APP:-}" ]; then
+  XCODE_APP="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+fi
+if [ ! -x "$XCODE_APP/Contents/Developer/usr/bin/xcodebuild" ]; then
+  ri_log "Xcode 26 not found. Set XCODE_APP to an installed Xcode 26 app bundle path." >&2
+  exit 3
+fi
+export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
+export XCODEBUILD="$DEVELOPER_DIR/usr/bin/xcodebuild"
 export PATH="$DEVELOPER_DIR/usr/bin:$PATH"
+ri_log "Using DEVELOPER_DIR=$DEVELOPER_DIR"
+ri_log "Using XCODEBUILD=$XCODEBUILD"
 
 if [ -z "${JAVA17_HOME:-}" ] || [ ! -x "$JAVA17_HOME/bin/java" ]; then
   ri_log "JAVA17_HOME not set correctly" >&2
@@ -78,9 +111,43 @@ ARTIFACTS_DIR="${ARTIFACTS_DIR:-${GITHUB_WORKSPACE:-$REPO_ROOT}/artifacts}"
 mkdir -p "$ARTIFACTS_DIR"
 TEST_LOG="$ARTIFACTS_DIR/device-runner.log"
 
+SDK_LIST="$(xcodebuild -showsdks 2>/dev/null || true)"
+RUNTIME_LIST="$(xcrun simctl list runtimes available 2>/dev/null || true)"
+DOWNLOAD_PLATFORMS="${XCODE_DOWNLOAD_PLATFORMS:-}"
+if [ -z "$DOWNLOAD_PLATFORMS" ] && [ "${GITHUB_ACTIONS:-false}" = "true" ]; then
+  DOWNLOAD_PLATFORMS="true"
+fi
+DOWNLOAD_PLATFORMS="${DOWNLOAD_PLATFORMS:-false}"
+ri_log "XCODE_DOWNLOAD_PLATFORMS=${DOWNLOAD_PLATFORMS}"
+
+if ! printf '%s\n' "$SDK_LIST" | grep -q "iphonesimulator" || ! printf '%s\n' "$RUNTIME_LIST" | grep -q "iOS"; then
+  if [ "$DOWNLOAD_PLATFORMS" = "true" ]; then
+    ri_log "Attempting to download missing iOS platform via xcodebuild -downloadPlatform iOS"
+    xcodebuild -downloadPlatform iOS || true
+    SDK_LIST="$(xcodebuild -showsdks 2>/dev/null || true)"
+    RUNTIME_LIST="$(xcrun simctl list runtimes available 2>/dev/null || true)"
+  else
+    ri_log "Missing simulator SDKs/runtimes detected. Set XCODE_DOWNLOAD_PLATFORMS=true to attempt auto-download."
+  fi
+fi
+
+if ! printf '%s\n' "$SDK_LIST" | grep -q "iphonesimulator"; then
+  ri_log "No iOS simulator SDKs detected in Xcode. Install the iOS platform in Xcode > Settings > Components (or set XCODE_DOWNLOAD_PLATFORMS=true)." >&2
+  printf '%s\n' "$SDK_LIST" > "$ARTIFACTS_DIR/xcodebuild-showsdks.log"
+  exit 3
+fi
+
+if ! printf '%s\n' "$RUNTIME_LIST" | grep -q "iOS"; then
+  ri_log "No available iOS simulator runtimes detected. Install an iOS simulator runtime in Xcode > Settings > Components (or set XCODE_DOWNLOAD_PLATFORMS=true)." >&2
+  printf '%s\n' "$RUNTIME_LIST" > "$ARTIFACTS_DIR/simctl-runtimes.log"
+  exit 3
+fi
+
 if [ -z "$REQUESTED_SCHEME" ]; then
   if [[ "$WORKSPACE_PATH" == *.xcworkspace ]]; then
     REQUESTED_SCHEME="$(basename "$WORKSPACE_PATH" .xcworkspace)"
+  elif [[ "$WORKSPACE_PATH" == *.xcodeproj ]]; then
+    REQUESTED_SCHEME="$(basename "$WORKSPACE_PATH" .xcodeproj)"
   else
     REQUESTED_SCHEME="$(basename "$WORKSPACE_PATH")"
   fi
@@ -99,6 +166,13 @@ export CN1SS_PREVIEW_DIR="$SCREENSHOT_PREVIEW_DIR"
 
 # Patch scheme env vars to point to our runtime dirs
 SCHEME_FILE="$WORKSPACE_PATH/xcshareddata/xcschemes/$SCHEME.xcscheme"
+if [ ! -f "$SCHEME_FILE" ] && [[ "$WORKSPACE_PATH" == *.xcworkspace ]]; then
+  PROJECT_DIR="$(cd "$(dirname "$WORKSPACE_PATH")" && pwd)"
+  PROJECT_SCHEME_FILE="$PROJECT_DIR/$(basename "$WORKSPACE_PATH" .xcworkspace).xcodeproj/xcshareddata/xcschemes/$SCHEME.xcscheme"
+  if [ -f "$PROJECT_SCHEME_FILE" ]; then
+    SCHEME_FILE="$PROJECT_SCHEME_FILE"
+  fi
+fi
 if [ -f "$SCHEME_FILE" ]; then
   if sed --version >/dev/null 2>&1; then
     # GNU sed
@@ -114,7 +188,12 @@ else
   ri_log "Scheme file not found for env injection: $SCHEME_FILE"
 fi
 
-MAX_SIM_OS_MAJOR=20
+SIM_SDK_VERSION="$(xcodebuild -showsdks 2>/dev/null | awk '/iphonesimulator/ {print $NF}' | tail -n 1 | sed 's/iphonesimulator//')"
+SIM_SDK_MAJOR="${SIM_SDK_VERSION%%.*}"
+case "$SIM_SDK_MAJOR" in
+  ''|*[!0-9]*) SIM_SDK_MAJOR=20 ;;
+esac
+MAX_SIM_OS_MAJOR="$SIM_SDK_MAJOR"
 
 trim_whitespace() {
   local value="$1"
@@ -163,7 +242,7 @@ normalize_destination() {
 auto_select_destination() {
   local show_dest rc=0 best_line="" best_key="" line payload platform id name os priority key part value
   set +e
-  show_dest="$(xcodebuild -workspace "$WORKSPACE_PATH" -scheme "$SCHEME" -sdk iphonesimulator -showdestinations 2>/dev/null)"
+  show_dest="$(xcodebuild "$XCODE_CONTAINER_FLAG" "$WORKSPACE_PATH" -scheme "$SCHEME" -sdk iphonesimulator -showdestinations 2>/dev/null)"
   rc=$?
   set -e
 
@@ -299,7 +378,7 @@ fallback_sim_destination() {
       [ -n "$current_version" ] && best_line="$best_line,OS=$current_version"
       best_line="$best_line,name=$name"
     fi
-  done < <(xcrun simctl list devices 2>/dev/null)
+  done < <(xcrun simctl list devices available 2>/dev/null)
 
   if [ -n "$best_line" ]; then
     printf '%s\n' "$best_line"
@@ -309,6 +388,7 @@ fallback_sim_destination() {
 
 
 SIM_DESTINATION="${IOS_SIM_DESTINATION:-}"
+USE_GENERIC_BUILD_DESTINATION="false"
 if [ -z "$SIM_DESTINATION" ]; then
   SELECTED_DESTINATION="$(auto_select_destination || true)"
   if [ -n "${SELECTED_DESTINATION:-}" ]; then
@@ -316,20 +396,43 @@ if [ -z "$SIM_DESTINATION" ]; then
     ri_log "Auto-selected simulator destination '$SIM_DESTINATION'"
   else
     ri_log "Simulator auto-selection did not return a destination"
+    SHOW_DEST_LOG="$ARTIFACTS_DIR/xcodebuild-showdestinations.log"
+    xcodebuild "$XCODE_CONTAINER_FLAG" "$WORKSPACE_PATH" -scheme "$SCHEME" -sdk iphonesimulator -showdestinations \
+      > "$SHOW_DEST_LOG" 2>&1 || true
+    if grep -q "not installed" "$SHOW_DEST_LOG"; then
+      if [ "$DOWNLOAD_PLATFORMS" = "true" ]; then
+        ri_log "Attempting to download missing iOS platform via xcodebuild -downloadPlatform iOS"
+        xcodebuild -downloadPlatform iOS || true
+        xcodebuild "$XCODE_CONTAINER_FLAG" "$WORKSPACE_PATH" -scheme "$SCHEME" -sdk iphonesimulator -showdestinations \
+          > "$SHOW_DEST_LOG" 2>&1 || true
+      else
+        ri_log "Destinations report missing platforms. Set XCODE_DOWNLOAD_PLATFORMS=true to attempt auto-download."
+      fi
+    fi
+    if grep -q "not installed" "$SHOW_DEST_LOG"; then
+      ri_log "No eligible simulator destinations reported by xcodebuild. See $SHOW_DEST_LOG" >&2
+      exit 3
+    fi
   fi
 fi
 if [ -z "$SIM_DESTINATION" ]; then
   FALLBACK_DESTINATION="$(fallback_sim_destination || true)"
   if [ -n "${FALLBACK_DESTINATION:-}" ]; then
     SIM_DESTINATION="$FALLBACK_DESTINATION"
+    USE_GENERIC_BUILD_DESTINATION="true"
     ri_log "Using fallback simulator destination '$SIM_DESTINATION'"
   else
     SIM_DESTINATION="platform=iOS Simulator,name=iPhone 16"
+    USE_GENERIC_BUILD_DESTINATION="true"
     ri_log "Falling back to default simulator destination '$SIM_DESTINATION'"
   fi
 fi
 
 SIM_DESTINATION="$(normalize_destination "$SIM_DESTINATION")"
+BUILD_DESTINATION="$SIM_DESTINATION"
+if [ "$USE_GENERIC_BUILD_DESTINATION" = "true" ]; then
+  BUILD_DESTINATION="generic/platform=iOS Simulator"
+fi
 
 # Extract UDID and prefer id-only destination to avoid OS/SDK mismatches
 SIM_UDID="$(printf '%s\n' "$SIM_DESTINATION" | sed -n 's/.*id=\([^,]*\).*/\1/p' | tr -d '\r[:space:]')"
@@ -342,7 +445,18 @@ if [ -n "$SIM_UDID" ]; then
   echo "Simulator Boot : $(( (BOOT_END - BOOT_START) * 1000 )) ms" >> "$ARTIFACTS_DIR/ios-test-stats.txt"
   SIM_DESTINATION="id=$SIM_UDID"
 fi
+if [ "$USE_GENERIC_BUILD_DESTINATION" = "true" ]; then
+  ri_log "Building with generic simulator destination '$BUILD_DESTINATION' and running on '$SIM_DESTINATION'"
+else
+  BUILD_DESTINATION="$SIM_DESTINATION"
+fi
 ri_log "Running DeviceRunner on destination '$SIM_DESTINATION'"
+
+HOST_ARCH="$(uname -m 2>/dev/null || echo arm64)"
+case "$HOST_ARCH" in
+  arm64|x86_64) BUILD_ARCH="$HOST_ARCH" ;;
+  *) BUILD_ARCH="arm64" ;;
+esac
 
 DERIVED_DATA_DIR="$SCREENSHOT_TMP_DIR/derived"
 rm -rf "$DERIVED_DATA_DIR"
@@ -350,15 +464,26 @@ BUILD_LOG="$ARTIFACTS_DIR/xcodebuild-build.log"
 
 ri_log "Building simulator app with xcodebuild"
 COMPILE_START=$(date +%s)
-if ! xcodebuild \
-  -workspace "$WORKSPACE_PATH" \
-  -scheme "$SCHEME" \
-  -sdk iphonesimulator \
-  -configuration Debug \
-  -destination "$SIM_DESTINATION" \
-  -destination-timeout 120 \
-  -derivedDataPath "$DERIVED_DATA_DIR" \
-  build | tee "$BUILD_LOG"; then
+XCODE_BUILD_CMD=(
+  xcodebuild
+  "$XCODE_CONTAINER_FLAG" "$WORKSPACE_PATH"
+  -scheme "$SCHEME"
+  -sdk iphonesimulator
+  -configuration Debug
+  -destination "$BUILD_DESTINATION"
+  -destination-timeout 120
+  -derivedDataPath "$DERIVED_DATA_DIR"
+)
+if [ "$USE_GENERIC_BUILD_DESTINATION" = "true" ]; then
+  ri_log "Forcing simulator ARCHS=$BUILD_ARCH for generic build destination"
+  XCODE_BUILD_CMD+=(
+    "ARCHS=$BUILD_ARCH"
+    "ONLY_ACTIVE_ARCH=YES"
+    "EXCLUDED_ARCHS=armv7 armv7s"
+  )
+fi
+XCODE_BUILD_CMD+=(build)
+if ! "${XCODE_BUILD_CMD[@]}" | tee "$BUILD_LOG"; then
   ri_log "STAGE:XCODE_BUILD_FAILED -> See $BUILD_LOG"
   exit 10
 fi
@@ -366,7 +491,7 @@ COMPILE_END=$(date +%s)
 COMPILATION_TIME=$((COMPILE_END - COMPILE_START))
 ri_log "Compilation time: ${COMPILATION_TIME}s"
 
-BUILD_SETTINGS="$(xcodebuild -workspace "$WORKSPACE_PATH" -scheme "$SCHEME" -sdk iphonesimulator -configuration Debug -showBuildSettings 2>/dev/null || true)"
+BUILD_SETTINGS="$(xcodebuild "$XCODE_CONTAINER_FLAG" "$WORKSPACE_PATH" -scheme "$SCHEME" -sdk iphonesimulator -configuration Debug -showBuildSettings 2>/dev/null || true)"
 TARGET_BUILD_DIR="$(printf '%s\n' "$BUILD_SETTINGS" | awk -F' = ' '/ TARGET_BUILD_DIR /{print $2; exit}')"
 WRAPPER_NAME="$(printf '%s\n' "$BUILD_SETTINGS" | awk -F' = ' '/ WRAPPER_NAME /{print $2; exit}')"
 if [ -z "$WRAPPER_NAME" ]; then
@@ -431,7 +556,7 @@ APP_PROCESS_NAME="${WRAPPER_NAME%.app}"
           resolved_id="$(trim_whitespace "$id_part")"
           break
         fi
-      done < <(xcrun simctl list devices 2>/dev/null)
+      done < <(xcrun simctl list devices available 2>/dev/null)
       SIM_DEVICE_ID="$resolved_id"
     fi
   fi
@@ -466,14 +591,36 @@ APP_PROCESS_NAME="${WRAPPER_NAME%.app}"
     xcrun simctl uninstall "$SIM_DEVICE_ID" "$BUNDLE_IDENTIFIER" >/dev/null 2>&1 || true
 
     xcrun simctl spawn "$SIM_DEVICE_ID" \
-      log stream --style json --level debug \
-      --predicate 'eventMessage CONTAINS "CN1SS"' \
+      log stream --style compact --level debug \
+      --predicate '(composedMessage CONTAINS "CN1SS") OR (eventMessage CONTAINS "CN1SS")' \
       > "$TEST_LOG" 2>&1 &
   else
-    xcrun simctl spawn booted log stream --style compact --level debug --predicate 'composedMessage CONTAINS "CN1SS"' > "$TEST_LOG" 2>&1 &
+    xcrun simctl spawn booted log stream --style compact --level debug --predicate '(composedMessage CONTAINS "CN1SS") OR (eventMessage CONTAINS "CN1SS")' > "$TEST_LOG" 2>&1 &
   fi
   LOG_STREAM_PID=$!
   sleep 2
+
+  LAUNCH_LOG="$ARTIFACTS_DIR/simctl-launch.log"
+
+  launch_simulator_app() {
+    local target="$1"
+    local attempt=1
+    while true; do
+      local output
+      if output="$(xcrun simctl launch "$target" "$BUNDLE_IDENTIFIER" 2>&1)"; then
+        printf '%s\n' "$output" >> "$LAUNCH_LOG"
+        return 0
+      fi
+      printf '%s\n' "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] simctl launch failed (attempt $attempt): $output" >> "$LAUNCH_LOG"
+      if [ "$attempt" -ge 2 ]; then
+        return 1
+      fi
+      ri_log "simctl launch failed (attempt $attempt), retrying"
+      xcrun simctl bootstatus "$target" -b >/dev/null 2>&1 || true
+      sleep 5
+      attempt=$((attempt + 1))
+    done
+  }
 
   ri_log "Installing simulator app bundle"
   INSTALL_START=$(date +%s)
@@ -485,8 +632,8 @@ APP_PROCESS_NAME="${WRAPPER_NAME%.app}"
     INSTALL_END=$(date +%s)
 
     LAUNCH_START=$(date +%s)
-    if ! xcrun simctl launch "$SIM_DEVICE_ID" "$BUNDLE_IDENTIFIER" >/dev/null 2>&1; then
-      ri_log "FATAL: simctl launch failed"
+    if ! launch_simulator_app "$SIM_DEVICE_ID"; then
+      ri_log "FATAL: simctl launch failed (see $LAUNCH_LOG)"
       exit 11
     fi
     LAUNCH_END=$(date +%s)
@@ -498,8 +645,8 @@ APP_PROCESS_NAME="${WRAPPER_NAME%.app}"
     INSTALL_END=$(date +%s)
 
     LAUNCH_START=$(date +%s)
-    if ! xcrun simctl launch booted "$BUNDLE_IDENTIFIER" >/dev/null 2>&1; then
-      ri_log "FATAL: simctl launch failed"
+    if ! launch_simulator_app booted; then
+      ri_log "FATAL: simctl launch failed (see $LAUNCH_LOG)"
       exit 11
     fi
     LAUNCH_END=$(date +%s)
@@ -525,6 +672,11 @@ while true; do
 done
 END_TIME=$(date +%s)
 echo "Test Execution : $(( (END_TIME - START_TIME) * 1000 )) ms" >> "$ARTIFACTS_DIR/ios-test-stats.txt"
+BASE64_STATS_FILE="$ARTIFACTS_DIR/base64-performance-stats.txt"
+extract_base64_stats "$TEST_LOG" "$BASE64_STATS_FILE"
+if [ -s "$BASE64_STATS_FILE" ]; then
+  ri_log "Base64 benchmark stats captured at $BASE64_STATS_FILE"
+fi
 
 sleep 3
 
@@ -535,8 +687,19 @@ LOG_STREAM_PID=0
 FALLBACK_LOG="$ARTIFACTS_DIR/device-runner-fallback.log"
 xcrun simctl spawn "$SIM_DEVICE_ID" \
   log show --style syslog --last 30m \
-  --predicate 'eventMessage CONTAINS "CN1SS"' \
+  --predicate '(composedMessage CONTAINS "CN1SS") OR (eventMessage CONTAINS "CN1SS")' \
   > "$FALLBACK_LOG" 2>/dev/null || true
+
+SWIFT_DIAG_LINE="$( (grep -h "CN1SS:INFO:swift_diag_status=" "$TEST_LOG" "$FALLBACK_LOG" || true) | tail -n 1 )"
+if [ -n "$SWIFT_DIAG_LINE" ]; then
+  ri_log "Detected swift diagnostic status line: $SWIFT_DIAG_LINE"
+  if ! echo "$SWIFT_DIAG_LINE" | grep -q "swift_diag_status=OK "; then
+    ri_log "STAGE:SWIFT_DIAG_FAILED -> $SWIFT_DIAG_LINE"
+    exit 13
+  fi
+else
+  ri_log "STAGE:SWIFT_DIAG_MISSING -> No swift_diag_status marker found"
+fi
 
 if [ -n "$SIM_DEVICE_ID" ]; then
   xcrun simctl terminate "$SIM_DEVICE_ID" "$BUNDLE_IDENTIFIER" >/dev/null 2>&1 || true
@@ -634,6 +797,7 @@ export CN1SS_PREVIEW_DIR="$SCREENSHOT_PREVIEW_DIR"
 export CN1SS_COMMENT_MARKER="<!-- CN1SS_IOS_COMMENT -->"
 export CN1SS_COMMENT_LOG_PREFIX="[run-ios-device-tests]"
 export CN1SS_PREVIEW_SUBDIR="ios"
+export CN1SS_SUCCESS_MESSAGE="✅ Native iOS screenshot tests passed."
 
 # Load VM translation time if available
 CN1SS_VM_TIME=0
@@ -659,4 +823,3 @@ cp -f "$BUILD_LOG" "$ARTIFACTS_DIR/xcodebuild-build.log" 2>/dev/null || true
 cp -f "$TEST_LOG" "$ARTIFACTS_DIR/device-runner.log" 2>/dev/null || true
 
 exit $comment_rc
-

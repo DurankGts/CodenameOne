@@ -1,0 +1,31 @@
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+{{- if eq .Layout "developer-guide" -}}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+  {{- $asciidoctorCssPath := "static/developer-guide/asciidoctor-scoped.css" -}}
+  {{- if fileExists $asciidoctorCssPath -}}
+<style>
+{{ readFile $asciidoctorCssPath | safeCSS }}
+</style>
+  {{- end -}}
+{{- end -}}
+{{- if eq .Layout "api-javadoc" -}}
+  {{- $javadocCssPath := "static/javadoc/resource-files/stylesheet-scoped.css" -}}
+  {{- if fileExists $javadocCssPath -}}
+<style>
+{{ readFile $javadocCssPath | safeCSS }}
+</style>
+  {{- end -}}
+<script type="text/javascript" src="/javadoc/script-files/script.js"></script>
+<script type="text/javascript" src="/javadoc/script-files/jquery-3.7.1.min.js"></script>
+<script type="text/javascript" src="/javadoc/script-files/jquery-ui.min.js"></script>
+<script type="text/javascript" src="/javadoc/script-files/highlight.min.js"></script>
+<script type="text/javascript" src="/javadoc/script-files/javadoc-highlight-init.js"></script>
+{{- end -}}
+{{- with site.GetPage "section" "blog" -}}
+  {{- with .OutputFormats.Get "RSS" -}}
+<link rel="alternate" type="{{ .MediaType.Type }}" href="{{ .Permalink }}" title="{{ site.Title }} Blog RSS">
+  {{- end -}}
+{{- end -}}
