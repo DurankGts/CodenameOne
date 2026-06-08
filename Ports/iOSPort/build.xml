@@ -74,6 +74,10 @@
     <target name="-pre-compile">
         <copy file="../../Themes/iPhoneTheme.res" todir="nativeSources" />
         <copy file="../../Themes/iOS7Theme.res" todir="nativeSources" />
+        <!-- iOS Modern (liquid-glass) theme committed under Themes/ and kept
+             in sync by .github/workflows/native-themes-sync.yml from
+             native-themes/ios-modern/theme.css. -->
+        <copy file="../../Themes/iOSModernTheme.res" todir="nativeSources" />
     </target>
     <target name="-post-jar">
         <delete file="${dist.jar}.old" />

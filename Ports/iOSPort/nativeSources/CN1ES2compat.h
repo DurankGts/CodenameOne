@@ -20,6 +20,22 @@
  * Please contact Codename One through http://www.codenameone.com/ if you
  * need additional information or have any questions.
  */
+// IPhoneBuilder.java:697 uncomments the line below when -Dios.metal=true is set.
+// When defined, the Metal rendering backend (METALView, CN1Metalcompat) is
+// activated and the OpenGL ES 2 backend stays linked but unused. See
+// Ports/iOSPort/METAL_PORT_STATUS.md for the migration plan.
+//#define CN1_USE_METAL
+// IPhoneBuilder.java replaces the line below with one of:
+//   #define CN1_METAL_COLORSPACE_SRGB
+//   #define CN1_METAL_COLORSPACE_DISPLAY_P3
+//   #define CN1_METAL_COLORSPACE_DEVICE_RGB
+//   #define CN1_METAL_COLORSPACE_LINEAR_SRGB
+//   #define CN1_METAL_COLORSPACE_EXTENDED_SRGB
+//   #define CN1_METAL_COLORSPACE_EXTENDED_LINEAR_SRGB
+//   #define CN1_METAL_COLORSPACE_NONE
+// based on the `ios.metal.colorSpace` build hint. METALView.m falls back
+// to sRGB when none of these are defined.
+//#define CN1_METAL_COLORSPACE_PLACEHOLDER
 #define USE_ES2 1
 enum CN1GLenum {
     CN1_GL_ALPHA_TEXTURE,
@@ -27,6 +43,10 @@ enum CN1GLenum {
 };
 
 #ifdef USE_ES2
+// On Mac Catalyst the GLKit/OpenGLES headers resolve to stub headers under
+// macCatalystStubs/ via HEADER_SEARCH_PATHS[sdk=macosx*] (set by
+// IPhoneBuilder when macNative.enabled=true). On iOS the real SDK headers
+// are picked up.
 #import <GLKit/GLKit.h>
 #import <OpenGLES/ES2/gl.h>
 #import "ExecutableOp.h"

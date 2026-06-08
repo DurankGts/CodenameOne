@@ -53,11 +53,13 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Scanner;
+import java.util.Set;
 import java.util.StringTokenizer;
 
 import java.util.zip.ZipEntry;
@@ -279,6 +281,14 @@ public class AndroidGradleBuilder extends Executor {
     private String playFlag;
 
     private boolean capturePermission;
+    private boolean usesBiometrics;
+    private boolean usesNfc;
+    private boolean usesNfcHce;
+    private boolean usesForegroundService;
+    private boolean usesSharedContent;
+    private boolean usesOidc;
+    private boolean usesAppleSignIn;
+    private boolean usesWebauthn;
     private boolean vibratePermission;
     private boolean smsPermission;
     private boolean gpsPermission;
@@ -309,6 +319,19 @@ public class AndroidGradleBuilder extends Executor {
     private boolean accessWifiStatePermissions;
     private boolean browserBookmarksPermissions;
     private boolean launcherPermissions;
+
+    // Deeper-network connectivity flags. Set by the classpath scanner when
+    // the app references com.codename1.io.wifi.* / com.codename1.io.bonjour.*
+    // / com.codename1.io.usb.* / NetworkManager.addNetworkTypeListener. The
+    // corresponding <uses-permission> / <uses-feature> elements are emitted
+    // further down based on these flags; apps that never touch the APIs see
+    // no change in their manifest.
+    private boolean usesWifiInfo;
+    private boolean usesWifiManagement;
+    private boolean usesWifiDirect;
+    private boolean usesBonjour;
+    private boolean usesUsbHost;
+    private boolean usesNetworkTypeListener;
 
     private boolean integrateMoPub = false;
 
@@ -456,10 +479,17 @@ public class AndroidGradleBuilder extends Executor {
                     );
                 }
             }
+            if (home == null && currentJvmIsJava17OrLater()) {
+                // The Maven plugin itself is already running on a JDK that Gradle 8 accepts
+                // (Java 17+). Use that JVM's home instead of forcing the user to duplicate
+                // the JDK location in JAVA17_HOME.
+                return System.getProperty("java.home");
+            }
             if (home == null) {
                 throw new BuildException(
                         "When using gradle 8, " +
-                                "you must set the JAVA17_HOME environment variable to the location of a Java 17 JDK"
+                                "you must set the JAVA17_HOME environment variable to the location of a Java 17 JDK " +
+                                "(or run Maven on Java 17+ and let the build reuse the current JVM)"
                 );
             }
 
@@ -470,6 +500,19 @@ public class AndroidGradleBuilder extends Executor {
             return home;
         }
         return System.getProperty("java.home");
+    }
+
+    private static boolean currentJvmIsJava17OrLater() {
+        String spec = System.getProperty("java.specification.version", "");
+        if (spec.startsWith("1.")) {
+            // 1.5 .. 1.8 era -- definitely older than 17.
+            return false;
+        }
+        try {
+            return Integer.parseInt(spec) >= 17;
+        } catch (NumberFormatException ex) {
+            return false;
+        }
     }
     private int parseVersionStringAsInt(String versionString) {
         if (versionString.indexOf(".") > 0) {
@@ -513,6 +556,23 @@ public class AndroidGradleBuilder extends Executor {
         // R8 configuration - disable full mode by default to prevent issues with reflection
         disableR8 = request.getArg("android.disableR8", "false").equals("true");
         disableR8FullMode = request.getArg("android.disableR8FullMode", "true").equals("true");
+
+        // On-device debugging: when set, mark the APK debuggable so Dalvik/ART exposes
+        // a JDWP socket the cn1:android-on-device-debugging Mojo can forward through adb.
+        // Forcing debuggable also flips off R8 and ProGuard so symbols, method names,
+        // and line numbers survive the build -- we may be invoked from the android-device
+        // cloud target which would otherwise run full optimisation. Also force the build
+        // down to debug-only -- Android otherwise produces both a release and a debug
+        // APK from the same manifest, so without this a stray hint could ship a
+        // release-signed, debuggable APK. Release builds and projects that don't opt
+        // in see no change.
+        boolean onDeviceDebug = request.getArg("android.onDeviceDebug", "false").equals("true");
+        if (onDeviceDebug) {
+            disableR8 = true;
+            request.putArgument("android.enableProguard", "false");
+            request.putArgument("android.release", "false");
+            request.putArgument("android.debug", "true");
+        }
         if (useGradle8) {
             getGradleJavaHome(); // will throw build exception if JAVA17_HOME is not set
             MIN_GRADLE_VERSION = 8;
@@ -711,6 +771,7 @@ public class AndroidGradleBuilder extends Executor {
 
         // Augment the xpermissions request arg with explicit android.permissions.XXX build hints
         xPermissions = request.getArg("android.xpermissions", "");
+
         debug("Adding android permissions...");
         for (String xPerm : ANDROID_PERMISSIONS) {
             String permName = xPerm.substring(xPerm.lastIndexOf(".")+1);
@@ -1168,12 +1229,20 @@ public class AndroidGradleBuilder extends Executor {
             wakeLock = true;
         }
         mediaPlaybackPermission = false;
+
+        // Accumulator for AI/ML class hits. After the scan we apply
+        // every matched AiDependencyTable.Entry -- appending Gradle
+        // deps to additionalDependencies (later) and permissions/
+        // features to xPermissions right now.
+        final AiDependencyTable.Accumulator aiAcc = new AiDependencyTable.Accumulator();
+
         try {
             scanClassesForPermissions(dummyClassesDir, new Executor.ClassScanner() {
 
 
                 @Override
                 public void usesClass(String cls) {
+                    aiAcc.consume(cls);
                     if (cls.indexOf("com/codename1/notifications") == 0) {
                         recieveBootCompletedPermission = true;
                         if (targetSDKVersionInt >= 33) {
@@ -1225,6 +1294,66 @@ public class AndroidGradleBuilder extends Executor {
                         getAccountsPermission = true;
                     }
 
+                    if (cls.indexOf("com/codename1/security/") == 0) {
+                        usesBiometrics = true;
+                    }
+
+                    if (cls.indexOf("com/codename1/nfc/") == 0) {
+                        usesNfc = true;
+                        if (cls.equals("com/codename1/nfc/HostCardEmulationService")) {
+                            usesNfcHce = true;
+                        }
+                    }
+
+                    if (cls.equals("com/codename1/background/ForegroundService")) {
+                        usesForegroundService = true;
+                    }
+                    if (cls.equals("com/codename1/share/SharedContent")) {
+                        usesSharedContent = true;
+                    }
+
+                    // OidcClient / SystemBrowser drive sign-in through
+                    // androidx.browser Custom Tabs on Android. Mark usage so
+                    // the gradle dep gets pulled in (see further below).
+                    if (!usesOidc && cls.indexOf("com/codename1/io/oidc/") == 0) {
+                        usesOidc = true;
+                    }
+                    if (!usesAppleSignIn
+                            && cls.indexOf("com/codename1/social/AppleSignIn") == 0) {
+                        usesAppleSignIn = true;
+                    }
+                    // WebAuthn / passkeys -- drives the OS through
+                    // androidx.credentials.CredentialManager. Mark so the
+                    // gradle dep gets injected further below.
+                    if (!usesWebauthn
+                            && cls.indexOf("com/codename1/io/webauthn/") == 0) {
+                        usesWebauthn = true;
+                    }
+                    // Deeper-network connectivity: each subpackage maps to a
+                    // distinct permission set. The scanner sets booleans; the
+                    // injection block below builds the manifest fragments only
+                    // for the flags that fired.
+                    if (cls.indexOf("com/codename1/io/wifi/WiFiDirect") == 0) {
+                        usesWifiDirect = true;
+                        usesWifiInfo = true;
+                    } else if (cls.indexOf("com/codename1/io/wifi/") == 0) {
+                        usesWifiInfo = true;
+                        if (cls.endsWith("WiFi")) {
+                            // The umbrella WiFi class references both info
+                            // and management methods; tag management so the
+                            // CHANGE_WIFI_STATE permission is injected too.
+                            usesWifiManagement = true;
+                        }
+                    }
+                    if (cls.indexOf("com/codename1/io/bonjour/") == 0) {
+                        usesBonjour = true;
+                    }
+                    if (cls.indexOf("com/codename1/io/usb/") == 0) {
+                        usesUsbHost = true;
+                    }
+                    if (cls.equals("com/codename1/io/NetworkTypeListener")) {
+                        usesNetworkTypeListener = true;
+                    }
                 }
 
 
@@ -1312,11 +1441,141 @@ public class AndroidGradleBuilder extends Executor {
                     if (cls.indexOf("com/codename1/contacts/ContactsManager") == 0 && method.indexOf("deleteContact") > -1) {
                         contactsWritePermission = true;
                     }
+                    // WiFi scan implies management. We detect the method
+                    // rather than just the class so that apps that only read
+                    // SSID/BSSID (no scan) do not pick up CHANGE_WIFI_STATE.
+                    if (cls.equals("com/codename1/io/wifi/WiFi")
+                            && (method.indexOf("scan") > -1
+                                || method.indexOf("connect") > -1
+                                || method.indexOf("disconnect") > -1)) {
+                        usesWifiManagement = true;
+                    }
+                    // NetworkManager.addNetworkTypeListener is the active
+                    // signal; reading getCurrentNetworkType alone needs only
+                    // ACCESS_NETWORK_STATE which we'd already inject via
+                    // accessNetworkStatePermission below.
+                    if (cls.equals("com/codename1/io/NetworkManager")
+                            && method.indexOf("NetworkTypeListener") > -1) {
+                        usesNetworkTypeListener = true;
+                    }
                 }
             });
         } catch (IOException ex) {
             throw new BuildException("An error occurred while trying to scan the classes for API usage.", ex);
         }
+
+        // Apply AI/ML dependency table hits accumulated during the
+        // scan. Permissions / features go to xPermissions right
+        // away (so they're visible to all the downstream manifest
+        // assembly). Gradle deps are stashed in
+        // aiExtraGradleDependencies and appended just before
+        // additionalDependencies is written to build.gradle below.
+        StringBuilder aiExtraGradleDependencies = new StringBuilder();
+        for (AiDependencyTable.Entry entry : aiAcc.hits()) {
+            for (String perm : entry.androidPermissions()) {
+                String addString = "    <uses-permission android:name=\"" + perm + "\" />\n";
+                xPermissions += permissionAdd(request, perm, addString);
+            }
+            for (String feat : entry.androidFeatures()) {
+                String addString = "    <uses-feature android:name=\"" + feat + "\" android:required=\"false\" />\n";
+                if (!xPermissions.contains("<uses-feature android:name=\"" + feat + "\"")) {
+                    xPermissions += addString;
+                }
+            }
+            for (String gav : entry.androidGradleDeps()) {
+                aiExtraGradleDependencies.append("    implementation '").append(gav).append("'\n");
+            }
+        }
+        if (aiAcc.anyRequiresBigUpload()) {
+            request.putArgument("cn1.ai.requiresBigUpload", "true");
+        }
+
+        // Inject USE_BIOMETRIC / USE_FINGERPRINT only when the app actually
+        // touches com.codename1.security (Biometrics / SecureStorage). Both
+        // are "normal" permissions (no runtime prompt) so injecting them
+        // when used is invisible to the user; apps that never reference the
+        // API see no manifest change. If the developer already declared
+        // either permission via android.xpermissions we leave it alone.
+        if (usesBiometrics) {
+            if (!xPermissions.contains("android.permission.USE_BIOMETRIC")) {
+                xPermissions = "    <uses-permission android:name=\"android.permission.USE_BIOMETRIC\" />\n" + xPermissions;
+            }
+            if (!xPermissions.contains("android.permission.USE_FINGERPRINT")) {
+                xPermissions = "    <uses-permission android:name=\"android.permission.USE_FINGERPRINT\" android:maxSdkVersion=\"28\" />\n" + xPermissions;
+            }
+        }
+
+        // NFC: classpath scanner sets usesNfc / usesNfcHce. Both permissions
+        // are "normal" so the injection is invisible to the user; apps that
+        // never reference com.codename1.nfc see no manifest change. HCE
+        // additionally needs BIND_NFC_SERVICE and android.hardware.nfc.hce
+        // feature + a registered HostApduService.
+        if (usesNfc || "true".equalsIgnoreCase(request.getArg("android.hce", "false"))) {
+            usesNfc = true;
+            if (!xPermissions.contains("android.permission.NFC")) {
+                xPermissions = "    <uses-permission android:name=\"android.permission.NFC\" />\n" + xPermissions;
+            }
+            if (!xPermissions.contains("android.hardware.nfc")) {
+                xPermissions = "    <uses-feature android:name=\"android.hardware.nfc\" android:required=\"false\" />\n" + xPermissions;
+            }
+        }
+        if (usesNfcHce || request.getArg("android.hceAids", null) != null) {
+            usesNfcHce = true;
+            if (!xPermissions.contains("android.permission.BIND_NFC_SERVICE")) {
+                xPermissions = "    <uses-permission android:name=\"android.permission.BIND_NFC_SERVICE\" />\n" + xPermissions;
+            }
+            if (!xPermissions.contains("android.hardware.nfc.hce")) {
+                xPermissions = "    <uses-feature android:name=\"android.hardware.nfc.hce\" android:required=\"false\" />\n" + xPermissions;
+            }
+        }
+
+        // Deeper-network connectivity permission injection. Each block is
+        // gated on a flag set by the scanner above so apps that never touch
+        // the API see no manifest change. Permissions are "normal" or
+        // "runtime"; runtime permissions still need the app to call
+        // Display.requestPermission at runtime -- the manifest entry only
+        // makes them eligible to ask.
+        if (usesWifiInfo || usesWifiManagement || usesWifiDirect || usesBonjour
+                || usesNetworkTypeListener) {
+            if (!xPermissions.contains("android.permission.ACCESS_WIFI_STATE")) {
+                xPermissions = "    <uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\" />\n" + xPermissions;
+            }
+            if (!xPermissions.contains("android.permission.ACCESS_NETWORK_STATE")) {
+                xPermissions = "    <uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" />\n" + xPermissions;
+            }
+        }
+        if (usesWifiManagement || usesWifiDirect) {
+            if (!xPermissions.contains("android.permission.CHANGE_WIFI_STATE")) {
+                xPermissions = "    <uses-permission android:name=\"android.permission.CHANGE_WIFI_STATE\" />\n" + xPermissions;
+            }
+            if (!xPermissions.contains("android.permission.CHANGE_NETWORK_STATE")) {
+                xPermissions = "    <uses-permission android:name=\"android.permission.CHANGE_NETWORK_STATE\" />\n" + xPermissions;
+            }
+            // Reading the SSID/BSSID on Android 8.0+ requires a location
+            // permission; on 13+ the dedicated NEARBY_WIFI_DEVICES permission
+            // can replace it for scan-only flows. We declare both with
+            // appropriate maxSdkVersion so the right one is requested per OS.
+            if (!xPermissions.contains("android.permission.ACCESS_FINE_LOCATION")) {
+                xPermissions = "    <uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" android:maxSdkVersion=\"32\" />\n" + xPermissions;
+            }
+            if (targetSDKVersionInt >= 33
+                    && !xPermissions.contains("android.permission.NEARBY_WIFI_DEVICES")) {
+                xPermissions = "    <uses-permission android:name=\"android.permission.NEARBY_WIFI_DEVICES\" android:usesPermissionFlags=\"neverForLocation\" />\n" + xPermissions;
+            }
+        }
+        if (usesBonjour) {
+            if (!xPermissions.contains("android.permission.CHANGE_WIFI_MULTICAST_STATE")) {
+                xPermissions = "    <uses-permission android:name=\"android.permission.CHANGE_WIFI_MULTICAST_STATE\" />\n" + xPermissions;
+            }
+            // INTERNET is already in basePermissions and Bonjour over IPv6
+            // multicast inherits it transparently, so nothing extra needed.
+        }
+        if (usesUsbHost) {
+            if (!xPermissions.contains("android.hardware.usb.host")) {
+                xPermissions = "    <uses-feature android:name=\"android.hardware.usb.host\" android:required=\"false\" />\n" + xPermissions;
+            }
+        }
+
         boolean useFCM = pushPermission && "fcm".equalsIgnoreCase(request.getArg("android.messagingService", "fcm"));
         if (useFCM) {
             request.putArgument("android.fcm.minPlayServicesVersion", "12.0.1");
@@ -1729,16 +1988,14 @@ public class AndroidGradleBuilder extends Executor {
         }
 
         //String sdkVersion = request.getArg("android.targetSDKVersion", defaultVersion);
-        if (targetNumber != null) {
-            if (Integer.parseInt(targetNumber) >= 17) {
-                try {
-                    File androidBrowserComponentCallback = new File(srcDir, "com" + File.separator + "codename1" + File.separator + "impl" + File.separator + "android" + File.separator + "AndroidBrowserComponentCallback.java");
-                    replaceInFile(androidBrowserComponentCallback, "//import android.webkit.JavascriptInterface;", "import android.webkit.JavascriptInterface;");
-                    replaceInFile(androidBrowserComponentCallback, "//@JavascriptInterface", "@JavascriptInterface");
-                } catch (Exception e) {
-                    // Swallow this and continue.
-                    log("Non-fatal exception encountered when processing AndroidBrowserComponentCallback.java: " + e);
-                }
+        if (Integer.parseInt(targetNumber) >= 17) {
+            try {
+                File androidBrowserComponentCallback = new File(srcDir, "com" + File.separator + "codename1" + File.separator + "impl" + File.separator + "android" + File.separator + "AndroidBrowserComponentCallback.java");
+                replaceInFile(androidBrowserComponentCallback, "//import android.webkit.JavascriptInterface;", "import android.webkit.JavascriptInterface;");
+                replaceInFile(androidBrowserComponentCallback, "//@JavascriptInterface", "@JavascriptInterface");
+            } catch (Exception e) {
+                // Swallow this and continue.
+                log("Non-fatal exception encountered when processing AndroidBrowserComponentCallback.java: " + e);
             }
         }
 
@@ -1866,6 +2123,8 @@ public class AndroidGradleBuilder extends Executor {
                 }
                 createIconFile(new File(drawableDir, "ic_stat_notify.png"), iconImage, 24, 24);
             }
+
+            processLocalizedIcons(assetsDir, resDir, enableAdaptiveIcons, iconImage);
         } catch (IOException ex) {
             throw new BuildException("Failed to generate icon files", ex);
         }
@@ -2051,6 +2310,35 @@ public class AndroidGradleBuilder extends Executor {
             storeIds = "";
         }
 
+        // Native modern theme hints - propagated to Display.getProperty so
+        // AndroidImplementation.installNativeTheme() can pick the
+        // material / hololight / legacy variant. and.themeMode is the
+        // current platform-specific knob (cn1.androidTheme is honored as a
+        // deprecated alias). nativeTheme is the cross-platform shortcut
+        // (cn1.nativeTheme is its deprecated alias).
+        String andThemeHint = request.getArg("and.themeMode", null);
+        String androidThemeHint = request.getArg("cn1.androidTheme", null);
+        String nativeThemeHintNew = request.getArg("nativeTheme", null);
+        String nativeThemeHint = request.getArg("cn1.nativeTheme", null);
+        StringBuilder nativeThemeProps = new StringBuilder();
+        if (andThemeHint != null) {
+            nativeThemeProps.append("        Display.getInstance().setProperty(\"and.themeMode\", \"")
+                    .append(andThemeHint).append("\");\n");
+        }
+        if (androidThemeHint != null) {
+            nativeThemeProps.append("        Display.getInstance().setProperty(\"cn1.androidTheme\", \"")
+                    .append(androidThemeHint).append("\");\n");
+        }
+        if (nativeThemeHintNew != null) {
+            nativeThemeProps.append("        Display.getInstance().setProperty(\"nativeTheme\", \"")
+                    .append(nativeThemeHintNew).append("\");\n");
+        }
+        if (nativeThemeHint != null) {
+            nativeThemeProps.append("        Display.getInstance().setProperty(\"cn1.nativeTheme\", \"")
+                    .append(nativeThemeHint).append("\");\n");
+        }
+        String nativeThemeStubProps = nativeThemeProps.toString();
+
         String gcmSenderId = request.getArg("gcm.sender_id", null);
         if (gcmSenderId != null) {
             gcmSenderId = "        Display.getInstance().setProperty(\"gcm.sender_id\", \"" + gcmSenderId + "\");\n";
@@ -2120,10 +2408,132 @@ public class AndroidGradleBuilder extends Executor {
         String backgroundFetchService = "<service android:name=\"com.codename1.impl.android.BackgroundFetchHandler\" android:exported=\"false\" />\n"+
                 "<activity android:name=\"com.codename1.impl.android.CodenameOneBackgroundFetchActivity\" android:theme=\"@android:style/Theme.NoDisplay\" android:exported=\"true\"/>\n";
 
+        // Constraint-aware background work always registers the JobScheduler service
+        // (harmless when unused). The foreground service entry is emitted only when the
+        // app references com.codename1.background.ForegroundService.
+        String backgroundWorkService = "<service android:name=\"com.codename1.impl.android.CodenameOneJobService\" android:permission=\"android.permission.BIND_JOB_SERVICE\" android:exported=\"false\" />\n";
+        String foregroundServiceEntry = "";
+        if (usesForegroundService) {
+            foregroundServicePermission = true;
+            String foregroundServiceType = request.getArg("android.foregroundServiceType", "dataSync");
+            foregroundServiceEntry = "<service android:name=\"com.codename1.impl.android.CodenameOneForegroundService\" android:exported=\"false\" android:foregroundServiceType=\"" + foregroundServiceType + "\" />\n";
+        }
+
+        // Receive-shared-content: register the share receiver activity with SEND /
+        // SEND_MULTIPLE intent filters for the mime types named by android.shareFilter
+        // (comma separated). When the app references SharedContent but sets no explicit
+        // filter, fall back to text and any stream. Empty when the app does not opt in.
+        String shareFilterArg = request.getArg("android.shareFilter", "");
+        if ((shareFilterArg == null || shareFilterArg.trim().length() == 0) && usesSharedContent) {
+            shareFilterArg = "text/plain,*/*";
+        }
+        String shareReceiverActivity = "";
+        if (shareFilterArg != null && shareFilterArg.trim().length() > 0) {
+            StringBuilder dataLines = new StringBuilder();
+            for (String mime : shareFilterArg.split(",")) {
+                String m = mime.trim();
+                if (m.length() > 0) {
+                    dataLines.append("        <data android:mimeType=\"").append(m).append("\" />\n");
+                }
+            }
+            shareReceiverActivity = "<activity android:name=\"com.codename1.impl.android.CodenameOneShareReceiverActivity\" android:exported=\"true\" android:theme=\"@android:style/Theme.NoDisplay\" android:launchMode=\"singleTop\">\n"
+                    + "    <intent-filter>\n"
+                    + "        <action android:name=\"android.intent.action.SEND\" />\n"
+                    + "        <category android:name=\"android.intent.category.DEFAULT\" />\n"
+                    + dataLines
+                    + "    </intent-filter>\n"
+                    + "    <intent-filter>\n"
+                    + "        <action android:name=\"android.intent.action.SEND_MULTIPLE\" />\n"
+                    + "        <category android:name=\"android.intent.category.DEFAULT\" />\n"
+                    + dataLines
+                    + "    </intent-filter>\n"
+                    + "</activity>\n";
+        }
+
+        // Host card emulation service is generated only when the classpath
+        // scanner saw a HostCardEmulationService reference (or the developer
+        // set the android.hceAids build hint). The matching apduservice.xml
+        // resource is created below.
+        String hceService = "";
+        if (usesNfcHce) {
+            String hceCategory = request.getArg("android.hceCategory", "other");
+            hceService = "<service android:name=\"com.codename1.impl.android.CodenameOneHostApduService\"\n"
+                    + "            android:exported=\"true\"\n"
+                    + "            android:permission=\"android.permission.BIND_NFC_SERVICE\">\n"
+                    + "            <intent-filter>\n"
+                    + "                <action android:name=\"android.nfc.cardemulation.action.HOST_APDU_SERVICE\" />\n"
+                    + "                <category android:name=\"android.intent.category.DEFAULT\" />\n"
+                    + "            </intent-filter>\n"
+                    + "            <meta-data android:name=\"android.nfc.cardemulation.host_apdu_service\"\n"
+                    + "                       android:resource=\"@xml/apduservice\" />\n"
+                    + "        </service>\n";
+
+            // apduservice.xml is required by Android to declare the AID
+            // groups this HCE service answers. Generate it from the
+            // android.hceAids build hint (comma-separated). Default is a
+            // sensible placeholder that the developer should override.
+            String aids = request.getArg("android.hceAids", "F0010203040506");
+            String desc = request.getArg("android.hceDescription",
+                    request.getDisplayName());
+            StringBuilder apduXml = new StringBuilder();
+            apduXml.append("<host-apdu-service xmlns:android=\"http://schemas.android.com/apk/res/android\"\n");
+            apduXml.append("                   android:description=\"@string/app_name\"\n");
+            apduXml.append("                   android:requireDeviceUnlock=\"")
+                   .append(request.getArg("android.hceRequireUnlock", "false"))
+                   .append("\">\n");
+            apduXml.append("    <aid-group android:description=\"@string/app_name\"\n");
+            apduXml.append("               android:category=\"").append(hceCategory).append("\">\n");
+            for (String aid : aids.split("[,;]")) {
+                aid = aid.trim();
+                if (aid.length() == 0) {
+                    continue;
+                }
+                apduXml.append("        <aid-filter android:name=\"")
+                       .append(aid).append("\" />\n");
+            }
+            apduXml.append("    </aid-group>\n");
+            apduXml.append("</host-apdu-service>\n");
+            File hceXmlDir = new File(projectDir, "src/main/res/xml");
+            hceXmlDir.mkdirs();
+            try {
+                OutputStream apduStream = new FileOutputStream(
+                        new File(hceXmlDir, "apduservice.xml"));
+                apduStream.write(apduXml.toString().getBytes(StandardCharsets.UTF_8));
+                apduStream.close();
+            } catch (IOException ex) {
+                throw new BuildException("Failed to write apduservice.xml", ex);
+            }
+            debug("Generated apduservice.xml with AIDs: " + aids);
+            // Suppress the unused warning when desc is not consumed (the
+            // description string itself is taken from @string/app_name).
+            if (desc != null) {
+                debug("HCE description: " + desc);
+            }
+        }
+
 
         if (foregroundServicePermission) {
             permissions += permissionAdd(request, "\"android.permission.FOREGROUND_SERVICE\"",
                     "    <uses-permission android:name=\"android.permission.FOREGROUND_SERVICE\" />\n");
+        }
+
+        // When the Codename One ForegroundService helper is used, Android 14 (API 34)
+        // additionally requires the per-type FOREGROUND_SERVICE_<TYPE> permission matching
+        // the service's foregroundServiceType (default dataSync). Inject it automatically;
+        // it is not a restricted permission.
+        if (usesForegroundService) {
+            String fgType = request.getArg("android.foregroundServiceType", "dataSync");
+            String fgPerm = "android.permission.FOREGROUND_SERVICE_" + fgType.toUpperCase();
+            permissions += permissionAdd(request, "\"" + fgPerm + "\"",
+                    "    <uses-permission android:name=\"" + fgPerm + "\" />\n");
+        }
+
+        // USE_FULL_SCREEN_INTENT (required on Android 14+ for LocalNotification.setFullScreenIntent)
+        // is a restricted permission Google only allows for calling/alarm apps, so it is
+        // opt-in via the android.fullScreenIntent build hint rather than auto-injected.
+        if ("true".equals(request.getArg("android.fullScreenIntent", "false"))) {
+            permissions += permissionAdd(request, "\"android.permission.USE_FULL_SCREEN_INTENT\"",
+                    "    <uses-permission android:name=\"android.permission.USE_FULL_SCREEN_INTENT\" />\n");
         }
 
         if (postNotificationsPermission) {
@@ -2317,6 +2727,14 @@ public class AndroidGradleBuilder extends Executor {
             allowBackup = "";
         }
 
+        // On-device debugging needs the application to be marked debuggable so the
+        // runtime hands out a JDWP socket per-process. Idempotent: skip if the user
+        // already declared android:debuggable via android.xapplication_attr.
+        String debuggableAttr = "";
+        if (onDeviceDebug && !applicationAttr.contains("android:debuggable")) {
+            debuggableAttr = " android:debuggable=\"true\" ";
+        }
+
         String applicationNode = "  <application ";
         if (!applicationAttr.contains("android:label")) {
             applicationNode += " android:label=\"" + xmlizedDisplayName + "\" ";
@@ -2336,6 +2754,7 @@ public class AndroidGradleBuilder extends Executor {
 
         applicationNode += applicationAttr;
         applicationNode += allowBackup;
+        applicationNode += debuggableAttr;
         applicationNode += ">\n";
 
 
@@ -2455,9 +2874,13 @@ public class AndroidGradleBuilder extends Executor {
                 + backgroundLocationReceiver
                 + mediabuttonReceiver
                 + backgroundFetchService
+                + backgroundWorkService
+                + foregroundServiceEntry
+                + shareReceiverActivity
                 + locationServices
                 + mediaService
                 + remoteControlService
+                + hceService
                 + "    </application>\n"
                 + "    <uses-feature android:name=\"android.hardware.touchscreen\" android:required=\"false\" />\n"
                 + basePermissions
@@ -2516,14 +2939,39 @@ public class AndroidGradleBuilder extends Executor {
                 + "            if(intent != null && intent.getExtras() != null && intent.getExtras().containsKey(\"LocalNotificationID\")){\n"
                 + "                String id = intent.getExtras().getString(\"LocalNotificationID\");\n"
                 + "                intent.removeExtra(\"LocalNotificationID\");\n"
+                + "                if(intent.getExtras() != null && intent.getExtras().containsKey(\"LocalNotificationActionId\")){\n"
+                + "                    com.codename1.push.PushContent.reset();\n"
+                + "                    String actionId = intent.getExtras().getString(\"LocalNotificationActionId\");\n"
+                + "                    com.codename1.push.PushContent.setActionId(actionId);\n"
+                + "                    com.codename1.push.PushContent.setActionTitle(intent.getExtras().getString(\"LocalNotificationActionTitle\"));\n"
+                + "                    intent.removeExtra(\"LocalNotificationActionId\");\n"
+                + "                    intent.removeExtra(\"LocalNotificationActionTitle\");\n"
+                + "                    if(com.codename1.impl.android.compat.app.RemoteInputWrapper.isSupported()){\n"
+                + "                        android.os.Bundle textExtras = com.codename1.impl.android.compat.app.RemoteInputWrapper.getResultsFromIntent(intent);\n"
+                + "                        if(textExtras != null){\n"
+                + "                            CharSequence cs = textExtras.getCharSequence(actionId + \"$Result\");\n"
+                + "                            if(cs != null){ com.codename1.push.PushContent.setTextResponse(cs.toString()); }\n"
+                + "                        }\n"
+                + "                    }\n"
+                + "                }\n"
                 + "                ((com.codename1.notifications.LocalNotificationCallback)i).localNotificationReceived(id);\n"
                 + "            }\n"
-                + "        }\n";
+                + "        }\n"
+                + "        com.codename1.impl.android.AndroidImplementation.setCurrentApplicationInstance(i);\n"
+                + "        com.codename1.impl.android.AndroidImplementation.deliverPendingSharedContent();\n";
 
 
-        String reinitCode0 = "Display.init(this);\n";
+        // Install the build-time-generated @Route dispatcher before the
+        // first Display init. The reinit branch doesn't repeat the call
+        // because Navigation#setDispatcher writes a static field that
+        // survives a Display reinit. See Executor#routeDispatcher
+        // InstallSource for the conditional emission and obfuscation
+        // reasoning.
+        String installRoutes = routeDispatcherInstallSource(sourceZip, "        ");
+        String installFrameworks = annotationFrameworksInstallSource(sourceZip, "        ");
 
-        reinitCode0 = "AndroidImplementation.startContext(this);\n";
+        String reinitCode0 = installRoutes + installFrameworks
+                + "        AndroidImplementation.startContext(this);\n";
 
         String reinitCode = "Display.init(this);\n";
 
@@ -2615,6 +3063,17 @@ public class AndroidGradleBuilder extends Executor {
 
 
         File stubFileSourceFile = new File(stubFileSourceDir, request.getMainClass() + "Stub.java");
+
+        // If the build-time SVG transcoder produced a registry class, weave
+        // its installGlobal() call into the Stub right before the first
+        // i.init(this) so theme.getImage("foo.svg") returns the transcoded
+        // SVG immediately. Skipped silently for apps without any SVGs.
+        String svgRegistryInstall = "";
+        File svgRegistryClassFile = new File(dummyClassesDir,
+                "com/codename1/generated/svg/SVGRegistry.class");
+        if (svgRegistryClassFile.isFile()) {
+            svgRegistryInstall = "            com.codename1.generated.svg.SVGRegistry.installGlobal();\n";
+        }
         String consumableCode;
         consumableCode = "public boolean isConsumable(String sku) {\n"
                 + "  boolean retVal = super.isConsumable(sku);\n"
@@ -2770,6 +3229,7 @@ public class AndroidGradleBuilder extends Executor {
                     + reinitCode0
                     + storeIds
                     + gcmSenderId
+                    + nativeThemeStubProps
                     + "        Display.getInstance().setProperty(\"build_key\", d(BUILD_KEY));\n"
                     + "        Display.getInstance().setProperty(\"package_name\", PACKAGE_NAME);\n"
                     + "        Display.getInstance().setProperty(\"built_by_user\", d(BUILT_BY_USER));\n"
@@ -2894,6 +3354,7 @@ public class AndroidGradleBuilder extends Executor {
                             + "    public void run(Form currentForm, boolean wasStopped) {\n"
                             + "        if(firstTime) {\n"
                             + "            firstTime = false;\n"
+                            + svgRegistryInstall
                             + "            i.init(this);\n"
                             + fcmRegisterPushCode
                             + "         } else {\n"
@@ -3567,6 +4028,40 @@ public class AndroidGradleBuilder extends Executor {
             additionalDependencies += " implementation 'com.android.billingclient:billing:"+billingClientVersion+"'\n";
         }
 
+        // OidcClient routes sign-in through androidx.browser Custom Tabs.
+        // Pull the browser dep in automatically when the app references
+        // anything in com.codename1.io.oidc -- otherwise apps that don't
+        // touch the API pay nothing.
+        if (usesOidc && useAndroidX) {
+            String customTabsVersion = request.getArg("android.customTabsVersion", "1.8.0");
+            if (!additionalDependencies.contains("androidx.browser:browser")
+                    && !request.getArg("android.gradleDep", "").contains("androidx.browser:browser")) {
+                additionalDependencies +=
+                        " implementation 'androidx.browser:browser:" + customTabsVersion + "'\n";
+            }
+        }
+
+        // WebAuthn / passkeys drive androidx.credentials.CredentialManager.
+        // Passkey support on devices without a system-level provider also
+        // requires credentials-play-services-auth, so we inject both here.
+        // The versions can be overridden by the user via build hints.
+        if (usesWebauthn && useAndroidX) {
+            String credentialsVersion = request.getArg(
+                    "android.credentialsVersion", "1.3.0");
+            String credentialsPlayVersion = request.getArg(
+                    "android.credentialsPlayServicesVersion", credentialsVersion);
+            if (!additionalDependencies.contains("androidx.credentials:credentials")
+                    && !request.getArg("android.gradleDep", "")
+                            .contains("androidx.credentials:credentials")) {
+                additionalDependencies +=
+                        " implementation 'androidx.credentials:credentials:"
+                                + credentialsVersion + "'\n";
+                additionalDependencies +=
+                        " implementation 'androidx.credentials:credentials-play-services-auth:"
+                                + credentialsPlayVersion + "'\n";
+            }
+        }
+
         String useLegacyApache = "";
         if (request.getArg("android.apacheLegacy", "false").equals("true")) {
             useLegacyApache = " useLibrary 'org.apache.http.legacy'\n";
@@ -3847,6 +4342,7 @@ public class AndroidGradleBuilder extends Executor {
                 + request.getArg("android.supportv4Dep",supportV4Default) + "\n"
                 + kotlinRuntimeDependency
                 + addNewlineIfMissing(additionalDependencies)
+                + addNewlineIfMissing(aiExtraGradleDependencies.toString())
                 + addNewlineIfMissing(request.getArg("android.gradleDep", ""))
                 + addNewlineIfMissing(aarDependencies)
                 + "}\n"
@@ -4113,6 +4609,26 @@ public class AndroidGradleBuilder extends Executor {
                 retVal += "com.codename1.social.GoogleImpl.init();\n";
                 retVal += "com.codename1.impl.android.AndroidNativeUtil.addLifecycleListener((com.codename1.impl.android.LifecycleListener) com.codename1.social.GoogleConnect.getInstance());\n";
 
+        }
+
+        // OidcClient / SystemBrowser bootstrap on Android: register the
+        // Custom-Tabs-backed provider so the core SystemBrowser can route
+        // through it without falling back to BrowserWindow.
+        if (usesOidc) {
+            retVal += "com.codename1.io.oidc.OidcBrowserNativeImpl.init();\n";
+        }
+        // AppleSignIn bootstrap. Android's impl is a no-op stub that reports
+        // isSupported() = false, which makes AppleSignIn fall through to its
+        // OidcClient-backed web flow. We still register so the lookup is
+        // deterministic rather than relying on Class.forName.
+        if (usesAppleSignIn) {
+            retVal += "com.codename1.social.AppleSignInNativeImpl.init();\n";
+        }
+        // WebAuthn / passkeys bootstrap. Wires the CredentialManager-backed
+        // native impl so WebAuthnClient.isSupported() works without any
+        // user-side setup.
+        if (usesWebauthn) {
+            retVal += "com.codename1.io.webauthn.WebAuthnNativeImpl.init();\n";
         }
 
         if (request.getArg("android.web_loading_hidden", "false").equalsIgnoreCase("true")) {
@@ -4428,6 +4944,129 @@ public class AndroidGradleBuilder extends Executor {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Scans the assets directory for cn1_icon_LANG[_COUNTRY].png files and
+     * copies a sized variant into each locale-qualified drawable (and, when
+     * adaptive icons are enabled, mipmap) directory so Android automatically
+     * picks up the correct launcher icon at runtime based on the device
+     * locale. Source files are removed from assetsDir so they are not shipped
+     * as stray assets.
+     *
+     * <p>When a region-qualified icon (e.g. cn1_icon_ar_AE.png) is supplied
+     * without a matching language-only counterpart (cn1_icon_ar.png), the
+     * default app icon is also written to drawable-&lt;lang&gt;/ (and the
+     * matching mipmap-*-&lt;lang&gt;/ directories). This is required to
+     * suppress Android's sibling-locale fallback: starting with API 24 the
+     * resource resolver, when it can't find an exact (ar-rPK) or parent (ar)
+     * match, walks every child of the parent locale and would otherwise pick
+     * ar-rAE for an ar-PK user. Inserting the default icon at the parent
+     * level short-circuits that lookup so only devices whose region matches
+     * the supplied variant receive it.</p>
+     */
+    private void processLocalizedIcons(File assetsDir, File resDir, boolean enableAdaptiveIcons,
+            BufferedImage defaultIcon) throws IOException {
+        File[] candidates = assetsDir.listFiles(new FilenameFilter() {
+            @Override
+            public boolean accept(File dir, String name) {
+                String lower = name.toLowerCase();
+                return lower.startsWith("cn1_icon_") && lower.endsWith(".png");
+            }
+        });
+        if (candidates == null || candidates.length == 0) {
+            return;
+        }
+        Set<String> languagesWithRegion = new HashSet<String>();
+        Set<String> languagesWithLanguageOnly = new HashSet<String>();
+        for (File candidate : candidates) {
+            String name = candidate.getName();
+            String core = name.substring("cn1_icon_".length(), name.length() - ".png".length());
+            String[] parts = core.split("_");
+            if (parts.length < 1 || parts[0].length() != 2) {
+                continue;
+            }
+            String lang = parts[0].toLowerCase();
+            if (parts.length >= 2 && parts[1].length() == 2) {
+                languagesWithRegion.add(lang);
+            } else {
+                languagesWithLanguageOnly.add(lang);
+            }
+        }
+        for (File candidate : candidates) {
+            String name = candidate.getName();
+            String core = name.substring("cn1_icon_".length(), name.length() - ".png".length());
+            String[] parts = core.split("_");
+            if (parts.length < 1 || parts[0].length() != 2) {
+                log("Ignoring localized icon with unsupported name: " + name
+                        + ". Expected cn1_icon_<lang>[_<country>].png");
+                continue;
+            }
+            String lang = parts[0].toLowerCase();
+            String country = parts.length >= 2 && parts[1].length() == 2 ? parts[1].toUpperCase() : null;
+            String qualifier = country != null ? "-" + lang + "-r" + country : "-" + lang;
+
+            BufferedImage img = ImageIO.read(candidate);
+            if (img == null) {
+                log("Localized icon " + name + " is not a valid PNG image. Skipping.");
+                candidate.delete();
+                continue;
+            }
+
+            writeLocalizedIconSet(resDir, qualifier, img, enableAdaptiveIcons);
+
+            candidate.delete();
+            log("Registered localized launcher icon for qualifier " + qualifier + " (" + name + ")");
+        }
+
+        for (String lang : languagesWithRegion) {
+            if (languagesWithLanguageOnly.contains(lang)) {
+                continue;
+            }
+            String qualifier = "-" + lang;
+            writeLocalizedIconSet(resDir, qualifier, defaultIcon, enableAdaptiveIcons);
+            log("Registered default-icon barrier for qualifier " + qualifier
+                    + " to suppress Android sibling-locale fallback");
+        }
+    }
+
+    private void writeLocalizedIconSet(File resDir, String qualifier, BufferedImage img,
+            boolean enableAdaptiveIcons) throws IOException {
+        createIconFile(makeLocalizedDir(resDir, "drawable", qualifier, "icon.png"), img, 128, 128);
+        createIconFile(makeLocalizedDir(resDir, "drawable-hdpi", qualifier, "icon.png"), img, 72, 72);
+        createIconFile(makeLocalizedDir(resDir, "drawable-ldpi", qualifier, "icon.png"), img, 36, 36);
+        createIconFile(makeLocalizedDir(resDir, "drawable-mdpi", qualifier, "icon.png"), img, 48, 48);
+        createIconFile(makeLocalizedDir(resDir, "drawable-xhdpi", qualifier, "icon.png"), img, 96, 96);
+        createIconFile(makeLocalizedDir(resDir, "drawable-xxhdpi", qualifier, "icon.png"), img, 144, 144);
+        createIconFile(makeLocalizedDir(resDir, "drawable-xxxhdpi", qualifier, "icon.png"), img, 192, 192);
+
+        if (enableAdaptiveIcons) {
+            createIconFile(makeLocalizedDir(resDir, "mipmap-mdpi", qualifier, "ic_launcher.png"), img, 48, 48);
+            createIconFile(makeLocalizedDir(resDir, "mipmap-hdpi", qualifier, "ic_launcher.png"), img, 72, 72);
+            createIconFile(makeLocalizedDir(resDir, "mipmap-xhdpi", qualifier, "ic_launcher.png"), img, 96, 96);
+            createIconFile(makeLocalizedDir(resDir, "mipmap-xxhdpi", qualifier, "ic_launcher.png"), img, 144, 144);
+            createIconFile(makeLocalizedDir(resDir, "mipmap-xxxhdpi", qualifier, "ic_launcher.png"), img, 192, 192);
+
+            createIconFile(makeLocalizedDir(resDir, "mipmap-mdpi", qualifier, "ic_launcher_foreground.png"), img, 108, 108);
+            createIconFile(makeLocalizedDir(resDir, "mipmap-hdpi", qualifier, "ic_launcher_foreground.png"), img, 162, 162);
+            createIconFile(makeLocalizedDir(resDir, "mipmap-xhdpi", qualifier, "ic_launcher_foreground.png"), img, 216, 216);
+            createIconFile(makeLocalizedDir(resDir, "mipmap-xxhdpi", qualifier, "ic_launcher_foreground.png"), img, 324, 324);
+            createIconFile(makeLocalizedDir(resDir, "mipmap-xxxhdpi", qualifier, "ic_launcher_foreground.png"), img, 432, 432);
+        }
+    }
+
+    private File makeLocalizedDir(File resDir, String baseDirName, String qualifier, String childFileName) {
+        // Android requires resource qualifiers in a fixed order: locale must come
+        // before density. Insert the locale qualifier right after the base name so
+        // "drawable-xhdpi" becomes "drawable-<locale>-xhdpi" rather than the
+        // invalid "drawable-xhdpi-<locale>".
+        int dash = baseDirName.indexOf('-');
+        String dirName = dash < 0
+                ? baseDirName + qualifier
+                : baseDirName.substring(0, dash) + qualifier + baseDirName.substring(dash);
+        File dir = new File(resDir, dirName);
+        dir.mkdirs();
+        return new File(dir, childFileName);
     }
 
     private String permissionAdd(BuildRequest request, String permission, String text) {
@@ -4778,4 +5417,5 @@ public class AndroidGradleBuilder extends Executor {
             }
         }
     }
+
 }

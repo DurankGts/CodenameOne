@@ -17,45 +17,74 @@
  * 2 along with this work; if not, write to the Free Software Foundation,
  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
  * 
- * Please contact Codename One through http://www.codenameone.com/ if you 
+ * Please contact Codename One through http://www.codenameone.com/ if you
  * need additional information or have any questions.
  */
+#import "CN1ES2compat.h"
 #ifdef CN1_USE_METAL
 #import <UIKit/UIKit.h>
+#import <QuartzCore/CAMetalLayer.h>
 
 @import Metal;
+@import simd;
 #import "GLUIImage.h"
+#import "CN1RenderingView.h"
 
 
-// This class wraps the CAEAGLLayer from CoreAnimation into a convenient UIView subclass.
-// The view content is basically an EAGL surface you render your OpenGL scene into.
-// Note that setting the view non-opaque will only work if the EAGL surface has an alpha channel.
-@interface METALView : UIView<UITextViewDelegate, UITextFieldDelegate> {
+// Metal-backed rendering view. Wraps a CAMetalLayer into a UIView subclass.
+// Gated by CN1_USE_METAL; the OpenGL ES 2 backend (EAGLView) is the default.
+@interface METALView : UIView<UITextViewDelegate, UITextFieldDelegate, CN1RenderingView> {
 @private
-    // The pixel dimensions of the CAEAGLLayer.
+    // The pixel dimensions of the CAMetalLayer's drawable.
     int framebufferWidth;
     int framebufferHeight;
-    
-    // The OpenGL ES names for the framebuffer and renderbuffer used to render to this view.
-    GLuint defaultFramebuffer, colorRenderbuffer;
-    
+
+    // Orthographic projection matrix sized to (framebufferWidth, framebufferHeight).
+    // Rebuilt by updateFrameBufferSize:h: and uploaded to shaders as a uniform.
+    simd_float4x4 projectionMatrix;
+
+    // Set by updateFrameBufferSize: when a resize preserved a previous frame in
+    // screenTexture and that frame still needs to be pushed onto the layer to
+    // avoid a rotation black flash (#5162). Consumed (cleared) either by the
+    // deferred presentPreservedFrameIfNeeded that runs on the next main-runloop
+    // turn or by the next normal presentFramebuffer -- whichever lands first.
+    // Read/written on the main thread only, so no synchronisation is needed.
+    BOOL needsResizePresent;
 }
-@property (nonatomic, retain) MTLCommandQueue* commandQueue;
-@property (nonatomic, retain) MTLCommandBuffer* commandBuffer;
+@property (nonatomic, retain) id<MTLCommandQueue> commandQueue;
+@property (nonatomic, retain) id<MTLCommandBuffer> commandBuffer;
 @property (nonatomic, retain) MTLRenderPassDescriptor* renderPassDescriptor;
-@property (nonatomic, retain) MTLRenderCommandEncoder* renderCommandEncoder;
-@property (nonatomic, retain) MTLDrawable* drawable;
+@property (nonatomic, retain) id<MTLRenderCommandEncoder> renderCommandEncoder;
+@property (nonatomic, retain) id<CAMetalDrawable> drawable;
+// Persistent offscreen render target that accumulates ops across frames.
+// CN1's drawFrame only queues the ops that have changed since the previous
+// frame; on OpenGL the renderbuffer persists, so that works. Metal drawables
+// are ephemeral (each is cleared on acquire), so we render into this
+// reusable texture and blit it to the drawable at present time.
+@property (nonatomic, retain) id<MTLTexture> screenTexture;
+// Stencil8 attachment used for polygon-shape clipping (#3921). Same
+// dimensions as screenTexture; cleared at the start of every frame so
+// reference-value-counter stencil reuse never crosses frame boundaries.
+// Pipeline states declare stencilAttachmentPixelFormat = Stencil8 even
+// though most draws bind an "always-pass / no-write" depth-stencil state
+// so they're functionally stencil-free; only the polygon-clip path
+// engages the stencil via ClipRect.m's CN1MetalApplyPolygonStencilClip
+// helper.
+@property (nonatomic, retain) id<MTLTexture> stencilTexture;
 @property (nonatomic, retain) UIView* peerComponentsLayer;
+@property (nonatomic, readonly) int framebufferWidth;
+@property (nonatomic, readonly) int framebufferHeight;
+@property (nonatomic, readonly) simd_float4x4 projectionMatrix;
 
 -(void)textViewDidChange:(UITextView *)textView;
 -(void)deleteFramebuffer;
 - (void)setFramebuffer;
 - (BOOL)presentFramebuffer;
+-(void)presentPreservedFrameIfNeeded;
 -(void)updateFrameBufferSize:(int)w h:(int)h;
 -(void)textFieldDidChange;
 -(void) keyboardDoneClicked;
 -(void) keyboardNextClicked;
 -(void) addPeerComponent:(UIView*) view;
--(void) removePeerComponent:(UIView*) view;
 @end
 #endif

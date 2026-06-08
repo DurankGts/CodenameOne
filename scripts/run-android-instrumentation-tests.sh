@@ -44,8 +44,8 @@ cd "$REPO_ROOT"
 CN1SS_HELPER_SOURCE_DIR="$SCRIPT_DIR/common/java"
 source "$SCRIPT_DIR/lib/cn1ss.sh"
 
-if [ ! -f "$CN1SS_HELPER_SOURCE_DIR/$CN1SS_MAIN_CLASS.java" ]; then
-  ra_log "Missing CN1SS helper: $CN1SS_HELPER_SOURCE_DIR/$CN1SS_MAIN_CLASS.java" >&2
+if [ ! -f "$CN1SS_HELPER_SOURCE_DIR/Cn1ssScreenshotServer.java" ]; then
+  ra_log "Missing CN1SS helper: $CN1SS_HELPER_SOURCE_DIR/Cn1ssScreenshotServer.java" >&2
   exit 3
 fi
 cn1ss_log() { ra_log "$1"; }
@@ -83,6 +83,19 @@ if [ ! -x "$TARGET_JAVA_BIN" ]; then
 fi
 
 cn1ss_setup "$TARGET_JAVA_BIN" "$CN1SS_HELPER_SOURCE_DIR"
+
+# Start the host-side WebSocket screenshot server on the fixed standard port.
+# The Android emulator reaches the host loopback via 10.0.2.2, so the device-
+# runner defaults to ws://10.0.2.2:8765 with no per-launch injection. PNGs the
+# app sends land directly in $WS_RAW_DIR; if WS delivers nothing the legacy
+# logcat base64 decode below is used instead, so this is purely additive.
+WS_RAW_DIR="$SCREENSHOT_TMP_DIR/ws"
+ensure_dir "$WS_RAW_DIR"
+if cn1ss_start_ws_server "$WS_RAW_DIR"; then
+  ra_log "WebSocket screenshot server listening on port ${CN1SS_WS_PORT} (out=$WS_RAW_DIR)"
+else
+  ra_log "WebSocket screenshot server did not start; relying on logcat base64 fallback"
+fi
 
 [ -d "$GRADLE_PROJECT_DIR" ] || { ra_log "Gradle project directory not found: $GRADLE_PROJECT_DIR"; exit 4; }
 [ -x "$GRADLE_PROJECT_DIR/gradlew" ] || chmod +x "$GRADLE_PROJECT_DIR/gradlew"
@@ -139,6 +152,16 @@ ADB_BIN="$(command -v adb)"
 ra_log "ADB connected devices:"
 "$ADB_BIN" devices -l | sed 's/^/[run-android-instrumentation-tests]   /'
 
+# Bump the device-side logcat ring buffer before clearing it. The default on
+# Android emulators is 256K-1M per buffer, which is too small for our test
+# suite: a single screenshot can emit ~70 base64 chunk lines (~500 bytes
+# each), and across 90+ tests the main buffer has been observed to wrap
+# mid-suite, dropping a chunk line and causing `Cn1ssChunkTools` to fail
+# reassembly with a gap error. 16 MiB is plenty for a single suite run and
+# matches what `adb logcat -G` accepts on every supported emulator image.
+# Failing to set the buffer is non-fatal — older platforms silently ignore -G.
+ra_log "Bumping device logcat ring buffer to 16M (mitigates chunk-line drops)"
+"$ADB_BIN" logcat -G 16M >/dev/null 2>&1 || true
 ra_log "Clearing logcat buffer"
 "$ADB_BIN" logcat -c || true
 
@@ -213,81 +236,40 @@ else
   fi
 fi
 
-declare -a CN1SS_SOURCES=("LOGCAT:$TEST_LOG")
+# The instrumentation run has finished; stop the WS server and adopt whatever
+# it received. One <test>.png per delivered screenshot is in $WS_RAW_DIR. When
+# WS delivered at least one image we use that set and skip the legacy logcat
+# base64 decode entirely.
+cn1ss_stop_ws_server
+declare -a COMPARE_ENTRIES=()
+# Declared here (not only inside the legacy branch below) so the post-report
+# guards that reference them still work on the WS path, which skips that branch.
+declare -a FAILED_TESTS=()
+declare -a TEST_NAMES=()
+WS_DELIVERED=0
+if [ -d "${WS_RAW_DIR:-}" ]; then
+  for ws_png in "$WS_RAW_DIR"/*.png; do
+    [ -s "$ws_png" ] || continue
+    ws_test="$(basename "$ws_png" .png)"
+    ws_dest="$SCREENSHOT_TMP_DIR/${ws_test}.png"
+    cp -f "$ws_png" "$ws_dest" 2>/dev/null || continue
+    COMPARE_ENTRIES+=("${ws_test}=${ws_dest}")
+    WS_DELIVERED=$(( WS_DELIVERED + 1 ))
+  done
+fi
+if [ "$WS_DELIVERED" -gt 0 ]; then
+  ra_log "WebSocket transport delivered ${WS_DELIVERED} screenshot(s); using WS path (logcat decode skipped)"
+fi
 
-
-# ---- Chunk accounting (diagnostics) ---------------------------------------
-
-LOGCAT_CHUNKS="$(cn1ss_count_chunks "$TEST_LOG")"
-LOGCAT_CHUNKS="${LOGCAT_CHUNKS//[^0-9]/}"; : "${LOGCAT_CHUNKS:=0}"
-
-ra_log "Chunk counts -> logcat: ${LOGCAT_CHUNKS}"
-
-if [ "${LOGCAT_CHUNKS:-0}" = "0" ]; then
-  ra_log "STAGE:MARKERS_NOT_FOUND -> DeviceRunner output did not include CN1SS chunks"
+# WebSocket is the only transport now. If it delivered nothing the on-device
+# suite either never ran or produced no screenshots -- fail loudly; there is
+# no logcat base64 fallback any more.
+if [ "$WS_DELIVERED" -eq 0 ]; then
+  ra_log "STAGE:MARKERS_NOT_FOUND -> no screenshots delivered over WebSocket"
   ra_log "---- CN1SS lines from logcat ----"
   (grep "CN1SS:" "$TEST_LOG" || true) | sed 's/^/[CN1SS] /'
   exit 12
 fi
-
-# ---- Identify CN1SS test streams -----------------------------------------
-
-TEST_NAMES_RAW="$(cn1ss_list_tests "$TEST_LOG" 2>/dev/null | awk 'NF' | sort -u || true)"
-declare -a TEST_NAMES=()
-if [ -n "$TEST_NAMES_RAW" ]; then
-  while IFS= read -r name; do
-    [ -n "$name" ] || continue
-    TEST_NAMES+=("$name")
-  done <<< "$TEST_NAMES_RAW"
-else
-  TEST_NAMES+=("default")
-fi
-ra_log "Detected CN1SS test streams: ${TEST_NAMES[*]}"
-
-declare -A TEST_OUTPUTS=()
-declare -A TEST_SOURCES=()
-declare -A PREVIEW_OUTPUTS=()
-
-ensure_dir "$SCREENSHOT_PREVIEW_DIR"
-
-cn1ss_print_log "$TEST_LOG"
-
-declare -a FAILED_TESTS=()
-for test in "${TEST_NAMES[@]}"; do
-  dest="$SCREENSHOT_TMP_DIR/${test}.png"
-  if source_label="$(cn1ss_decode_test_png "$test" "$dest" "${CN1SS_SOURCES[@]}")"; then
-    TEST_OUTPUTS["$test"]="$dest"
-    TEST_SOURCES["$test"]="$source_label"
-    ra_log "Decoded screenshot for '$test' (source=${source_label}, size: $(cn1ss_file_size "$dest") bytes)"
-    preview_dest="$SCREENSHOT_PREVIEW_DIR/${test}.jpg"
-    if preview_source="$(cn1ss_decode_test_preview "$test" "$preview_dest" "${CN1SS_SOURCES[@]}")"; then
-      PREVIEW_OUTPUTS["$test"]="$preview_dest"
-      ra_log "Decoded preview for '$test' (source=${preview_source}, size: $(cn1ss_file_size "$preview_dest") bytes)"
-    else
-      rm -f "$preview_dest" 2>/dev/null || true
-    fi
-  else
-    ra_log "ERROR: Failed to extract/decode CN1SS payload for test '$test'"
-    FAILED_TESTS+=("$test")
-    RAW_B64_OUT="$SCREENSHOT_TMP_DIR/${test}.raw.b64"
-    if cn1ss_extract_base64 "$TEST_LOG" "$test" > "$RAW_B64_OUT" 2>/dev/null; then
-      if [ -s "$RAW_B64_OUT" ]; then
-        head -c 64 "$RAW_B64_OUT" | sed 's/^/[CN1SS-B64-HEAD] /'
-        ra_log "Partial base64 saved at: $RAW_B64_OUT"
-      fi
-    fi
-    continue
-  fi
-done
-
-# ---- Compare against stored references ------------------------------------
-
-COMPARE_ENTRIES=()
-for test in "${TEST_NAMES[@]}"; do
-  dest="${TEST_OUTPUTS[$test]:-}"
-  [ -n "$dest" ] || continue
-  COMPARE_ENTRIES+=("${test}=${dest}")
-done
 
 COMPARE_JSON="$SCREENSHOT_TMP_DIR/screenshot-compare.json"
 SUMMARY_FILE="$SCREENSHOT_TMP_DIR/screenshot-summary.txt"

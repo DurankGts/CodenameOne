@@ -38,10 +38,26 @@ import static com.codename1.maven.PathUtil.path;
  *
  * @author shannah
  */
-@Mojo(name = "css", defaultPhase = LifecyclePhase.PROCESS_RESOURCES, 
+@Mojo(name = "css", defaultPhase = LifecyclePhase.PROCESS_RESOURCES,
         requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
         requiresDependencyCollection = ResolutionScope.COMPILE_PLUS_RUNTIME)
 public class CompileCSSMojo extends AbstractCN1Mojo {
+
+    /**
+     * Override the default DEBUG log level so the forked CSS compiler's stdout
+     * is visible in normal mvn output. When the CSS subprocess throws (e.g.
+     * StringIndexOutOfBoundsException in CN1CSSCLI), users currently only see
+     * the wrapper "An error occurred while compiling the CSS files" message
+     * with no usable detail unless they re-run with -X.
+     *
+     * Routed through createJava() (not the call site) so subclasses that
+     * override createJava() in tests still get to substitute their recording
+     * Java task without having to know about the log level.
+     */
+    @Override
+    public org.apache.tools.ant.taskdefs.Java createJava() {
+        return createJava(org.apache.maven.doxia.logging.Log.LEVEL_INFO);
+    }
 
 
     @Override
@@ -56,6 +72,24 @@ public class CompileCSSMojo extends AbstractCN1Mojo {
                 }
             }
         }
+    }
+
+    /**
+     * The localization directory is bundled into the same `theme.res` as the CSS rules
+     * (see the `-l` argument passed to `CN1CSSCLI` below). The shared
+     * {@link AbstractCN1Mojo#getCSSSourcesModificationTime} only walks `src/main/css`,
+     * so it would happily treat l10n edits as "no change" and let the up-to-date check
+     * at the top of {@link #executeImpl(String)} skip recompilation, leaving the user's
+     * `.properties` updates trapped in the stale `theme.res` until a `mvn clean` forces
+     * a rebuild. Roll the l10n directory's recursive modtime into the comparison so
+     * touching any `Messages.properties` invalidates the cached output.
+     */
+    protected long getLocalizationModificationTime() {
+        File localizationDir = findLocalizationDirectory();
+        if (localizationDir == null || !localizationDir.exists()) {
+            return 0L;
+        }
+        return lastModifiedRecursive(localizationDir, ALL_FILES_FILTER);
     }
 
     /**
@@ -152,7 +186,9 @@ public class CompileCSSMojo extends AbstractCN1Mojo {
         File mergeFile = new File(cssBuildDir, themePrefix + "theme.css");
         mergeFile.getParentFile().mkdirs();
         try {
-            if (themeResOutput.exists() && getCSSSourcesModificationTime() < themeResOutput.lastModified()) {
+            long sourcesModTime = Math.max(getCSSSourcesModificationTime(),
+                    getLocalizationModificationTime());
+            if (themeResOutput.exists() && sourcesModTime < themeResOutput.lastModified()) {
                 getLog().info("CSS sources unchanged since last compile.  Skipping CSS compilation");
                 return;
             }
@@ -232,11 +268,14 @@ public class CompileCSSMojo extends AbstractCN1Mojo {
 
 
 
-        // Run the CSS compiler which is contained inside the codenameone-designer jar
+        // Run the CSS compiler which is contained inside the codenameone-designer jar.
         // NOTE: The codenameone-designer.jar is a dependency of the codenameone-maven-plugin as
         // zip file (which is the designer jar with all dependencies).  We use this jar
         // rather than the central designer_1.jar located in the user's home directory to make it
         // easier to pin to a particular version.
+        // The Java task is created via createJava() (overridden in this class to use INFO log
+        // level) so subprocess output -- including stack traces from CN1CSSCLI failures --
+        // shows up in normal mvn output instead of being hidden at DEBUG.
         Java java = createJava();
         java.setDir(getCN1ProjectDir());
         java.setJar(getDesignerJar());

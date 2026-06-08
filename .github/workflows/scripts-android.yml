@@ -22,6 +22,8 @@ name: Test Android build scripts
       - '!CodenameOne/src/**/*.md'
       - 'Ports/Android/**'
       - '!Ports/Android/**/*.md'
+      - 'native-themes/android-material/**'
+      - '!native-themes/android-material/**/*.md'
       - 'maven/**'
       - '!maven/core-unittests/**'
       - 'tests/**'
@@ -49,6 +51,8 @@ name: Test Android build scripts
       - '!CodenameOne/src/**/*.md'
       - 'Ports/Android/**'
       - '!Ports/Android/**/*.md'
+      - 'native-themes/android-material/**'
+      - '!native-themes/android-material/**/*.md'
       - 'maven/**'
       - '!maven/core-unittests/**'
       - 'tests/**'
@@ -70,6 +74,14 @@ name: Test Android build scripts
 #   5. Go to https://github.com/codenameone/CodenameOne/settings/secrets/actions
 #     and edit the CN1SS_GH_TOKEN to use the new token
 
+concurrency:
+  # Cancel superseded runs of this workflow for the same PR branch
+  # (github.head_ref is set on pull_request events). On push to master
+  # head_ref is empty, so the group falls back to the unique run_id and
+  # every master commit is still tested in full -- no coverage lost.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   build-android:
     name: Build Android ${{ matrix.name }}
@@ -90,11 +102,12 @@ jobs:
       pull-requests: write
       issues: write
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       GITHUB_TOKEN: ${{ secrets.CN1SS_GH_TOKEN }}
       GH_TOKEN: ${{ secrets.CN1SS_GH_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set TMPDIR
         run: echo "TMPDIR=${{ runner.temp }}" >> $GITHUB_ENV
       - name: Free Disk Space
@@ -106,10 +119,10 @@ jobs:
           sudo rm -rf /usr/share/swift
       - name: Setup JDK
         if: matrix.id != 'default'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: ${{ matrix.java_version }}
-          distribution: 'zulu'
+          distribution: 'temurin'
       - name: Set JDK_HOME
         if: matrix.id != 'default'
         run: echo "JDK_HOME=${JAVA_HOME}" >> $GITHUB_ENV
@@ -120,12 +133,30 @@ jobs:
           echo "CN1SS_FAIL_ON_MISMATCH=1" >> $GITHUB_ENV
           echo "CN1SS_SKIP_COVERAGE=1" >> $GITHUB_ENV
       - name: Cache codenameone-tools
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/codenameone-tools
           key: ${{ runner.os }}-cn1-tools-${{ hashFiles('scripts/setup-workspace.sh') }}
           restore-keys: |
             ${{ runner.os }}-cn1-tools-
+      - name: Cache Maven repository
+        uses: actions/cache@v5
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-m2-android-${{ matrix.id }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-m2-android-${{ matrix.id }}-
+            ${{ runner.os }}-m2-
+      - name: Cache Gradle
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ matrix.id }}-${{ hashFiles('scripts/hellocodenameone/**/build.gradle*', 'scripts/hellocodenameone/**/gradle-wrapper.properties', 'Ports/Android/build.gradle*') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-${{ matrix.id }}-
+            ${{ runner.os }}-gradle-
       - name: Setup workspace
         run: ./scripts/setup-workspace.sh -q -DskipTests
       - name: Build Android port
@@ -151,7 +182,7 @@ jobs:
           script: ./scripts/run-android-instrumentation-tests.sh "${{ steps.build-android-app.outputs.gradle_project_dir }}"
       - name: Upload emulator screenshot
         if: always() && matrix.id == 'default'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: emulator-screenshot
           path: artifacts/*.png
@@ -160,16 +191,31 @@ jobs:
           compression-level: 6
       - name: Upload Android Gradle logs
         if: always() && matrix.id == 'default'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-gradle-logs
           path: artifacts/*gradle*.log
           if-no-files-found: warn
           retention-days: 14
           compression-level: 6
+      # Logcat captures from connectedAndroidTest and the in-script retry
+      # (`connectedAndroidTest.log`, `connectedAndroidTest-retry.log`). These
+      # are the only place to debug CN1SS chunk-decode flakes — they hold
+      # the raw base64 chunks plus the `am start` / pidof diagnostics. If
+      # this upload step disappears, the next decode flake will be
+      # un-debuggable: keep it.
+      - name: Upload Android instrumentation logs
+        if: always() && matrix.id == 'default'
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-instrumentation-logs
+          path: artifacts/connectedAndroidTest*.log
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 6
       - name: Upload Android test report
         if: always() && matrix.id == 'default'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-test-report
           path: artifacts/android-test-report
@@ -178,7 +224,7 @@ jobs:
           compression-level: 6
       - name: Upload Android Jacoco coverage report
         if: always() && matrix.id == 'default'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-jacoco-coverage
           path: artifacts/android-coverage-report

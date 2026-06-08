@@ -37,4 +37,23 @@ if [ ! -f "$BUILD_CLIENT" ]; then
   fi
 fi
 
-"$MAVEN_HOME/bin/mvn" -q -f maven/pom.xml -pl ios -am -Djava.awt.headless=true clean install "$@"
+# maven/ios/pom.xml pulls Themes/iOSModernTheme.res directly into nativeios.jar,
+# so no pre-staging copy under Ports/iOSPort/nativeSources/ is needed. The .res
+# is committed under Themes/ and kept in sync by
+# .github/workflows/native-themes-sync.yml. For local iteration on
+# native-themes/ios-modern/theme.css, run scripts/build-native-themes.sh.
+
+# Rebuild the `designer` module first so changes under maven/css-compiler/
+# are picked up by the maven plugin's CSS compile step. The designer module's
+# jar-with-dependencies embeds css-compiler classes (CSSTheme etc.); without
+# this install, a cached ~/.m2/repository restores the previous build's
+# designer.jar even when CSSTheme.java has changed and new gradient/filter
+# parsing silently misses the app's theme.res. Done as a separate invocation
+# (with -Plocal-dev-javase) because `designer` -> `javase-svg` -> `javase`,
+# and the javase port only resolves its CEF dependency under that profile.
+# Skip javadoc/source jars: they aren't needed to install the iOS port, and the
+# framework is compiled with JDK 8 whose javadoc rejects the JDK 9+ options
+# (--add-stylesheet / --add-script) configured in maven/pom.xml. Mirrors the flags
+# setup-workspace.sh already passes for the main framework install.
+"$MAVEN_HOME/bin/mvn" -q -f maven/pom.xml -pl designer -am -Plocal-dev-javase -DskipTests -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Djava.awt.headless=true install
+"$MAVEN_HOME/bin/mvn" -q -f maven/pom.xml -pl ios -am -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Djava.awt.headless=true clean install "$@"

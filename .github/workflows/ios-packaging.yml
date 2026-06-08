@@ -4,8 +4,10 @@ on:
   pull_request:
     paths:
       - '.github/workflows/ios-packaging.yml'
+      - '.github/workflows/_build-ios-port.yml'
       - 'maven/codenameone-maven-plugin/**'
       - 'vm/ByteCodeTranslator/**'
+      - 'Ports/iOSPort/**'
       - 'scripts/build-ios-app.sh'
       - 'scripts/run-ios-ui-tests.sh'
       - 'scripts/run-ios-native-tests.sh'
@@ -16,8 +18,10 @@ on:
     branches: [ master ]
     paths:
       - '.github/workflows/ios-packaging.yml'
+      - '.github/workflows/_build-ios-port.yml'
       - 'maven/codenameone-maven-plugin/**'
       - 'vm/ByteCodeTranslator/**'
+      - 'Ports/iOSPort/**'
       - 'scripts/build-ios-app.sh'
       - 'scripts/run-ios-ui-tests.sh'
       - 'scripts/run-ios-native-tests.sh'
@@ -25,34 +29,52 @@ on:
       - 'scripts/hellocodenameone/**'
       - '!docs/**'
 
+concurrency:
+  # Cancel superseded runs of this workflow for the same PR branch
+  # (github.head_ref is set on pull_request events). On push to master
+  # head_ref is empty, so the group falls back to the unique run_id and
+  # every master commit is still tested in full -- no coverage lost.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
-  packaging-matrix:
+  build-port:
+    uses: ./.github/workflows/_build-ios-port.yml
+
+  packaging:
+    needs: build-port
     permissions:
       contents: read
     runs-on: macos-15
-    timeout-minutes: 75
-    strategy:
-      fail-fast: false
-      matrix:
-        packaging:
-          - name: pods-only
-            args: >-
-              -Dcodename1.arg.ios.dependencyManager=cocoapods
-              -Dcodename1.arg.ios.pods=AFNetworking
-          - name: spm-only
-            args: >-
-              -Dcodename1.arg.ios.dependencyManager=spm
-              -Dcodename1.arg.ios.spm.packages=swift-collections|https://github.com/apple/swift-collections.git|from:1.1.0
-              -Dcodename1.arg.ios.spm.products.swift-collections=Collections
-          - name: both
-            args: >-
-              -Dcodename1.arg.ios.dependencyManager=both
-              -Dcodename1.arg.ios.pods=AFNetworking
-              -Dcodename1.arg.ios.spm.packages=swift-collections|https://github.com/apple/swift-collections.git|from:1.1.0
-              -Dcodename1.arg.ios.spm.products.swift-collections=Collections
+    timeout-minutes: 45
+    # Exercises both CocoaPods and SPM in a single Xcode project. Catches
+    # regressions in either dependency manager (each pathway runs end to end)
+    # and additionally validates that they coexist correctly. Also turns on
+    # Google sign-in so GoogleConnectImpl.m is compiled under Xcode -- catches
+    # signature drift between hand-written iOS port .m files and the
+    # ParparVM-generated `set_field_*` headers, which is otherwise invisible
+    # until a customer enables Google sign-in.
+    env:
+      IOS_DEPENDENCY_ARGS: >-
+        -Dcodename1.arg.ios.dependencyManager=both
+        -Dcodename1.arg.ios.pods=AFNetworking
+        -Dcodename1.arg.ios.spm.packages=swift-collections|https://github.com/apple/swift-collections.git|from:1.1.0
+        -Dcodename1.arg.ios.spm.products.swift-collections=Collections
+        -Dcodename1.arg.ios.gplus.clientId=000000000000-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.apps.googleusercontent.com
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+
+      - name: Cache CocoaPods and user gems
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gem
+            ~/Library/Caches/CocoaPods
+            ~/.cocoapods/repos
+          key: ${{ runner.os }}-pods-v1-${{ hashFiles('scripts/setup-workspace.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-pods-v1-
 
       - name: Ensure CocoaPods tooling
         run: |
@@ -61,7 +83,9 @@ jobs:
           set -euo pipefail
           GEM_USER_DIR="$(ruby -e 'print Gem.user_dir')"
           export PATH="$GEM_USER_DIR/bin:$PATH"
-          gem install cocoapods xcodeproj --no-document --user-install
+          if ! command -v pod >/dev/null 2>&1; then
+            gem install cocoapods xcodeproj --no-document --user-install
+          fi
           pod --version
 
       - name: Compute setup-workspace hash
@@ -70,43 +94,74 @@ jobs:
           set -euo pipefail
           echo "hash=$(shasum -a 256 scripts/setup-workspace.sh | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
+      - name: Compute CN1 source hash
+        id: src_hash
+        run: |
+          set -euo pipefail
+          SRC_HASH=$(find CodenameOne/src Ports/iOSPort vm/JavaAPI vm/ByteCodeTranslator Themes native-themes \
+              maven/codenameone-maven-plugin/src/main \
+              -type f \( -name '*.java' -o -name '*.m' -o -name '*.h' -o -name '*.xml' -o -name '*.properties' -o -name '*.css' \) 2>/dev/null \
+              | sort | xargs shasum -a 256 | shasum -a 256 | awk '{print $1}')
+          POM_HASH=$(find . -name 'pom.xml' -not -path './scripts/*' 2>/dev/null \
+              | sort | xargs shasum -a 256 | shasum -a 256 | awk '{print $1}')
+          SCRIPT_HASH=$(shasum -a 256 \
+              scripts/setup-workspace.sh \
+              scripts/build-ios-port.sh \
+              scripts/build-native-themes.sh \
+              .github/workflows/_build-ios-port.yml \
+              | shasum -a 256 | awk '{print $1}')
+          echo "hash=${SRC_HASH:0:16}-${POM_HASH:0:16}-${SCRIPT_HASH:0:16}" >> "$GITHUB_OUTPUT"
+
       - name: Set TMPDIR
         run: echo "TMPDIR=${{ runner.temp }}" >> $GITHUB_ENV
 
       - name: Cache codenameone-tools
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/codenameone-tools
           key: ${{ runner.os }}-cn1-tools-${{ steps.setup_hash.outputs.hash }}
           restore-keys: |
             ${{ runner.os }}-cn1-tools-
 
+      - name: Cache Maven repository
+        uses: actions/cache@v5
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-m2-
+
       - name: Restore cn1-binaries cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ../cn1-binaries
           key: cn1-binaries-${{ runner.os }}-${{ steps.setup_hash.outputs.hash }}
           restore-keys: |
             cn1-binaries-${{ runner.os }}-
 
-      - name: Setup workspace
-        run: ./scripts/setup-workspace.sh -q -DskipTests
-        timeout-minutes: 40
-
-      - name: Build iOS port
-        run: ./scripts/build-ios-port.sh -q -DskipTests
-        timeout-minutes: 40
+      - name: Restore built CN1 + iOS port artifacts
+        # Use the exact key build-port saved against (published as a job
+        # output). Recomputing src_hash locally drifts whenever new
+        # source paths are added to the build-port hash without
+        # mirroring the change here, causing fail-on-cache-miss to
+        # blow up the entire packaging suite.
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.m2/repository/com/codenameone
+            Themes
+            Ports/iOSPort/nativeSources
+          key: ${{ needs.build-port.outputs.cn1_built_cache_key }}
+          fail-on-cache-miss: true
 
       - name: Build sample iOS app
         id: build_ios_app
-        env:
-          IOS_DEPENDENCY_ARGS: ${{ matrix.packaging.args }}
         run: ./scripts/build-ios-app.sh -q -DskipTests
         timeout-minutes: 30
 
       - name: Run iOS UI smoke
         env:
-          ARTIFACTS_DIR: ${{ github.workspace }}/artifacts/${{ matrix.packaging.name }}
+          ARTIFACTS_DIR: ${{ github.workspace }}/artifacts/ios-packaging
         run: |
           set -euo pipefail
           mkdir -p "${ARTIFACTS_DIR}"
@@ -117,9 +172,8 @@ jobs:
         timeout-minutes: 30
 
       - name: Run native iOS notification tests
-        if: matrix.packaging.name == 'both'
         env:
-          ARTIFACTS_DIR: ${{ github.workspace }}/artifacts/${{ matrix.packaging.name }}-native
+          ARTIFACTS_DIR: ${{ github.workspace }}/artifacts/ios-packaging-native
         run: |
           set -euo pipefail
           mkdir -p "${ARTIFACTS_DIR}"
@@ -130,9 +184,9 @@ jobs:
 
       - name: Upload packaging artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: ios-packaging-${{ matrix.packaging.name }}
+          name: ios-packaging
           path: artifacts
           if-no-files-found: warn
           retention-days: 14

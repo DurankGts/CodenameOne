@@ -6,10 +6,15 @@
 #include <string.h>
 #include <limits.h>
 #include "cn1_class_method_index.h"
+#ifdef _WIN32
+#include "cn1_win_compat.h"
+#else
 #include <pthread.h>
+#endif
 #include <setjmp.h>
 #include <math.h>
 #include <stdatomic.h>
+#include <stdint.h>
 
 //#define DEBUG_GC_ALLOCATIONS
 
@@ -18,6 +23,13 @@
 
 //#define CN1_INCLUDE_NPE_CHECKS
 #define CN1_INCLUDE_ARRAY_BOUND_CHECKS
+
+// Uncommented by the translator (driven by the cn1.onDeviceDebug system
+// property) when an on-device-debug build is requested. Enables per-frame
+// locals-address tables, the cn1DebuggerActive hot-path check inside
+// __CN1_DEBUG_INFO, and the proxy listener thread. Release builds leave
+// this off and pay no overhead.
+//#define CN1_ON_DEVICE_DEBUG
 
 #ifdef DEBUG_GC_ALLOCATIONS
 #define DEBUG_GC_VARIABLES int line; int className;
@@ -349,29 +361,32 @@ typedef struct clazz*       JAVA_CLASS;
     SP[-1].data.l = SP[-1].data.l ^ (*SP).data.l; \
 }
 
-#define BC_I2L() SP[-1].data.l = SP[-1].data.i
+// Conversion macros must rewrite the runtime type tag too. BC_DUP2_X1 /
+// BC_DUP2_X2 / BC_DUP_X2 dispatch via IS_DOUBLE_WORD on the tag, so a stale
+// tag corrupts the stack on chained assignments (issue #3108).
+#define BC_I2L() do { SP[-1].data.l = SP[-1].data.i; SP[-1].type = CN1_TYPE_LONG; } while(0)
 
-#define BC_L2I() SP[-1].data.i = (JAVA_INT)SP[-1].data.l
+#define BC_L2I() do { SP[-1].data.i = (JAVA_INT)SP[-1].data.l; SP[-1].type = CN1_TYPE_INT; } while(0)
 
-#define BC_L2F() SP[-1].data.f = (JAVA_FLOAT)SP[-1].data.l
+#define BC_L2F() do { SP[-1].data.f = (JAVA_FLOAT)SP[-1].data.l; SP[-1].type = CN1_TYPE_FLOAT; } while(0)
 
-#define BC_L2D() SP[-1].data.d = (JAVA_DOUBLE)SP[-1].data.l
+#define BC_L2D() do { SP[-1].data.d = (JAVA_DOUBLE)SP[-1].data.l; SP[-1].type = CN1_TYPE_DOUBLE; } while(0)
 
-#define BC_I2F() SP[-1].data.f = (JAVA_FLOAT)SP[-1].data.i 
+#define BC_I2F() do { SP[-1].data.f = (JAVA_FLOAT)SP[-1].data.i; SP[-1].type = CN1_TYPE_FLOAT; } while(0)
 
-#define BC_F2I() SP[-1].data.i = (JAVA_INT)SP[-1].data.f
+#define BC_F2I() do { SP[-1].data.i = (JAVA_INT)SP[-1].data.f; SP[-1].type = CN1_TYPE_INT; } while(0)
 
-#define BC_F2L() SP[-1].data.l = (JAVA_LONG)SP[-1].data.f
+#define BC_F2L() do { SP[-1].data.l = (JAVA_LONG)SP[-1].data.f; SP[-1].type = CN1_TYPE_LONG; } while(0)
 
-#define BC_F2D() SP[-1].data.d = SP[-1].data.f
+#define BC_F2D() do { SP[-1].data.d = SP[-1].data.f; SP[-1].type = CN1_TYPE_DOUBLE; } while(0)
 
-#define BC_D2I() SP[-1].data.i = (JAVA_INT)SP[-1].data.d
+#define BC_D2I() do { SP[-1].data.i = (JAVA_INT)SP[-1].data.d; SP[-1].type = CN1_TYPE_INT; } while(0)
 
-#define BC_D2L() SP[-1].data.l = (JAVA_LONG)SP[-1].data.d
+#define BC_D2L() do { SP[-1].data.l = (JAVA_LONG)SP[-1].data.d; SP[-1].type = CN1_TYPE_LONG; } while(0)
 
-#define BC_I2D() SP[-1].data.d = SP[-1].data.i
+#define BC_I2D() do { SP[-1].data.d = SP[-1].data.i; SP[-1].type = CN1_TYPE_DOUBLE; } while(0)
 
-#define BC_D2F() SP[-1].data.f = (JAVA_FLOAT)SP[-1].data.d
+#define BC_D2F() do { SP[-1].data.f = (JAVA_FLOAT)SP[-1].data.d; SP[-1].type = CN1_TYPE_FLOAT; } while(0)
 
 #ifdef CN1_INCLUDE_NPE_CHECKS
 #define BC_ARRAYLENGTH() { \
@@ -789,7 +804,20 @@ struct ThreadLocalData {
     int* callStackLine;
     int* callStackMethod;
     int callStackOffset;
-    
+
+#ifdef CN1_ON_DEVICE_DEBUG
+    // Per-frame pointer to a stack-allocated array of void* addresses, one per
+    // JVM local slot in the current method. Populated by translator-emitted
+    // prologue code in debug builds; consulted by the debugger thread to read
+    // primitive locals (the auto C variables are volatile so their address is
+    // stable for the duration of the frame).
+    void*** callStackLocalsAddresses;
+    // Per-frame pointer to the static cn1_frame_info struct for the current
+    // method. Carries the variable side-table the debugger uses to map source
+    // lines to slot/type info.
+    const struct cn1_frame_info** callStackFrameInfo;
+#endif
+
     char* utf8Buffer;
     int utf8BufferSize;
     JAVA_BOOLEAN threadKilled;      // we don't expect to see this in the GC
@@ -798,7 +826,48 @@ struct ThreadLocalData {
 
 //#define BLOCK_FOR_GC() while(threadStateData->threadBlockedByGC) { usleep(500); }
 
+#ifdef CN1_ON_DEVICE_DEBUG
+// One row of the variable side-table: a single (line, slot, typeCode) tuple.
+// typeCode is the JVM type descriptor first char (I/J/F/D/Z/B/S/C/L/[) so the
+// debugger thread knows how to dereference the void* held in
+// callStackLocalsAddresses[offset][slot].
+struct cn1_var_entry {
+    int line;
+    int slot;
+    char typeCode;
+};
+
+// Per-method static metadata emitted once per translated method. Held alive
+// for the life of the program. The translator emits an instance as
+// "static const struct cn1_frame_info __cn1_finfo_<method> = { ... };" and
+// passes &__cn1_finfo_<method> into the frame at method entry.
+struct cn1_frame_info {
+    int classId;
+    int methodId;
+    int numLocals;
+    int varTableCount;
+    const struct cn1_var_entry* varTable;
+};
+
+// Set to non-zero by the debugger proxy listener once a proxy has connected
+// and is ready to receive events. Read on the hot path of __CN1_DEBUG_INFO,
+// so kept as a plain volatile int (predictable branch when zero).
+extern volatile int cn1DebuggerActive;
+
+// Cold-path callee invoked by __CN1_DEBUG_INFO when cn1DebuggerActive is set.
+// Defined in cn1_debugger.m (iOS port) / a no-op shim in release builds.
+extern void cn1_debugger_check(struct ThreadLocalData* threadStateData, int line);
+
+#define __CN1_DEBUG_INFO(line) \
+    do { \
+        threadStateData->callStackLine[threadStateData->callStackOffset - 1] = (line); \
+        if (__builtin_expect(cn1DebuggerActive, 0)) { \
+            cn1_debugger_check(threadStateData, (line)); \
+        } \
+    } while (0)
+#else
 #define __CN1_DEBUG_INFO(line) threadStateData->callStackLine[threadStateData->callStackOffset - 1] = line;
+#endif
 
 // we need to throw stack overflow error but its unavailable here...
 /*#define ENTERING_CODENAME_ONE_METHOD(classIdNumber, methodIdNumber) { \
@@ -1085,7 +1154,117 @@ extern void arrayFinalizerFunction(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT array)
 extern void gcReleaseObj(JAVA_OBJECT o);
 
 extern JAVA_OBJECT allocArray(CODENAME_ONE_THREAD_STATE, int length, struct clazz* type, int primitiveSize, int dim);
+extern JAVA_OBJECT allocArrayAligned(CODENAME_ONE_THREAD_STATE, int length, struct clazz* type, int primitiveSize, int dim, int alignment);
 extern JAVA_OBJECT allocMultiArray(int* lengths, struct clazz* type, int primitiveSize, int dim);
+#define CN1_SIMD_ALIGNMENT 16
+/* Maximum payload size we are willing to alloca() on the per-thread stack
+ * before falling back to a regular GC-tracked heap allocation. iOS secondary
+ * threads default to a 512 KB stack, so any allocation that scales with image
+ * dimensions (e.g. createMask / applyMask) can blow the stack at modest sizes
+ * (a 410x410 ARGB image needs ~656 KB of int scratch). The cap is intentionally
+ * conservative: the fallback path costs a normal heap allocation (cheap
+ * relative to the SIMD work that follows it), while a stack overflow is fatal
+ * with no chance to recover. */
+#define CN1_SIMD_STACK_HEAP_THRESHOLD (32 * 1024)
+#define CN1_SIMD_STACK_PRIMITIVE_ARRAY(length, arrayClass, primitiveSize) \
+    __extension__ ({ \
+        int __cn1StackLength = (length); \
+        const int __cn1Alignment = CN1_SIMD_ALIGNMENT; \
+        int __cn1ActualSize = __cn1StackLength * (primitiveSize); \
+        JAVA_OBJECT __cn1Result; \
+        if (__cn1StackLength < 0 || __cn1ActualSize > CN1_SIMD_STACK_HEAP_THRESHOLD) { \
+            /* Too large to safely place on the stack - fall back to a regular */ \
+            /* aligned heap allocation. The returned array still satisfies the */ \
+            /* SIMD alignment contract; only the lifetime widens (GC-managed */ \
+            /* instead of method-local), which is harmless for callers. */ \
+            __cn1Result = allocArrayAligned(threadStateData, __cn1StackLength, (arrayClass), (primitiveSize), 1, __cn1Alignment); \
+        } else { \
+            /* header + embedded data pointer slot + payload + alignment slack for the payload start */ \
+            char* __cn1StackMem = (char*)__builtin_alloca(sizeof(struct JavaArrayPrototype) + sizeof(void*) + __cn1ActualSize + __cn1Alignment - 1); \
+            JAVA_ARRAY __cn1StackArray = (JAVA_ARRAY)__cn1StackMem; \
+            *__cn1StackArray = (struct JavaArrayPrototype){DEBUG_GC_INIT (arrayClass), 0, 0, 0, 0, 0, __cn1StackLength, 1, (primitiveSize), 0}; \
+            if (__cn1ActualSize > 0) { \
+                char* __cn1Data = (char*)(&(__cn1StackArray->data)); \
+                __cn1Data += sizeof(void*); \
+                /* round the payload start up by adding alignment-1 then masking off the low bits */ \
+                uintptr_t __cn1Aligned = (((uintptr_t)__cn1Data) + ((uintptr_t)__cn1Alignment - 1)) & ~((uintptr_t)__cn1Alignment - 1); \
+                __cn1StackArray->data = (void*)__cn1Aligned; \
+            } else { \
+                __cn1StackArray->data = 0; \
+            } \
+            __cn1Result = (JAVA_OBJECT)__cn1StackArray; \
+        } \
+        __cn1Result; \
+    })
+#define CN1_SIMD_ALLOCA_BYTE(length) CN1_SIMD_STACK_PRIMITIVE_ARRAY((length), &class_array1__JAVA_BYTE, sizeof(JAVA_ARRAY_BYTE))
+#define CN1_SIMD_ALLOCA_INT(length) CN1_SIMD_STACK_PRIMITIVE_ARRAY((length), &class_array1__JAVA_INT, sizeof(JAVA_ARRAY_INT))
+#define CN1_SIMD_ALLOCA_FLOAT(length) CN1_SIMD_STACK_PRIMITIVE_ARRAY((length), &class_array1__JAVA_FLOAT, sizeof(JAVA_ARRAY_FLOAT))
+#define CN1_SIMD_ALLOCA_BYTE_ZEROED(length) \
+    __extension__ ({ \
+        int __cn1InitLength = (length); \
+        JAVA_ARRAY __cn1StackArray = (JAVA_ARRAY)CN1_SIMD_ALLOCA_BYTE(__cn1InitLength); \
+        if (__cn1InitLength > 0) { \
+            memset(__cn1StackArray->data, 0, (size_t)__cn1InitLength); \
+        } \
+        (JAVA_OBJECT)__cn1StackArray; \
+    })
+#define CN1_SIMD_ALLOCA_INT_ZEROED(length) \
+    __extension__ ({ \
+        int __cn1InitLength = (length); \
+        JAVA_ARRAY __cn1StackArray = (JAVA_ARRAY)CN1_SIMD_ALLOCA_INT(__cn1InitLength); \
+        if (__cn1InitLength > 0) { \
+            memset(__cn1StackArray->data, 0, (size_t)__cn1InitLength * sizeof(JAVA_ARRAY_INT)); \
+        } \
+        (JAVA_OBJECT)__cn1StackArray; \
+    })
+#define CN1_SIMD_ALLOCA_FLOAT_ZEROED(length) \
+    __extension__ ({ \
+        int __cn1InitLength = (length); \
+        JAVA_ARRAY __cn1StackArray = (JAVA_ARRAY)CN1_SIMD_ALLOCA_FLOAT(__cn1InitLength); \
+        if (__cn1InitLength > 0) { \
+            memset(__cn1StackArray->data, 0, (size_t)__cn1InitLength * sizeof(JAVA_ARRAY_FLOAT)); \
+        } \
+        (JAVA_OBJECT)__cn1StackArray; \
+    })
+#define CN1_SIMD_ALLOCA_BYTE_FILLED(length, value) \
+    __extension__ ({ \
+        int __cn1InitLength = (length); \
+        JAVA_ARRAY __cn1StackArray = (JAVA_ARRAY)CN1_SIMD_ALLOCA_BYTE(__cn1InitLength); \
+        if (__cn1InitLength > 0) { \
+            memset(__cn1StackArray->data, (value), (size_t)__cn1InitLength); \
+        } \
+        (JAVA_OBJECT)__cn1StackArray; \
+    })
+#define CN1_SIMD_ALLOCA_INT_FILLED(length, value) \
+    __extension__ ({ \
+        int __cn1InitLength = (length); \
+        JAVA_ARRAY_INT __cn1InitValue = (value); \
+        JAVA_ARRAY __cn1StackArray = (JAVA_ARRAY)CN1_SIMD_ALLOCA_INT(__cn1InitLength); \
+        JAVA_ARRAY_INT* __cn1Data = (JAVA_ARRAY_INT*)__cn1StackArray->data; \
+        if (__cn1InitValue == 0 && __cn1InitLength > 0) { \
+            memset(__cn1StackArray->data, 0, (size_t)__cn1InitLength * sizeof(JAVA_ARRAY_INT)); \
+        } else { \
+            for (int __cn1FillIndex = 0; __cn1FillIndex < __cn1InitLength; __cn1FillIndex++) { \
+                __cn1Data[__cn1FillIndex] = __cn1InitValue; \
+            } \
+        } \
+        (JAVA_OBJECT)__cn1StackArray; \
+    })
+#define CN1_SIMD_ALLOCA_FLOAT_FILLED(length, value) \
+    __extension__ ({ \
+        int __cn1InitLength = (length); \
+        JAVA_ARRAY_FLOAT __cn1InitValue = (value); \
+        JAVA_ARRAY __cn1StackArray = (JAVA_ARRAY)CN1_SIMD_ALLOCA_FLOAT(__cn1InitLength); \
+        JAVA_ARRAY_FLOAT* __cn1Data = (JAVA_ARRAY_FLOAT*)__cn1StackArray->data; \
+        if (__cn1InitValue == 0.0f && __cn1InitLength > 0) { \
+            memset(__cn1StackArray->data, 0, (size_t)__cn1InitLength * sizeof(JAVA_ARRAY_FLOAT)); \
+        } else { \
+            for (int __cn1FillIndex = 0; __cn1FillIndex < __cn1InitLength; __cn1FillIndex++) { \
+                __cn1Data[__cn1FillIndex] = __cn1InitValue; \
+            } \
+        } \
+        (JAVA_OBJECT)__cn1StackArray; \
+    })
 extern JAVA_OBJECT alloc2DArray(CODENAME_ONE_THREAD_STATE, int length1, int length2, struct clazz* parentType, struct clazz* childType, int primitiveSize);
 extern JAVA_OBJECT alloc3DArray(CODENAME_ONE_THREAD_STATE, int length1, int length2, int length3, struct clazz* parentType, struct clazz* childType, struct clazz* grandChildType, int primitiveSize);
 
@@ -1138,6 +1317,15 @@ static inline void cn1_init_method_stack_fast(CODENAME_ONE_THREAD_STATE, JAVA_OB
     }
 #endif
     if (threadStateData->callStackOffset >= CN1_STACK_OVERFLOW_CALL_DEPTH_LIMIT - 1) {
+        throwException(threadStateData, __NEW_INSTANCE_java_lang_StackOverflowError(threadStateData));
+        return;
+    }
+    /* The call-depth guard above does not protect the operand/locals stack: a
+     * deep recursion of methods with large frames can exhaust threadObjectStack
+     * before the call-depth limit, and without this check initMethodStack would
+     * memset/write past the buffer end -> access violation instead of a catchable
+     * StackOverflowError. The 1024-slot margin leaves room to build+throw it. */
+    if (threadStateData->threadObjectStackOffset + localsStackSize + stackSize >= CN1_MAX_OBJECT_STACK_DEPTH - 1024) {
         throwException(threadStateData, __NEW_INSTANCE_java_lang_StackOverflowError(threadStateData));
         return;
     }

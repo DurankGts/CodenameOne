@@ -31,6 +31,7 @@ import com.codename1.ui.animations.Transition;
 import com.codename1.ui.events.ActionEvent;
 import com.codename1.ui.events.ActionListener;
 import com.codename1.ui.events.ScrollListener;
+import com.codename1.ui.geom.Rectangle;
 import com.codename1.ui.layouts.BorderLayout;
 import com.codename1.ui.layouts.BoxLayout;
 import com.codename1.ui.layouts.Layout;
@@ -438,43 +439,193 @@ public class Toolbar extends Container {
 
     /// Closes the current side menu
     public void closeSideMenu() {
-        closeLeftSideMenu();
-        closeRightSideMenu();
+        closeSideMenu(null);
+    }
+
+    /// Closes the current side menu and invokes `onFinish` once the
+    /// side-menu dispose animation has completed and the Toolbar
+    /// layered-pane dim has been detached. When no side menu is
+    /// currently open `onFinish` runs synchronously.
+    ///
+    /// Tapping a command in the on-top side menu was previously
+    /// implemented as `closeSideMenu()` followed by a synchronous
+    /// `cmd.actionPerformed(evt)` on the same EDT call. If the command
+    /// then showed a modal Dialog, the Dialog's event pump took over
+    /// before the dispose animation had a chance to advance, the
+    /// `detachToolbarLayeredPane` callback never fired, and the dim
+    /// backdrop stayed visible after the Dialog was dismissed (issue
+    /// #4979). `SideMenuBar.actionPerformed` now routes the
+    /// command-fire through this `onFinish`, so the layered pane is
+    /// guaranteed to be detached before the command runs.
+    ///
+    /// #### Parameters
+    ///
+    /// - `onFinish`: callback to invoke once the side menu is closed,
+    /// or `null` to skip
+    public void closeSideMenu(final Runnable onFinish) {
+        boolean leftShowing = onTopSideMenu && sidemenuDialog != null && sidemenuDialog.isShowing();
+        boolean rightShowing = onTopSideMenu && rightSidemenuDialog != null && rightSidemenuDialog.isShowing();
+        if (!leftShowing && !rightShowing) {
+            closeLeftSideMenu();
+            closeRightSideMenu();
+            if (onFinish != null) {
+                onFinish.run();
+            }
+            return;
+        }
+        int pending = (leftShowing ? 1 : 0) + (rightShowing ? 1 : 0);
+        Runnable countdown = onFinish == null ? null : new CloseSideMenuCountdown(pending, onFinish);
+        if (leftShowing) {
+            closeLeftSideMenu(countdown);
+        }
+        if (rightShowing) {
+            closeRightSideMenu(countdown);
+        }
+    }
+
+    /// Runnable that decrements a counter and fires its delegate when
+    /// the counter reaches zero. Used by [#closeSideMenu(Runnable)][closeSideMenu]
+    /// to wait for both left and right dispose animations when both
+    /// side menus are open. Declared as a static nested class so the
+    /// Runnable does not retain an implicit reference to the
+    /// surrounding Toolbar instance.
+    private static final class CloseSideMenuCountdown implements Runnable {
+        private int remaining;
+        private final Runnable delegate;
+
+        CloseSideMenuCountdown(int remaining, Runnable delegate) {
+            this.remaining = remaining;
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void run() {
+            remaining--;
+            if (remaining == 0) {
+                delegate.run();
+            }
+        }
     }
 
     /// Closes the left side menu
     public void closeLeftSideMenu() {
+        closeLeftSideMenu(null);
+    }
+
+    /// Closes the left side menu and invokes `onFinish` once the
+    /// dispose animation has completed and the Toolbar layered-pane
+    /// dim has been detached. When no left side menu is currently
+    /// open `onFinish` runs synchronously. See
+    /// [#closeSideMenu(Runnable)][closeSideMenu] for rationale (issue
+    /// #4979).
+    ///
+    /// #### Parameters
+    ///
+    /// - `onFinish`: callback to invoke once the menu is closed, or
+    /// `null` to skip
+    public void closeLeftSideMenu(final Runnable onFinish) {
         if (onTopSideMenu) {
             if (sidemenuDialog != null && sidemenuDialog.isShowing()) {
+                final Container cnt = getComponentForm().getFormLayeredPane(Toolbar.class, false);
+                Runnable onDisposed = new Runnable() {
+                    @Override
+                    public void run() {
+                        detachToolbarLayeredPane(cnt);
+                        if (onFinish != null) {
+                            onFinish.run();
+                        }
+                    }
+                };
                 if (!isRTL()) {
-                    sidemenuDialog.disposeToTheLeft();
+                    sidemenuDialog.disposeToTheLeft(onDisposed);
                 } else {
-                    sidemenuDialog.disposeToTheRight();
+                    sidemenuDialog.disposeToTheRight(onDisposed);
                 }
-                Container cnt = getComponentForm().getFormLayeredPane(Toolbar.class, false);
-                Style s = cnt.getUnselectedStyle();
-                s.setBgTransparency(0);
-                cnt.remove();
+                return;
             }
         } else {
             SideMenuBar.closeCurrentMenu();
+        }
+        if (onFinish != null) {
+            onFinish.run();
         }
     }
 
     /// Closes the right side menu
     public void closeRightSideMenu() {
+        closeRightSideMenu(null);
+    }
+
+    /// Closes the right side menu and invokes `onFinish` once the
+    /// dispose animation has completed and the Toolbar layered-pane
+    /// dim has been detached. When no right side menu is currently
+    /// open `onFinish` runs synchronously. See
+    /// [#closeSideMenu(Runnable)][closeSideMenu] for rationale (issue
+    /// #4979).
+    ///
+    /// #### Parameters
+    ///
+    /// - `onFinish`: callback to invoke once the menu is closed, or
+    /// `null` to skip
+    public void closeRightSideMenu(final Runnable onFinish) {
         if (onTopSideMenu) {
             if (rightSidemenuDialog != null && rightSidemenuDialog.isShowing()) {
+                final Container cnt = getComponentForm().getFormLayeredPane(Toolbar.class, false);
+                Runnable onDisposed = new Runnable() {
+                    @Override
+                    public void run() {
+                        detachToolbarLayeredPane(cnt);
+                        if (onFinish != null) {
+                            onFinish.run();
+                        }
+                    }
+                };
                 if (!isRTL()) {
-                    rightSidemenuDialog.disposeToTheRight();
+                    rightSidemenuDialog.disposeToTheRight(onDisposed);
                 } else {
-                    rightSidemenuDialog.disposeToTheLeft();
+                    rightSidemenuDialog.disposeToTheLeft(onDisposed);
                 }
-                Container cnt = getComponentForm().getFormLayeredPane(Toolbar.class, false);
-                Style s = cnt.getUnselectedStyle();
-                s.setBgTransparency(0);
-                cnt.remove();
+                return;
             }
+        }
+        if (onFinish != null) {
+            onFinish.run();
+        }
+    }
+
+    /// Detaches the Toolbar's shared FormLayeredPane once the side-menu
+    /// dispose animation has finished. Called from the dispose
+    /// onFinish callback so the Dialog's own peer-removal logic runs
+    /// against a still-attached parent. Detaching the layered pane
+    /// synchronously (which was the previous behaviour) left orphan
+    /// peer DOM elements on the JavaScript port because the Dialog's
+    /// animation callback ran after its parent had already been
+    /// removed. Only detach when the side-menu Dialog is the only
+    /// remaining child of the layered pane; otherwise another side
+    /// menu (e.g. the opposite-side one) is still showing.
+    private void detachToolbarLayeredPane(Container cnt) {
+        if (cnt == null) {
+            return;
+        }
+        if (sidemenuDialog != null && sidemenuDialog.isShowing()) {
+            return;
+        }
+        if (rightSidemenuDialog != null && rightSidemenuDialog.isShowing()) {
+            return;
+        }
+        // Capture the host form before remove() detaches cnt -- after
+        // remove() cnt.getComponentForm() returns null.
+        Form host = cnt.getComponentForm();
+        Style s = cnt.getUnselectedStyle();
+        s.setBgTransparency(0);
+        cnt.remove();
+        // Issue #4912: cnt.remove() does not by itself trigger a
+        // form-level repaint, so the previous frame's shaded pixels
+        // can linger in the simulator and JS render buffer until
+        // something else forces a redraw. revalidateLater queues a
+        // single relayout/repaint pass for the next paint cycle.
+        if (host != null) {
+            host.revalidateLater();
         }
     }
 
@@ -2390,6 +2541,94 @@ public class Toolbar extends Container {
         }
     }
 
+    /// Aggregates every command exposed by this toolbar - left bar, right bar, overflow
+    /// menu and side menu - into a single de-duplicated `Vector`. Used by the desktop port
+    /// to build the native menu bar when the toolbar is hidden in favor of native window
+    /// chrome. The returned commands must not be mutated.
+    ///
+    /// #### Returns
+    ///
+    /// a de-duplicated vector of all commands hosted by this toolbar
+    public Vector getAllNativeMenuCommands() {
+        Vector all = new Vector();
+        addUniqueCommands(all, getLeftBarCommands());
+        addUniqueCommands(all, getRightBarCommands());
+        addUniqueCommands(all, getOverflowCommands());
+        MenuBar mb = getMenuBar();
+        if (mb != null) {
+            Vector side = mb.getCommands();
+            if (side != null) {
+                for (int i = 0; i < side.size(); i++) {
+                    Object c = side.elementAt(i);
+                    if (c != null && !all.contains(c)) {
+                        all.addElement(c);
+                    }
+                }
+            }
+        }
+        return all;
+    }
+
+    private void addUniqueCommands(Vector all, Iterable<Command> src) {
+        if (src == null) {
+            return;
+        }
+        for (Command c : src) {
+            if (c != null && !all.contains(c)) {
+                all.addElement(c);
+            }
+        }
+    }
+
+    /// Wires the visible Toolbar to act as the draggable title bar of an undecorated desktop window
+    /// (the {@code custom} desktop title-bar mode). The listener is registered at the form level (so
+    /// it fires reliably for every pointer drag) and starts a window move only when the press falls
+    /// within the Toolbar's painted band. Inert on mobile (never invoked there).
+    private void installToolbarWindowDrag(Form parent) {
+        if (parent == null) {
+            return;
+        }
+        ToolbarWindowDrag drag = new ToolbarWindowDrag(this);
+        parent.addPointerPressedListener(drag);
+        parent.addPointerDraggedListener(drag);
+        parent.addPointerReleasedListener(drag);
+    }
+
+    /// @return true when the given form-relative Y coordinate falls within this Toolbar's painted
+    /// band. Used in the desktop {@code custom} mode to start a window drag only from the title bar.
+    boolean isWithinTitleBarBand(int y) {
+        int top = getAbsoluteY();
+        return y >= top && y <= top + getHeight();
+    }
+
+    /// Drives undecorated-window dragging from the Toolbar title region in the desktop {@code custom}
+    /// title-bar mode. A single named (static) class that handles press / drag / release.
+    private static final class ToolbarWindowDrag implements ActionListener {
+        private final Toolbar toolbar;
+        private boolean dragging;
+
+        ToolbarWindowDrag(Toolbar toolbar) {
+            this.toolbar = toolbar;
+        }
+
+        @Override
+        public void actionPerformed(ActionEvent evt) {
+            ActionEvent.Type t = evt.getEventType();
+            if (t == ActionEvent.Type.PointerPressed) {
+                dragging = toolbar.isWithinTitleBarBand(evt.getY());
+                if (dragging) {
+                    Display.impl.startNativeWindowDrag(evt.getX(), evt.getY());
+                }
+            } else if (t == ActionEvent.Type.PointerDrag) {
+                if (dragging) {
+                    Display.impl.dragNativeWindow(evt.getX(), evt.getY());
+                }
+            } else {
+                dragging = false;
+            }
+        }
+    }
+
     /// Returns the associated SideMenuBar object of this Toolbar.
     ///
     /// #### Returns
@@ -2500,6 +2739,28 @@ public class Toolbar extends Container {
             // check if its already added:
             if (((BorderLayout) getLayout()).getNorth() == null) {
                 Container bar = new Container();
+                if (getUIManager().isThemeConstant("statusBarScrollsUpBool", true)) {
+                    // Without grabsPointerEvents the bar isn't a "responder" as
+                    // far as Form.getResponderAt is concerned (it's a plain
+                    // Container with only a pointer-released listener), so the
+                    // iOS-synthesized status-bar tap at (displayWidth/2, 0)
+                    // would walk past it and hit the empty space behind. With
+                    // it, the bar shows up in getResponderAt and the iOS
+                    // cn1FireStatusBarTap path lands on it deterministically.
+                    bar.setGrabsPointerEvents(true);
+                    bar.addPointerReleasedListener(new ActionListener() {
+                        @Override
+                        public void actionPerformed(ActionEvent evt) {
+                            Form parent = getComponentForm();
+                            if (parent != null) {
+                                Component c = parent.findScrollableChild(parent.getContentPane());
+                                if (c != null) {
+                                    c.scrollRectToVisible(new Rectangle(0, 0, 10, 10), c);
+                                }
+                            }
+                        }
+                    });
+                }
                 if (getUIManager().isThemeConstant("landscapeTitleUiidBool", false)) {
                     bar.setUIID("StatusBar", "StatusBarLandscape");
                 } else {
@@ -2903,6 +3164,16 @@ public class Toolbar extends Container {
                 parent.removeComponentFromForm(ta);
             }
             super.initMenuBar(parent);
+            if (parent.isDesktopHideToolbar()) {
+                // desktop "native" mode: keep the Toolbar object (so the command API and command
+                // harvesting work) but never attach it to the form, so no title strip is painted.
+                // The title goes to the OS window and commands go to the native menu bar.
+                initialized = true;
+                setTitle(parent.getTitle());
+                parent.revalidate();
+                initTitleBarStatus();
+                return;
+            }
             if (layered) {
                 Container layeredPane = parent.getLayeredPane();
                 Container p = layeredPane.getParent();
@@ -2916,6 +3187,11 @@ public class Toolbar extends Container {
 
             initialized = true;
             setTitle(parent.getTitle());
+            if (parent.isDesktopToolbarTitle()) {
+                // desktop "custom" mode: the visible Toolbar IS the window title bar - dragging it
+                // moves the (undecorated) window. Commands also bridge to the native menu bar.
+                installToolbarWindowDrag(parent);
+            }
             parent.revalidate();
             initTitleBarStatus();
             Display.getInstance().callSerially(new Runnable() {

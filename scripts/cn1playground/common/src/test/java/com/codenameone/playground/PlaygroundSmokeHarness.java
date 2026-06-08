@@ -25,7 +25,12 @@ public final class PlaygroundSmokeHarness {
         smokeStringMethods();
         smokeComponentTypeResolvesWithoutExplicitImport();
         smokeUIManagerClassImportDoesNotCollideWithGlobals();
+        smokeInstanceDispatchSuggestsStaticUtility();
+        smokeLambdaRuntimeErrorSurfacesToReporter();
         System.out.println("Playground smoke tests passed.");
+        // Codename One/JavaSE initialization may leave non-daemon threads running.
+        // Force a clean exit so CI jobs don't hang after successful completion.
+        System.exit(0);
     }
 
     private static void smokeGeneratedRegistry() throws Exception {
@@ -247,6 +252,124 @@ public final class PlaygroundSmokeHarness {
         require(result.getComponent() instanceof Container,
                 "UIManager import snippet should produce a Container: " + summarizeMessages(result));
     }
+
+    /** Regression: calling {@code row.setMaterialIcon(FontImage.MATERIAL_X)}
+     * on a MultiButton fails because the only instance overload is
+     * {@code (char, float)} — the user forgot the size. It used to surface
+     * "Generated instance dispatch not implemented", which read like an
+     * internal bug. The runner should now produce a hint that names
+     * the same-class overload first ("MultiButton.setMaterialIcon(...)
+     * with different parameters") and the static utility helpers second
+     * ("FontImage.setMaterialIcon(...)") — same-class is a stronger
+     * signal because the user is already on the right type. */
+    private static void smokeInstanceDispatchSuggestsStaticUtility() {
+        Display.init(null);
+
+        Form host = new Form("Host", new BorderLayout());
+        Container preview = new Container(new BorderLayout());
+        host.add(BorderLayout.CENTER, preview);
+        host.show();
+
+        PlaygroundContext context = new PlaygroundContext(host, preview, null,
+                new PlaygroundContext.Logger() {
+                    public void log(String message) {
+                    }
+                });
+
+        PlaygroundRunner runner = new PlaygroundRunner();
+        PlaygroundRunner.RunResult result = runner.run(
+                "import com.codename1.ui.*;\n"
+                        + "import com.codename1.components.*;\n"
+                        + "MultiButton row = new MultiButton(\"Inbox\");\n"
+                        + "row.setMaterialIcon(FontImage.MATERIAL_ADD_CIRCLE);\n"
+                        + "row;\n",
+                context);
+
+        require(result.getComponent() == null,
+                "Instance dispatch of a static utility should fail to produce a component");
+        String summary = summarizeMessages(result);
+        require(summary.indexOf("No matching instance method") >= 0,
+                "Error message should name the missing instance method, got: " + summary);
+        require(summary.indexOf("did you mean:") >= 0,
+                "Error message should include 'did you mean:', got: " + summary);
+        int sameClassIdx = summary.indexOf("MultiButton.setMaterialIcon(char, float)");
+        require(sameClassIdx >= 0,
+                "Error message should suggest MultiButton.setMaterialIcon(char, float), got: " + summary);
+        int staticIdx = summary.indexOf("FontImage.setMaterialIcon(MultiButton");
+        require(staticIdx >= 0,
+                "Error message should suggest FontImage.setMaterialIcon(MultiButton, ...), got: " + summary);
+        require(sameClassIdx < staticIdx,
+                "Same-class hint must come before static utility hint, got: " + summary);
+        require(summary.indexOf("FontImage.setMaterialIcon(Label") < 0
+                        && summary.indexOf("FontImage.setMaterialIcon(SpanLabel") < 0,
+                "Static suggestions must be filtered to overloads applicable to the target, got: " + summary);
+        require(summary.indexOf("Sourced file:") < 0
+                        && summary.indexOf(" : at Line: ") < 0,
+                "Bsh trace chrome should be stripped, got: " + summary);
+        require(summary.indexOf("Generated instance dispatch not implemented") < 0,
+                "Raw 'Generated instance dispatch' message should be replaced, got: " + summary);
+    }
+
+    /** Regression: when a lambda references an unresolved symbol (e.g. a
+     * missing import for {@code com.codename1.io.Util}), the initial
+     * script evaluation succeeds because the body is only re-evaluated
+     * when the event fires. The user types into the field, the EDT
+     * catches the resulting EvalError, and the UI silently stops
+     * responding. The runner now captures a {@link
+     * PlaygroundContext.RuntimeErrorReporter} into each created lambda so
+     * the later failure surfaces back to the editor. */
+    private static void smokeLambdaRuntimeErrorSurfacesToReporter() {
+        Display.init(null);
+
+        Form host = new Form("Host", new BorderLayout());
+        Container preview = new Container(new BorderLayout());
+        host.add(BorderLayout.CENTER, preview);
+        host.show();
+
+        final List<String> reported = new ArrayList<String>();
+        PlaygroundContext context = new PlaygroundContext(host, preview, null,
+                new PlaygroundContext.Logger() {
+                    public void log(String message) {
+                    }
+                },
+                new PlaygroundContext.RuntimeErrorReporter() {
+                    public void reportRuntimeError(String message, Throwable cause) {
+                        reported.add(message);
+                    }
+                });
+
+        PlaygroundRunner runner = new PlaygroundRunner();
+        // The lambda references DefinitelyMissingType (no matching import or
+        // class). Initial eval must still produce the Label — only the
+        // lambda body's later evaluation fails.
+        PlaygroundRunner.RunResult result = runner.run(
+                "import com.codename1.ui.*;\n"
+                        + "Runnable r = () -> DefinitelyMissingType.doStuff();\n"
+                        + "Label hi = new Label(\"OK\");\n"
+                        + "hi.putClientProperty(\"r\", r);\n"
+                        + "hi;\n",
+                context);
+
+        require(result.getComponent() instanceof Label,
+                "Script with unresolved lambda body should still build the UI: " + summarizeMessages(result));
+        Object stored = ((Label) result.getComponent()).getClientProperty("r");
+        require(stored instanceof Runnable, "Lambda should be assignable to Runnable");
+        require(reported.isEmpty(), "Reporter should not fire until the lambda is actually invoked");
+
+        try {
+            ((Runnable) stored).run();
+            require(false, "Invoking the failing lambda should propagate a RuntimeException");
+        } catch (RuntimeException expected) {
+            // expected — EDT would have swallowed this in production
+        }
+
+        require(reported.size() == 1,
+                "Runtime error reporter should fire exactly once for the failing lambda, saw: " + reported);
+        String msg = reported.get(0);
+        require(msg != null && msg.indexOf("DefinitelyMissingType") >= 0,
+                "Runtime error message should name the unresolved symbol, got: " + msg);
+    }
+
     private static void require(boolean condition, String message) {
         if (!condition) {
             throw new IllegalStateException(message);

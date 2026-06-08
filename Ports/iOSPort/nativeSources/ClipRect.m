@@ -22,6 +22,9 @@
  */
 #import "ClipRect.h"
 #import "CodenameOne_GLViewController.h"
+#ifdef CN1_USE_METAL
+#import "CN1Metalcompat.h"
+#endif
 #import "FillRect.h"
 #ifdef USE_ES2
 #import "DrawTextureAlphaMask.h"
@@ -92,6 +95,42 @@ static CGRect drawingRect;
 }
 
 -(void)execute {
+#ifdef CN1_USE_METAL
+    // Issue #3921 path. Three shapes can arrive here:
+    //
+    //   1. A rectangular clip (initWithArgs:...) -- x/y/w/h hold the
+    //      rect, no polygon points, no texture. Set the scissor and
+    //      disable any prior polygon-stencil clip so we don't carry a
+    //      stale stencil test forward.
+    //
+    //   2. A polygon clip (initWithPolygon:...) -- numPoints > 0 with
+    //      xPoints/yPoints in framebuffer pixel space (built by
+    //      NativeGraphics.clipRect's non-identity-transform branch via
+    //      inverseClip + transform back to screen space). Use the
+    //      stencil pipeline: render the polygon to the stencil at a
+    //      fresh reference value, then bind a stencil-test depth state
+    //      so subsequent draws on this encoder are masked to the
+    //      polygon shape. Mirrors the GL ES2 sequence below.
+    //
+    //   3. A texture-mask clip (initWithArgs:...:texture:) -- texture
+    //      != 0 with x/y/w/h holding the mask bbox. Metal's GLuint
+    //      texture handle from the GL path isn't directly compatible
+    //      with MTLTexture, so this still falls back to a bbox scissor
+    //      (matches the documented Phase 2 fallback for the texture
+    //      mask case; a follow-up could rasterise the alpha mask into
+    //      an MTLTexture and sample it in a stencil-write shader).
+    if (numPoints > 0 && xPoints != NULL && yPoints != NULL) {
+        CN1MetalApplyPolygonStencilClip(xPoints, yPoints, numPoints);
+        clipApplied = YES;
+    } else {
+        int sx = x, sy = y, sw = width, sh = height;
+        if (sx < 0) { sw += sx; sx = 0; }
+        if (sy < 0) { sh += sy; sy = 0; }
+        CN1MetalDisablePolygonStencilClip();
+        CN1MetalSetScissor(sx, sy, sw, sh);
+        clipApplied = (sw > 0 && sh > 0);
+    }
+#else
 #ifdef USE_ES2
     if ( texture != 0 || numPoints > 0 ){
         clipX = x; clipY=y; clipW=width; clipH=height;
@@ -210,6 +249,7 @@ static CGRect drawingRect;
 #endif
         clipApplied = NO;
     }
+#endif // CN1_USE_METAL
 
 }
 
@@ -218,13 +258,14 @@ static CGRect drawingRect;
     if ( clipIsTexture ){
         return;
     }
+#ifndef CN1_USE_METAL
     int displayHeight = [CodenameOne_GLViewController instance].view.bounds.size.height * scaleValue;
     if(currentScaleX == 1 && currentScaleY == 1) {
         //_glEnable(GL_SCISSOR_TEST);
         //CN1Log(@"Updating clip to scale");
         glScissor(clipX, displayHeight - clipY - clipH, clipW, clipH);
     }
-
+#endif // !CN1_USE_METAL
 }
 
 #ifndef CN1_USE_ARC

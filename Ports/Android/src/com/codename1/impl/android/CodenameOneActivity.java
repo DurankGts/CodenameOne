@@ -95,9 +95,26 @@ public class CodenameOneActivity extends Activity {
         return null;
     }
 
+    /**
+     * Test-only injection point for the billing implementation.  The generated
+     * application stub overrides {@link #createBillingSupport()} to return the
+     * real Google Play {@code BillingSupport} whenever the app uses the Purchase
+     * API, which shadows any subclass override.  Instrumentation tests that need
+     * a fake (there is no local Play Billing sandbox) set this before the
+     * activity resumes so {@link #getBillingSupport()} returns the fake instead.
+     * Not used in production.
+     */
+    private static IBillingSupport billingSupportTestOverride;
+
+    public static void setBillingSupportTestOverride(IBillingSupport support) {
+        billingSupportTestOverride = support;
+    }
+
     private IBillingSupport getBillingSupport() {
         if (billingSupport == null) {
-            billingSupport = createBillingSupport();
+            billingSupport = billingSupportTestOverride != null
+                    ? billingSupportTestOverride
+                    : createBillingSupport();
         }
         return billingSupport;
     }
@@ -129,7 +146,7 @@ public class CodenameOneActivity extends Activity {
             for (android.content.pm.Signature signature : packageInfo.signatures) {
                 java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA");
                 md.update(signature.toByteArray());
-                String currentSignature = android.util.Base64.encodeToString(md.digest(), android.util.Base64.DEFAULT);
+                String currentSignature = android.util.Base64.encodeToString(md.digest(), android.util.Base64.NO_WRAP);
                 if (!splitString.contains(currentSignature)) {
                     throw new RuntimeException("App integrity check failed for: " + currentSignature);
                 }
@@ -542,7 +559,7 @@ public class CodenameOneActivity extends Activity {
     }
 
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        if(grantResults != null || grantResults.length == 0) {
+        if(grantResults == null || grantResults.length == 0) {
             requestForPermission = false;
             return;
         }

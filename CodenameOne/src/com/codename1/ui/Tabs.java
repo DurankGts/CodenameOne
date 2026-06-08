@@ -69,7 +69,9 @@ import com.codename1.ui.util.EventDispatcher;
 /// hi.add(BorderLayout.CENTER, t);
 /// ```
 ///
-/// The `Tabs` allows swiping on the X-axis (by default) but also on the Y-axis ([demo video](https://youtu.be/9CxqFGOYAU0)):
+/// The `Tabs` allows swiping on the X-axis (by default) but also on the Y-axis:
+/// ![Tabs swiping on the X-axis and Y-axis](https://www.codenameone.com/img/tabs-swipe-x-y-axis.gif)
+///
 /// ```java
 /// Form hi = new Form("Test swipe on tabs", BorderLayout.absolute());
 /// Tabs tabs = new Tabs();
@@ -92,6 +94,13 @@ import com.codename1.ui.util.EventDispatcher;
 public class Tabs extends Container {
     private final Container contentPane = new Container(new TabsLayout());
     private final Container tabsContainer;
+    /// Optional wrapper around `tabsContainer` whose only job is to absorb the
+    /// safe-area inset when the theme opts out of internal safe-area padding
+    /// via the `tabsSafeAreaBool` constant. With the wrapper present, the
+    /// pill (`tabsContainer`) draws tightly while the wrapper's padding keeps
+    /// the pill clear of the home indicator. `null` for legacy themes that
+    /// keep the safe-area inset on the pill itself.
+    private Container tabsContainerHost;
     private final ButtonGroup radioGroup = new ButtonGroup();
     private final ActionListener press;
     private final ActionListener drag;
@@ -129,6 +138,22 @@ public class Tabs extends Container {
     private boolean blockSwipe;
     private boolean riskySwipe;
 
+    // ---- Animated tab indicator (Material 3 "NavigationBar" style) ----
+    // Off by default. Enable with #setAnimatedIndicator(true) or the
+    // `tabsAnimatedIndicatorBool` theme constant. When on, a coloured
+    // underline drawn under the currently-selected tab tweens its
+    // x/width between the previous and new tabs on selection change.
+    private boolean animatedIndicator;
+    private int animatedIndicatorDurationMs = 200;
+    private int animatedIndicatorThicknessMm = 1; // 1mm-tall underline
+    private Motion indicatorAnimMotion;
+    // Tab bounds at the start of the indicator animation.
+    private int indicatorFromX;
+    private int indicatorFromW;
+    // Tab bounds at the end of the indicator animation.
+    private int indicatorToX;
+    private int indicatorToW;
+
     /// Creates an empty `TabbedPane` with a default
     /// tab placement of `Component.TOP`.
     public Tabs() {
@@ -148,12 +173,49 @@ public class Tabs extends Container {
         focusListener = new TabFocusListener();
         contentPane.setUIID("TabbedPane");
         super.addComponent(BorderLayout.CENTER, contentPane);
-        tabsContainer = new Container();
-        tabsContainer.setSafeArea(true);
+        // Custom Container subclass that lets us paint the animated indicator
+        // on top of children (over the tab buttons' selected-state background)
+        // when `animatedIndicator` is on. When the feature is off, the
+        // override is a no-op extra call and visually indistinguishable from
+        // a plain Container.
+        tabsContainer = new Container() {
+            @Override
+            public void paint(Graphics g) {
+                super.paint(g);
+                paintAnimatedIndicator(g);
+            }
+        };
+        // tabsSafeAreaBool=true (default): legacy / flush-bar themes keep the
+        // safe-area inset as PADDING on the pill itself - the bar's
+        // background reaches the screen edge with tabs sitting above the
+        // home indicator.
+        //
+        // tabsSafeAreaBool=false (modern floating pill): the safe-area inset
+        // moves to a wrapper container so the pill draws tightly and is
+        // pushed up away from the indicator without extending its own
+        // background into the indicator zone.
+        boolean tabsSafeAreaOnPill = getUIManager().isThemeConstant("tabsSafeAreaBool", true);
+        tabsContainer.setSafeArea(tabsSafeAreaOnPill);
         tabsContainer.setUIID("TabsContainer");
         tabsContainer.setScrollVisible(false);
         tabsContainer.getStyle().setMargin(0, 0, 0, 0);
+        if (!tabsSafeAreaOnPill) {
+            tabsContainerHost = new Container(new BorderLayout());
+            tabsContainerHost.setUIID("Container");
+            tabsContainerHost.setSafeArea(true);
+            tabsContainerHost.add(BorderLayout.CENTER, tabsContainer);
+        }
         if (tabP == -1) {
+            // Honor the tabPlacementInt theme constant when no explicit
+            // placement was requested. Reading the constant here (rather
+            // than only in initLaf) guarantees the value is seen even
+            // when initLaf runs polymorphically from Component()'s super
+            // ctor - at that point the Tabs subclass fields haven't been
+            // initialised yet and writes to them are brittle.
+            int themePlacement = getUIManager().getThemeConstant("tabPlacementInt", -1);
+            if (themePlacement != -1) {
+                tabPlacement = themePlacement;
+            }
             setTabPlacement(tabPlacement);
         } else {
             setTabPlacement(tabP);
@@ -162,6 +224,9 @@ public class Tabs extends Container {
         drag = new SwipeListener(SwipeListener.DRAG);
         release = new SwipeListener(SwipeListener.RELEASE);
         setUIIDFinal("Tabs");
+        // Opt-in animated indicator (Material 3 NavigationBar style).
+        animatedIndicator = getUIManager().isThemeConstant("tabsAnimatedIndicatorBool", false);
+        animatedIndicatorDurationMs = getUIManager().getThemeConstant("tabsAnimatedIndicatorDurationInt", 200);
         BorderLayout bd = (BorderLayout) super.getLayout();
         if (bd != null) {
             if (UIManager.getInstance().isThemeConstant("tabsOnTopBool", false)) {
@@ -214,8 +279,20 @@ public class Tabs extends Container {
             }
         }
         changeTabContainerStyleOnFocus = manager.isThemeConstant("changeTabContainerStyleOnFocusBool", false);
+        // tabPlacementInt lets a theme dictate whether tabs live at TOP /
+        // BOTTOM / LEFT / RIGHT. initLaf is called both during the
+        // Component() super() chain (before the Tabs ctor body has
+        // allocated tabsContainer) and again later when styles refresh.
+        // First call: tabsContainer is null, so just stash the value in
+        // the field; the ctor's setTabPlacement call at the end will
+        // pick it up and move the (then-allocated) container.
+        // Second call and beyond: container exists, so reparent it.
         if (tabPlace != -1) {
-            tabPlacement = tabPlace;
+            if (tabsContainer == null) {
+                tabPlacement = tabPlace;
+            } else if (tabPlace != tabPlacement) {
+                setTabPlacement(tabPlace);
+            }
         }
     }
 
@@ -273,6 +350,18 @@ public class Tabs extends Container {
     @Override
     public boolean animate() {
         boolean b = super.animate();
+        // Indicator-animation tick: redraw the tab bar each frame while
+        // the motion is in flight. We let the existing super.animate /
+        // slide motion control deregistration; the indicator motion is
+        // cheap enough to run alongside without coordination.
+        if (indicatorAnimMotion != null) {
+            if (indicatorAnimMotion.isFinished()) {
+                indicatorAnimMotion = null;
+            } else {
+                tabsContainer.repaint();
+                b = true;
+            }
+        }
         if (slideToDestMotion != null) {
             if (swipeOnXAxis) {
                 int motionX = slideToDestMotion.getValue();
@@ -586,9 +675,26 @@ public class Tabs extends Container {
         if (tabUIID != null) {
             b.setUIID(tabUIID);
         }
+        applyTabIconUIID(b);
         b.setFontIcon(font, icon, size);
         createTabImpl(b);
         return b;
+    }
+
+    /// Detaches the tab's icon style from the Button's selection-state styles.
+    /// FontImage.setIcon copies the Button's unselected/selected/pressed styles
+    /// to render four icon variants - which means the icon image carries the
+    /// Button's bgColor and bgTransparency. With a `cn1-pill-border` selected
+    /// background, that produces a visible square fill behind the glyph that
+    /// doesn't follow the pill's rounded shape. Reading `tabIconUIID` from the
+    /// theme lets a theme route the icon styling to a separate UIID
+    /// (typically `TabIcon`) where it can be declared transparent. Themes that
+    /// don't define the constant get the legacy behavior unchanged.
+    private void applyTabIconUIID(Component b) {
+        String iconUiid = getUIManager().getThemeConstant("tabIconUIID", null);
+        if (iconUiid != null && iconUiid.length() > 0 && b instanceof Label) {
+            ((Label) b).setIconUIID(iconUiid);
+        }
     }
 
     /// Creates a tab component by default this is a RadioButton but subclasses can use this to return anything
@@ -604,6 +710,7 @@ public class Tabs extends Container {
     /// component instance
     protected Component createTab(String title, Image icon) {
         RadioButton b = new RadioButton(title != null ? title : "", icon);
+        applyTabIconUIID(b);
         createTabImpl(b);
         return b;
     }
@@ -1133,22 +1240,23 @@ public class Tabs extends Container {
                 tabPlacement != BOTTOM && tabPlacement != RIGHT) {
             throw new IllegalArgumentException("illegal tab placement: must be TOP, BOTTOM, LEFT, or RIGHT");
         }
-        if (this.tabPlacement == tabPlacement && tabsContainer.getParent() == null && isInitialized()) {
+        Container slotComponent = tabsContainerHost != null ? tabsContainerHost : tabsContainer;
+        if (this.tabPlacement == tabPlacement && slotComponent.getParent() == null && isInitialized()) {
             return;
         }
         this.tabPlacement = tabPlacement;
-        removeComponent(tabsContainer);
+        removeComponent(slotComponent);
 
         setTabsLayout(tabPlacement);
 
         if (tabPlacement == TOP) {
-            super.addComponent(BorderLayout.NORTH, tabsContainer);
+            super.addComponent(BorderLayout.NORTH, slotComponent);
         } else if (tabPlacement == BOTTOM) {
-            super.addComponent(BorderLayout.SOUTH, tabsContainer);
+            super.addComponent(BorderLayout.SOUTH, slotComponent);
         } else if (tabPlacement == LEFT) {
-            super.addComponent(BorderLayout.WEST, tabsContainer);
+            super.addComponent(BorderLayout.WEST, slotComponent);
         } else { // RIGHT
-            super.addComponent(BorderLayout.EAST, tabsContainer);
+            super.addComponent(BorderLayout.EAST, slotComponent);
         }
 
         initTabsFocus();
@@ -1192,6 +1300,10 @@ public class Tabs extends Container {
         if (index == activeComponent) {
             return;
         }
+        // Snapshot the current tab bounds *before* we mutate state, so the
+        // animated indicator can tween from where it visibly is to the new
+        // selection's bounds.
+        startIndicatorAnimation(activeComponent, index);
 
         Form form = getComponentForm();
         if (slideToSelected && form != null) {
@@ -1234,9 +1346,112 @@ public class Tabs extends Container {
         b.requestFocus();
     }
 
+    /// Enables the Material 3 sliding-underline indicator (off by default).
+    /// When on, selection changes tween the indicator from the old tab's
+    /// bounds to the new tab's bounds over `tabsAnimatedIndicatorDurationInt`
+    /// milliseconds (default 200, ease-in-out cubic).
+    ///
+    /// Color is taken from the `TabIndicator` UIID's foreground color when
+    /// it exists, otherwise from the currently-selected tab's foreground color.
+    /// Thickness is 1mm; override with the `tabsAnimatedIndicatorThicknessMm`
+    /// theme constant (in millimeters).
+    public void setAnimatedIndicator(boolean enable) {
+        this.animatedIndicator = enable;
+        // First frame: snap the indicator to the currently-selected tab so
+        // it appears immediately on enable rather than on the next change.
+        if (enable && tabsContainer.getComponentCount() > 0) {
+            Component active = tabsContainer.getComponentAt(activeComponent);
+            indicatorFromX = active.getX();
+            indicatorFromW = active.getWidth();
+            indicatorToX = indicatorFromX;
+            indicatorToW = indicatorFromW;
+        }
+        tabsContainer.repaint();
+    }
+
+    /// Returns whether the animated tab indicator is enabled. See
+    /// `#setAnimatedIndicator(boolean)`.
+    public boolean isAnimatedIndicator() {
+        return animatedIndicator;
+    }
+
+    private void startIndicatorAnimation(int fromIndex, int toIndex) {
+        if (!animatedIndicator || tabsContainer == null) {
+            return;
+        }
+        if (fromIndex < 0 || fromIndex >= tabsContainer.getComponentCount()
+                || toIndex < 0 || toIndex >= tabsContainer.getComponentCount()) {
+            return;
+        }
+        Component fromTab = tabsContainer.getComponentAt(fromIndex);
+        Component toTab = tabsContainer.getComponentAt(toIndex);
+        // If a motion is already in flight, start from the *current*
+        // interpolated position, not from the previous tab -- otherwise
+        // rapid double-clicks jump back to a stale baseline.
+        if (indicatorAnimMotion != null && !indicatorAnimMotion.isFinished()) {
+            int v = indicatorAnimMotion.getValue();
+            indicatorFromX = indicatorFromX + ((indicatorToX - indicatorFromX) * v / 100);
+            indicatorFromW = indicatorFromW + ((indicatorToW - indicatorFromW) * v / 100);
+        } else {
+            indicatorFromX = fromTab.getX();
+            indicatorFromW = fromTab.getWidth();
+        }
+        indicatorToX = toTab.getX();
+        indicatorToW = toTab.getWidth();
+        indicatorAnimMotion = Motion.createEaseInOutMotion(0, 100, animatedIndicatorDurationMs);
+        indicatorAnimMotion.start();
+        Form f = getComponentForm();
+        if (f != null) {
+            f.registerAnimatedInternal(this);
+        }
+    }
+
+    /// Draws the animated indicator inside `tabsContainer`'s paint flow. Called
+    /// from the inner `Container` subclass installed as `tabsContainer`.
+    void paintAnimatedIndicator(Graphics g) {
+        if (!animatedIndicator || tabsContainer.getComponentCount() == 0) {
+            return;
+        }
+        int x;
+        int w;
+        if (indicatorAnimMotion != null) {
+            int v = indicatorAnimMotion.getValue();    // 0..100
+            x = indicatorFromX + ((indicatorToX - indicatorFromX) * v / 100);
+            w = indicatorFromW + ((indicatorToW - indicatorFromW) * v / 100);
+        } else {
+            // At rest: pin to the currently-selected tab.
+            Component active = tabsContainer.getComponentAt(activeComponent);
+            x = active.getX();
+            w = active.getWidth();
+        }
+        int thicknessMm = getUIManager().getThemeConstant("tabsAnimatedIndicatorThicknessMm", animatedIndicatorThicknessMm);
+        int thickness = Display.getInstance().convertToPixels(thicknessMm);
+        // Use TabIndicator UIID color when its fg is set; otherwise pull
+        // from the selected tab's foreground. `getComponentStyle(...)`
+        // never returns null -- it synthesises an empty Style if no
+        // matching UIID exists -- so a `null` check on the result would
+        // be redundant.
+        int color;
+        Style indicatorStyle = getUIManager().getComponentStyle("TabIndicator");
+        if (indicatorStyle.getFgColor() != 0) {
+            color = indicatorStyle.getFgColor();
+        } else {
+            Component active = tabsContainer.getComponentAt(activeComponent);
+            color = active.getSelectedStyle().getFgColor();
+        }
+        int oldAlpha = g.getAlpha();
+        int oldColor = g.getColor();
+        g.setColor(color);
+        g.setAlpha(255);
+        int y = tabsContainer.getInnerY() + tabsContainer.getInnerHeight() - thickness;
+        g.fillRect(tabsContainer.getInnerX() + x, y, w, thickness);
+        g.setColor(oldColor);
+        g.setAlpha(oldAlpha);
+    }
+
     /// Hide the tabs bar
     public void hideTabs() {
-        removeComponent(tabsContainer);
+        removeComponent(tabsContainerHost != null ? tabsContainerHost : tabsContainer);
         revalidateLater();
     }
 

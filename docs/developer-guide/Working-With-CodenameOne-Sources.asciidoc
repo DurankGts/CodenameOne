@@ -1,4 +1,4 @@
-== Working with Codename One Sources
+== Working with Codename One sources
 
 The Codename One SDK is published as a Maven multi-module project. Building the
 aggregator in the `/maven` directory compiles every module, installs the
@@ -11,7 +11,9 @@ Codename One uses multiple JDKs and Maven profiles during the build. Make sure
 your development machine includes the following tooling (see
 `BUILDING.md` for platform-specific installation tips):
 
-* JDK 8 (required for the core build and Maven invocations)
+* JDK 8 (required for the core build of the framework itself)
+* JDK 11 through 25 (required at *runtime* to launch the simulator or
+  "Run as desktop app" target)
 * JDK 17 (required when compiling the Android port)
 * Apache Maven 3.6 or newer
 * macOS with Xcode (if you plan to build or test the iOS port)
@@ -32,7 +34,7 @@ $ mvn install
 The default build runs every module and its unit tests. Append `-DskipTests`
 if you want to skip the test phases to speed up local builds.
 
-The version printed by Maven will usually end with `-SNAPSHOT` when you build
+The version printed by Maven will end with `-SNAPSHOT` when you build
 from the `master` branch. Release builds from Maven Central omit the suffix.
 
 === Installing the Maven archetypes
@@ -67,7 +69,7 @@ $ mvn -pl core-unittests test
 $ mvn -pl tests -am verify
 ----
 
-Refer to the READMEs in `maven/core-unittests` and `maven/tests` for additional
+Refer to the READMEs in `maven/core-unittests` and `maven/tests` for more
 configuration flags, platform requirements, and environment variables.
 
 === Using your local build in application projects
@@ -89,12 +91,12 @@ project), adjust the `pom.xml` properties to reference your snapshot version:
 Open the project in your IDE and build or run it. Maven will resolve the local
 snapshot instead of downloading the latest release from Maven Central.
 
-=== Why build from source?
+=== Why build from source
 
 Building the SDK yourself gives you:
 
 * Immediate access to fixes and features before they reach Maven Central.
-* The ability to inspect, debug, and modify the framework when you need custom
+* The ability to inspect, debug, and change the framework when you need custom
  behavior.
 * A path to contribute improvements back to the Codename One core.
 

@@ -41,6 +41,8 @@ import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  *
@@ -49,6 +51,13 @@ import java.util.logging.Logger;
  */
 public class IPhoneBuilder extends Executor {
     private boolean useMetal;
+
+    // macNative.enabled=true switches this iOS build to also emit a native Mac
+    // variant of the same app. All Mac-specific code lives in MacNativeBuilder
+    // (same package). The underlying Apple technology is Mac Catalyst, but
+    // that is an implementation detail -- never surfaced in hint names.
+    private final MacNativeBuilder macNativeBuilder = new MacNativeBuilder(this);
+
     private boolean enableGalleryMultiselect;
     private boolean usePhotoKitForMultigallery;
     private boolean enableWKWebView, disableUIWebView;
@@ -61,11 +70,20 @@ public class IPhoneBuilder extends Executor {
     private File tmpFile;
     private File icon57;
     private File icon512;
-    private static final String DEFAULT_MIN_DEPLOYMENT_VERSION = "12.0";
+    // Bumped from 12.0 → 13.0 to enable NSURLSessionWebSocketTask
+    // (iOS 13+) used by com.codename1.io.WebSocket's iOS implementation.
+    // BuildDaemon's iOS lane needs the same bump.
+    private static final String DEFAULT_MIN_DEPLOYMENT_VERSION = "13.0";
 
     // StringBuilder used for constructing ruby script with xcodeproj
     // which adds localized strings files to the project.
     private StringBuilder installLocalizedStringsScript = new StringBuilder();
+
+    // Populated by processLocalizedIcons from cn1_icon_LANG[_COUNTRY].png files
+    // found in common/src/resources. Keys are alternate icon names embedded in the
+    // Info.plist (e.g. "AppIcon_en_GB"); values are the normalized locale match key
+    // (e.g. "en_GB" or just "en" when no country is supplied).
+    private Map<String, String> localizedIcons = new LinkedHashMap<String, String>();
 
     private boolean detectJailbreak;
 
@@ -75,6 +93,24 @@ public class IPhoneBuilder extends Executor {
     private String buildVersion;
     private boolean usesLocalNotifications;
     private boolean usesPurchaseAPI;
+    private boolean usesCryptoAPI;
+    private boolean usesCryptoGcm;
+    private boolean usesBiometrics;
+    private boolean usesNfc;
+    private boolean usesCn1Camera;
+    private boolean usesOidc;
+    private boolean usesAppleSignIn;
+    private boolean usesWebauthn;
+    private boolean usesNfcHce;
+
+    // Deeper-network connectivity flags. Set by the classpath scanner when
+    // the app references com.codename1.io.wifi.* / com.codename1.io.bonjour.*
+    // The build pipeline injects the matching entitlements / Info.plist
+    // strings further down. Apps that never touch the APIs see no change.
+    private boolean usesWifiInfo;
+    private boolean usesWifiHotspotConfig;
+    private boolean usesBonjour;
+    private String firstBonjourType;
                                   // so we need to store the main class name for later here.
     // Map will be used for Xcode 8 privacy usage descriptions.  Don't need it yet
     // so leaving it commented out.
@@ -156,6 +192,12 @@ public class IPhoneBuilder extends Executor {
 
     private static String escapeRuby(String input) {
         return input.replace("\\", "\\\\").replace("'", "\\'");
+    }
+
+    /** Package-private accessor so {@link MacNativeBuilder} (separate file in
+     *  the same package) can use the same escaping helper. */
+    static String escapeRubyStr(String input) {
+        return escapeRuby(input);
     }
     
     @Override
@@ -252,7 +294,25 @@ public class IPhoneBuilder extends Executor {
         detectJailbreak = request.getArg("ios.detectJailbreak", "false").equals("true");
         defaultEnvironment.put("LANG", "en_US.UTF-8");
         tmpFile = tmpDir = getBuildDirectory();
-        useMetal = "true".equals(request.getArg("ios.metal", "false"));
+        useMetal = "true".equals(request.getArg("ios.metal", "true"));
+
+        // macNative: extend this iOS build to also produce a native Mac slice.
+        // All Mac-specific work is delegated to MacNativeBuilder; this builder
+        // only flips a few iOS-side knobs (Metal forced on, minimum deployment
+        // target floor, Ruby xcodeproj gem required) when Mac is enabled.
+        macNativeBuilder.parseHints(request);
+        if (macNativeBuilder.isEnabled()) {
+            // The Mac slice cannot link OpenGL ES; force Metal on regardless of
+            // the ios.metal hint. (Already on by default now, but defensive.)
+            useMetal = true;
+            // Catalyst requires iOS 13.1+ -> macOS 10.15+.
+            addMinDeploymentTarget(macNativeBuilder.getIosMinDeploymentTarget());
+            // Mac requires the iPad device family. iphone-only is incompatible.
+            macNativeBuilder.validateProjectType(request);
+            // Ruby + xcodeproj gem is unconditionally required for the Mac slice.
+            ensureXcodeprojInstalled();
+        }
+
         log("Request Args: ");
         log("-----------------");
         for (String arg : request.getArgs()) {
@@ -350,7 +410,22 @@ public class IPhoneBuilder extends Executor {
         }
 
         debug("Xcode version is "+xcodeVersion);
-        String iosMode = request.getArg("ios.themeMode", "auto");
+        // ios.themeMode stays the platform-specific knob; nativeTheme is
+        // the cross-platform meta hint. modern / legacy on the meta hint
+        // translate to the equivalent iOS values when ios.themeMode is unset.
+        // cn1.nativeTheme is honored as a deprecated alias for nativeTheme.
+        String iosMode = request.getArg("ios.themeMode", null);
+        if (iosMode == null) {
+            String sharedMode = request.getArg("nativeTheme",
+                    request.getArg("cn1.nativeTheme", null));
+            if ("legacy".equalsIgnoreCase(sharedMode)) {
+                iosMode = "ios7";
+            } else if ("modern".equalsIgnoreCase(sharedMode)) {
+                iosMode = "modern";
+            } else {
+                iosMode = "auto";
+            }
+        }
         
         tmpFile = getBuildDirectory();
         if (tmpFile == null) {
@@ -612,28 +687,179 @@ public class IPhoneBuilder extends Executor {
             addMinDeploymentTarget("8.0");
         }
         
+        // Accumulator for AI/ML class hits. After the scan we apply
+        // every matched AiDependencyTable.Entry -- appending pods,
+        // SPM specs, plist defaults and Android perms -- so the user
+        // doesn't have to declare them by hand.
+        final AiDependencyTable.Accumulator aiAcc = new AiDependencyTable.Accumulator();
+
         try {
             scanClassesForPermissions(classesDir, new Executor.ClassScanner() {
                 @Override
                 public void usesClass(String cls) {
                     if (cls == null) return;
+                    aiAcc.consume(cls);
                     if (!usesLocalNotifications && cls.indexOf("com/codename1/notifications/LocalNotification") == 0) {
                         usesLocalNotifications = true;
                     }
                     if (!usesPurchaseAPI && cls.indexOf("com/codename1/payment") == 0) {
                         usesPurchaseAPI = true;
                     }
+                    if (cls.indexOf("com/codename1/security/") == 0) {
+                        // com.codename1.security contains two distinct API
+                        // families that toggle different bits of the iOS
+                        // build. Biometrics + SecureStorage need the
+                        // LocalAuthentication.framework linkage; the crypto
+                        // primitives need the CN1Crypto.{h,m} #defines and
+                        // an Info.plist export-compliance entry.
+                        String shortName = cls.substring("com/codename1/security/".length());
+                        boolean isBiometric =
+                                shortName.startsWith("Biometric")
+                             || shortName.equals("SecureStorage")
+                             || shortName.equals("AuthenticationOptions");
+                        if (isBiometric) {
+                            usesBiometrics = true;
+                        } else {
+                            usesCryptoAPI = true;
+                        }
+                    }
+                    if (!usesNfc && cls.indexOf("com/codename1/nfc/") == 0) {
+                        usesNfc = true;
+                        if (cls.equals("com/codename1/nfc/HostCardEmulationService")) {
+                            usesNfcHce = true;
+                        }
+                    }
+                    // Low-level camera API (com.codename1.camera.*). Gated on
+                    // actual usage -- NOT on the camera privacy description --
+                    // so the old modal Capture API (which only sets
+                    // INCLUDE_CAMERA_USAGE) does not pull in the new
+                    // AVFoundation-based CN1Camera natives.
+                    if (!usesCn1Camera && cls.indexOf("com/codename1/camera/") == 0) {
+                        usesCn1Camera = true;
+                    }
+                    // OidcClient + SystemBrowser rely on
+                    // ASWebAuthenticationSession (AuthenticationServices.framework,
+                    // iOS 12+).
+                    if (!usesOidc && cls.indexOf("com/codename1/io/oidc/") == 0) {
+                        usesOidc = true;
+                    }
+                    // Sign in with Apple (ASAuthorizationAppleIDProvider) lives
+                    // in the same framework and only matters when the user
+                    // actually references AppleSignIn.
+                    if (!usesAppleSignIn
+                            && cls.indexOf("com/codename1/social/AppleSignIn") == 0) {
+                        usesAppleSignIn = true;
+                    }
+                    // WebAuthn / passkeys (ASAuthorizationPlatformPublicKeyCredentialProvider)
+                    // also lives in AuthenticationServices.framework. Same gate
+                    // strategy: only enable the native bridge when the app
+                    // references com.codename1.io.webauthn.*
+                    if (!usesWebauthn
+                            && cls.indexOf("com/codename1/io/webauthn/") == 0) {
+                        usesWebauthn = true;
+                    }
+                    if (cls.indexOf("com/codename1/io/wifi/WiFi") == 0
+                            && !cls.equals("com/codename1/io/wifi/WiFiDirect")) {
+                        // WiFi info or scan/connect. iOS has no scan API so
+                        // the WiFi entitlement we inject is hotspot config +
+                        // wifi-info; we treat any use as info-capable and
+                        // upgrade to hotspot config only when scan/connect
+                        // is referenced (detected via method scan below).
+                        usesWifiInfo = true;
+                    }
+                    if (cls.indexOf("com/codename1/io/bonjour/") == 0) {
+                        usesBonjour = true;
+                    }
+                    // WiFi Direct / USB on iOS: not supported. We
+                    // intentionally do not inject entitlements -- the runtime
+                    // stub returns "unsupported" at call time.
                 }
 
                 @Override
                 public void usesClassMethod(String cls, String method) {
-
+                    if (cls.equals("com/codename1/io/wifi/WiFi")
+                            && (method.indexOf("connect") > -1
+                                || method.indexOf("disconnect") > -1)) {
+                        usesWifiHotspotConfig = true;
+                    }
                 }
             });
         } catch (Exception ex) {
             throw new BuildException("Failed to scan project classes for permissions.", ex);
         }
         stopwatch.split("Scan Classes");
+
+        // Apply AI/ML dependency table hits accumulated during the
+        // scan. We route iOS pods through the existing
+        // iosPods string and SPM entries through the request build
+        // hints, so the IOSDependencyManager.resolve() call below can
+        // pick them up consistently with manually-declared deps.
+        if (!aiAcc.hits().isEmpty()) {
+            // Prefer SPM when the project already uses SPM and the
+            // entry exposes an SPM spec; otherwise pods. A handful
+            // of ML Kit libs are pods-only -- those force pods on
+            // regardless of project preference (the resolver will
+            // upgrade the effective mode to BOTH below).
+            boolean projectPrefersSpm = dependencyConfig.usesSwiftPackages() && !dependencyConfig.usesCocoaPods();
+            StringBuilder spmPackages = new StringBuilder(request.getArg("ios.spm.packages", ""));
+            for (AiDependencyTable.Entry entry : aiAcc.hits()) {
+                boolean handledViaSpm = false;
+                if (projectPrefersSpm && !entry.iosSpmSpecs().isEmpty()) {
+                    for (AiDependencyTable.IosSpm spm : entry.iosSpmSpecs()) {
+                        if (spmPackages.length() > 0) spmPackages.append(';');
+                        spmPackages.append(spm.identity).append('|')
+                                .append(spm.url).append('|')
+                                .append(spm.requirement);
+                        StringBuilder products = new StringBuilder();
+                        for (int i = 0; i < spm.products.size(); i++) {
+                            if (i > 0) products.append(',');
+                            products.append(spm.products.get(i));
+                        }
+                        // Honor any user-declared products -- append, don't overwrite.
+                        String existingProducts = request.getArg("ios.spm.products." + spm.identity, "");
+                        if (existingProducts != null && existingProducts.length() > 0) {
+                            products.insert(0, existingProducts + ",");
+                        }
+                        request.putArgument("ios.spm.products." + spm.identity, products.toString());
+                    }
+                    handledViaSpm = true;
+                }
+                if (!handledViaSpm) {
+                    for (String pod : entry.iosPods()) {
+                        if (iosPods.length() > 0) iosPods += ",";
+                        iosPods += pod;
+                    }
+                }
+                for (String[] plistEntry : entry.iosPlistEntries()) {
+                    String key = "ios." + plistEntry[0];
+                    if (request.getArg(key, null) == null) {
+                        request.putArgument(key, plistEntry[1]);
+                    }
+                }
+            }
+            if (spmPackages.length() > 0) {
+                request.putArgument("ios.spm.packages", spmPackages.toString());
+            }
+            // Surface the upload-size flag for the cloud build server
+            // so it can abort early with a friendly message.
+            if (aiAcc.anyRequiresBigUpload()) {
+                request.putArgument("cn1.ai.requiresBigUpload", "true");
+            }
+            // Re-resolve in case AI deps pushed us into a different
+            // mode (e.g. pods-only-when-the-project-was-SPM-only).
+            dependencyConfig = IOSDependencyManager.resolve(request, iosPods);
+            iosPods = dependencyConfig.iosPods;
+            boolean newRunPods = dependencyConfig.usesCocoaPods();
+            boolean newRunSpm = dependencyConfig.usesSwiftPackages();
+            if (newRunPods && !runPods) {
+                ensurePodsInstalled();
+            }
+            if (newRunSpm && !runSpm) {
+                ensureXcodeprojInstalled();
+            }
+            runPods = newRunPods;
+            runSpm = newRunSpm;
+        }
 
         debug("Local Notifications "+(usesLocalNotifications?"enabled":"disabled"));
         try {
@@ -685,10 +911,34 @@ public class IPhoneBuilder extends Executor {
         } 
 
 
+        // Flip the crypto build toggles in CN1Crypto.h based on what the
+        // user's bytecode references. Apps that don't touch
+        // com.codename1.security.* get stub-only versions of the iOS
+        // crypto bridge -- no CommonCrypto / Security framework symbols
+        // referenced -- which keeps Apple's static-symbol scanner happy.
+        usesCryptoGcm = usesCryptoAPI && "true".equals(request.getArg("ios.crypto.gcm", "false"));
+        try {
+            File cn1Crypto = new File(buildinRes, "CN1Crypto.h");
+            if (cn1Crypto.exists()) {
+                if (usesCryptoAPI) {
+                    replaceInFile(cn1Crypto, "//#define CN1_INCLUDE_CRYPTO", "#define CN1_INCLUDE_CRYPTO");
+                }
+                if (usesCryptoGcm) {
+                    replaceInFile(cn1Crypto, "//#define CN1_INCLUDE_CRYPTO_GCM", "#define CN1_INCLUDE_CRYPTO_GCM");
+                }
+            }
+        } catch (Exception ex) {
+            throw new BuildException("Failed to configure CN1Crypto.h", ex);
+        }
+        debug("Crypto API "+(usesCryptoAPI?"enabled":"disabled")
+              +", AES-GCM "+(usesCryptoGcm?"enabled":"disabled"));
+
         if (useMetal) {
             try {
                 File CN1ES2compat = new File(buildinRes, "CN1ES2compat.h");
                 replaceInFile(CN1ES2compat, "//#define CN1_USE_METAL", "#define CN1_USE_METAL");
+                String colorSpaceDefine = resolveMetalColorSpaceDefine(request.getArg("ios.metal.colorSpace", "sRGB"));
+                replaceInFile(CN1ES2compat, "//#define CN1_METAL_COLORSPACE_PLACEHOLDER", colorSpaceDefine);
                 copy(new File(buildinRes, "MainWindowMETAL.xib"), new File(buildinRes, "MainWindow.xib"));
                 copy(new File(buildinRes, "CodenameOne_METALViewController.xib"), new File(buildinRes, "CodenameOne_GLViewController.xib"));
             } catch (Exception ex) {
@@ -697,6 +947,11 @@ public class IPhoneBuilder extends Executor {
         } else {
             new File(buildinRes, "MainWindowMETAL.xib").delete();
             new File(buildinRes, "CodenameOne_METALViewController.xib").delete();
+            // The .metal shader file isn't guarded by an #ifdef like the
+            // companion .m files, so leaving it in the project forces Xcode
+            // to invoke the Metal toolchain -- which Xcode 26 ships as a
+            // separately-downloaded component that build servers don't have.
+            new File(buildinRes, "CN1MetalShaders.metal").delete();
         }
 
 
@@ -742,7 +997,7 @@ public class IPhoneBuilder extends Executor {
         }
         
         File glAppDelegate = new File(buildinRes, "CodenameOne_GLAppDelegate.m");
-        boolean useUIScene = "true".equalsIgnoreCase(request.getArg("ios.uiscene", "false"));
+        boolean useUIScene = "true".equalsIgnoreCase(request.getArg("ios.uiscene", "true"));
         String integrateFacebook = "";
         
 
@@ -781,6 +1036,28 @@ public class IPhoneBuilder extends Executor {
         }
 
         
+        // OidcClient + SystemBrowser bootstrap: when the scanner saw any
+        // com.codename1.io.oidc.* reference, the port's
+        // OidcBrowserNativeImpl.init() must run before the app starts so
+        // SystemBrowser.getProvider() returns the iOS native bridge.
+        String integrateOidcBrowser = "";
+        if (usesOidc) {
+            integrateOidcBrowser =
+                "        com.codename1.io.oidc.OidcBrowserNativeImpl.init();\n";
+        }
+        // AppleSignIn bootstrap -- same mechanism, separate gate.
+        String integrateAppleSignIn = "";
+        if (usesAppleSignIn) {
+            integrateAppleSignIn =
+                "        com.codename1.social.AppleSignInNativeImpl.init();\n";
+        }
+        // WebAuthn bootstrap -- same mechanism, separate gate.
+        String integrateWebauthn = "";
+        if (usesWebauthn) {
+            integrateWebauthn =
+                "        com.codename1.io.webauthn.WebAuthnNativeImpl.init();\n";
+        }
+
         String integrateGoogleConnect = "";
         if (useGoogleSignIn) {
             try {
@@ -970,6 +1247,17 @@ public class IPhoneBuilder extends Executor {
             disableScreenshots = "        Display.getInstance().setProperty(\"DisableScreenshots\", \"true\");\n";
         }
 
+        // If the build-time SVG transcoder produced a registry class, weave
+        // its installGlobal() call into the Stub right before the first
+        // init(Object) so theme.getImage("foo.svg") returns the transcoded
+        // SVG immediately. Skipped silently for apps that have no SVGs.
+        String svgRegistryInstall = "";
+        File svgRegistryClassFile = new File(classesDir,
+                "com/codename1/generated/svg/SVGRegistry.class");
+        if (svgRegistryClassFile.isFile()) {
+            svgRegistryInstall = "            com.codename1.generated.svg.SVGRegistry.installGlobal();\n";
+        }
+
         String didEnterBackground =  "        stopped = true;\n"
                 + "        final long bgTask = com.codename1.impl.ios.IOSImplementation.beginBackgroundTask();\n"
                 + "        Display.getInstance().callSerially(new Runnable() { \n"
@@ -1008,9 +1296,13 @@ public class IPhoneBuilder extends Executor {
                     + adPadding
                     + integrateFacebook
                     + integrateGoogleConnect
+                    + integrateOidcBrowser
+                    + integrateAppleSignIn
+                    + integrateWebauthn
 
                     + "        if(!initialized) {\n"
                     + "            initialized = true;\n"
+                    + svgRegistryInstall
                     + "            i.init(this);\n"
                     + createStartInvocation(request, "i")
                     + "        } else {\n"
@@ -1049,8 +1341,9 @@ public class IPhoneBuilder extends Executor {
                     + "        " + request.getMainClass() + "Stub stub = new " + request.getMainClass() + "Stub();\n"
                     + "        com.codename1.impl.ios.IOSImplementation.setMainClass(stub.i);\n"
                     + "        com.codename1.impl.ios.IOSImplementation.setIosMode(\"" + iosMode + "\");\n"
+                    + routeDispatcherInstallSource(sourceZip, "        ")
+                    + annotationFrameworksInstallSource(sourceZip, "        ")
                     + "        Display.init(stub);\n"
-
                     + "    }\n"
                     + "}\n";
 
@@ -1188,7 +1481,7 @@ public class IPhoneBuilder extends Executor {
                     if(!(returnType.equals(Void.class) || returnType.equals(Void.TYPE))) {
                         mFileBody += "    " + typeToXMLVMName(returnType) + " returnValue = " + convertToJavaMethod(returnType);
                     }
-                    mFileBody += "[ptr " + name;
+                    mFileBody += "[((" + classNameWithUnderscores + "Impl*)ptr) " + name;
                     
                     if(returnType.getName().equals("com.codename1.ui.PeerComponent")) {
                         javaImplSourceFile += "    public native long " + name + "(";
@@ -1253,6 +1546,38 @@ public class IPhoneBuilder extends Executor {
                 } catch (IOException ex) {
                     throw new BuildException("Error while generating native interface stub for "+currentNative, ex);
                 }
+
+                // The generated .m imports "<X>Impl.h" -- the Objective-C
+                // class the user is expected to provide as their native
+                // implementation. When no such class exists for this app
+                // (native interfaces pulled in transitively from a CN1
+                // library, the app never instantiates them), the build
+                // still needs an @interface in scope so the .m compiles.
+                // Generate a tiny placeholder iff the user hasn't dropped
+                // their own copy alongside the project sources. The peer
+                // class itself stays absent at runtime, which is fine: any
+                // call into this native interface from Java would have
+                // failed to resolve a peer regardless.
+                File implHeader = new File(resDir, classNameWithUnderscores + "Impl.h");
+                if (!implHeader.exists()) {
+                    String guard = classNameWithUnderscores.toUpperCase() + "_IMPL_H";
+                    String hStub = "#ifndef " + guard + "\n"
+                            + "#define " + guard + "\n"
+                            + "// Auto-generated placeholder: the native interface "
+                            + currentNative.getName() + " has no user-provided\n"
+                            + "// Objective-C implementation in this project. The CN1\n"
+                            + "// runtime returns nil from cn1_createNativeInterfacePeer\n"
+                            + "// in that case; calls into the peer no-op silently.\n"
+                            + "#import <Foundation/Foundation.h>\n"
+                            + "@interface " + classNameWithUnderscores + "Impl : NSObject\n"
+                            + "@end\n"
+                            + "#endif\n";
+                    try (FileOutputStream out = new FileOutputStream(implHeader)) {
+                        out.write(hStub.getBytes(StandardCharsets.UTF_8));
+                    } catch (IOException ex) {
+                        throw new BuildException("Error while generating placeholder header for "+currentNative, ex);
+                    }
+                }
             }
         }
         String javacPath = System.getProperty("java.home") + "/../bin/javac";
@@ -1310,6 +1635,12 @@ public class IPhoneBuilder extends Executor {
                 try(Writer fios = new OutputStreamWriter(Files.newOutputStream(appDelH.toPath()), StandardCharsets.UTF_8)) {
                     String str = new String(data, StandardCharsets.UTF_8);
                     str = str.replace("//#define CN1_INCLUDE_NOTIFICATIONS", "#define CN1_INCLUDE_NOTIFICATIONS");
+                    if (request.getArg("ios.notificationPermissionAtLaunch", "false").equalsIgnoreCase("true")) {
+                        // Restore pre-#4876 behavior: prompt for notification permission
+                        // in didFinishLaunchingWithOptions instead of on first registerPush /
+                        // sendLocalNotification call.
+                        str = str.replace("//#define CN1_NOTIFICATION_PERMISSION_AT_LAUNCH", "#define CN1_NOTIFICATION_PERMISSION_AT_LAUNCH");
+                    }
                     fios.write(str);
                 }
 
@@ -1395,6 +1726,14 @@ public class IPhoneBuilder extends Executor {
             String beforeFinishLaunching = request.getArg("ios.beforeFinishLaunching", null);
             if (beforeFinishLaunching != null) {
                 replaceInFile(glAppDelegate, "//beforeDidFinishLaunchingWithOptionsMarkerEntry", beforeFinishLaunching);
+            }
+
+            if (!localizedIcons.isEmpty()) {
+                // Runs before the user's ios.afterFinishLaunching injection so the marker
+                // is still present for that replacement. Preserve the marker for future hooks.
+                String selector = buildLocalizedIconSelectorObjC();
+                replaceInFile(glAppDelegate, "//afterDidFinishLaunchingWithOptionsMarkerEntry",
+                        selector + "    //afterDidFinishLaunchingWithOptionsMarkerEntry");
             }
 
             String afterFinishLaunching = request.getArg("ios.afterFinishLaunching", null);
@@ -1521,6 +1860,291 @@ public class IPhoneBuilder extends Executor {
                 }
             }
 
+            // LocalAuthentication is required only when the app actually uses
+            // com.codename1.security.Biometrics / SecureStorage. The scanner
+            // above sets usesBiometrics if any com/codename1/security/ class
+            // is referenced; apps that don't touch the API pay nothing.
+            if (usesBiometrics) {
+                if (addLibs == null || addLibs.length() == 0) {
+                    addLibs = "LocalAuthentication.framework";
+                } else if (!addLibs.toLowerCase().contains("localauthentication")) {
+                    addLibs = addLibs + ";LocalAuthentication.framework";
+                }
+            }
+
+            // AuthenticationServices.framework hosts both
+            // ASWebAuthenticationSession (used by SystemBrowser) and
+            // ASAuthorizationAppleIDProvider (used by AppleSignIn). Linking
+            // it always when the user references either API is the simplest
+            // policy; iOS 12 is the deployment-target floor for both classes.
+            //
+            // We also flip the matching CN1_INCLUDE_OIDC / CN1_INCLUDE_APPLESIGNIN
+            // preprocessor defines so the .m source bodies in
+            // nativeSources/CN1OidcBrowser.m and CN1AppleSignIn.m compile
+            // in -- otherwise the .m files would reference framework symbols
+            // without the framework being linked, breaking the link step
+            // for apps that never use the API.
+            if (usesOidc || usesAppleSignIn || usesWebauthn) {
+                String authSvc = "AuthenticationServices.framework";
+                if (addLibs == null || addLibs.length() == 0) {
+                    addLibs = authSvc;
+                } else if (!addLibs.toLowerCase().contains("authenticationservices")) {
+                    addLibs = addLibs + ";" + authSvc;
+                }
+            }
+            if (usesOidc) {
+                try {
+                    replaceInFile(new File(buildinRes,
+                            "CodenameOne_GLViewController.h"),
+                            "//#define CN1_INCLUDE_OIDC",
+                            "#define CN1_INCLUDE_OIDC");
+                } catch (IOException ex) {
+                    throw new BuildException(
+                            "Failed to enable CN1_INCLUDE_OIDC", ex);
+                }
+            }
+            if (usesAppleSignIn) {
+                try {
+                    replaceInFile(new File(buildinRes,
+                            "CodenameOne_GLViewController.h"),
+                            "//#define CN1_INCLUDE_APPLESIGNIN",
+                            "#define CN1_INCLUDE_APPLESIGNIN");
+                } catch (IOException ex) {
+                    throw new BuildException(
+                            "Failed to enable CN1_INCLUDE_APPLESIGNIN", ex);
+                }
+            }
+            if (usesWebauthn) {
+                try {
+                    replaceInFile(new File(buildinRes,
+                            "CodenameOne_GLViewController.h"),
+                            "//#define CN1_INCLUDE_WEBAUTHN",
+                            "#define CN1_INCLUDE_WEBAUTHN");
+                } catch (IOException ex) {
+                    throw new BuildException(
+                            "Failed to enable CN1_INCLUDE_WEBAUTHN", ex);
+                }
+            }
+
+            // CoreNFC is required only when the app actually uses
+            // com.codename1.nfc. We weak-link it so older deployment targets
+            // still load on iOS 10 (Core NFC was introduced in iOS 11).
+            if (usesNfc) {
+                String coreNfc = "CoreNFC.framework";
+                if (addLibs == null || addLibs.length() == 0) {
+                    addLibs = coreNfc;
+                } else if (!addLibs.toLowerCase().contains("corenfc")) {
+                    addLibs = addLibs + ";" + coreNfc;
+                }
+                // Default the NFC reader usage description if the developer
+                // forgot the plist hint; Apple rejects builds that present
+                // an NFCNDEFReaderSession without one.
+                if (request.getArg("ios.NFCReaderUsageDescription", null) == null) {
+                    request.putArgument("ios.NFCReaderUsageDescription",
+                            "Hold near an NFC tag to continue");
+                }
+                // Inject the canonical NFC entitlement keys. The developer
+                // can override either via build hints.
+                String formats = request.getArg(
+                        "ios.entitlements.com.apple.developer.nfc.readersession.formats",
+                        null);
+                if (formats == null) {
+                    request.putArgument(
+                            "ios.entitlements.com.apple.developer.nfc.readersession.formats",
+                            "TAG\nNDEF");
+                }
+                // Uncomment CN1_INCLUDE_NFC in CodenameOne_GLViewController.h
+                // so the NFC native block in IOSNative.m compiles in. Apps
+                // that do NOT reference com.codename1.nfc leave the define
+                // commented out, which means CoreNFC.framework symbols are
+                // never linked --- this is required to pass Apple's API-
+                // usage scan without a CoreNFC privacy manifest.
+                try {
+                    replaceInFile(new File(buildinRes,
+                            "CodenameOne_GLViewController.h"),
+                            "//#define CN1_INCLUDE_NFC",
+                            "#define CN1_INCLUDE_NFC");
+                } catch (IOException ex) {
+                    throw new BuildException(
+                            "Failed to enable CN1_INCLUDE_NFC", ex);
+                }
+            }
+
+            // Uncomment INCLUDE_CN1_CAMERA in CodenameOne_GLViewController.h
+            // so the com.codename1.camera native bridge (CN1Camera.{h,m})
+            // compiles in. This is deliberately independent of
+            // INCLUDE_CAMERA_USAGE (the old modal Capture API): the new
+            // AVFoundation natives are only built when the app actually
+            // references com.codename1.camera.*, matching the AVFoundation
+            // framework injection driven by the same scan via AiDependencyTable.
+            if (usesCn1Camera) {
+                try {
+                    replaceInFile(new File(buildinRes,
+                            "CodenameOne_GLViewController.h"),
+                            "//#define INCLUDE_CN1_CAMERA",
+                            "#define INCLUDE_CN1_CAMERA");
+                } catch (IOException ex) {
+                    throw new BuildException(
+                            "Failed to enable INCLUDE_CN1_CAMERA", ex);
+                }
+            }
+
+            // Sign in with Apple requires the
+            // com.apple.developer.applesignin entitlement; Apple rejects
+            // builds whose binary references ASAuthorizationAppleIDProvider
+            // without it. Inject the canonical "Default" value automatically.
+            if (usesAppleSignIn) {
+                if (request.getArg(
+                        "ios.entitlements.com.apple.developer.applesignin",
+                        null) == null) {
+                    request.putArgument(
+                            "ios.entitlements.com.apple.developer.applesignin",
+                            "Default");
+                }
+            }
+
+            // Time-sensitive / critical notification entitlements. These require a
+            // matching capability to be enabled on the Apple App ID, so auto-injecting them
+            // from mere notification usage would break code signing for apps that have not
+            // provisioned the capability. They are therefore opt-in via build hints:
+            //   ios.timeSensitiveNotifications=true -> com.apple.developer.usernotifications.time-sensitive
+            //   ios.criticalAlerts=true             -> com.apple.developer.usernotifications.critical-alerts
+            if ("true".equals(request.getArg("ios.timeSensitiveNotifications", "false"))
+                    && request.getArg("ios.entitlements.com.apple.developer.usernotifications.time-sensitive", null) == null) {
+                request.putArgument("ios.entitlements.com.apple.developer.usernotifications.time-sensitive", "true");
+            }
+            if ("true".equals(request.getArg("ios.criticalAlerts", "false"))
+                    && request.getArg("ios.entitlements.com.apple.developer.usernotifications.critical-alerts", null) == null) {
+                request.putArgument("ios.entitlements.com.apple.developer.usernotifications.critical-alerts", "true");
+            }
+
+            // Deeper-network connectivity (WiFi info / NEHotspotConfiguration
+            // / Bonjour). Each block is gated on a scanner flag so apps that
+            // never touch the API see no entitlement or plist changes -- this
+            // keeps the App Store review process clean. Developers can
+            // override any value via the matching ios.* / ios.entitlements.*
+            // build hint.
+            if (usesWifiInfo) {
+                // Reading SSID/BSSID on iOS 13+ requires the wifi-info
+                // entitlement AND a granted CoreLocation authorization.
+                if (request.getArg(
+                        "ios.entitlements.com.apple.developer.networking.wifi-info",
+                        null) == null) {
+                    request.putArgument(
+                            "ios.entitlements.com.apple.developer.networking.wifi-info",
+                            "true");
+                }
+                // CoreLocation is what iOS checks behind the scenes for
+                // CNCopyCurrentNetworkInfo. Default the description if the
+                // developer did not set one; the user-facing prompt comes
+                // from this string.
+                if (request.getArg("ios.locationUsageDescription", null) == null
+                        && request.getArg("ios.NSLocationWhenInUseUsageDescription", null) == null) {
+                    request.putArgument("ios.locationUsageDescription",
+                            "Allow access to your location to read the current Wi-Fi network name.");
+                }
+                // Light up the CaptiveNetwork SSID/BSSID code path. Apps
+                // that don't reference com.codename1.io.wifi.WiFi ship
+                // without any CaptiveNetwork symbols.
+                try {
+                    replaceInFile(new File(buildinRes, "IOSNative.m"),
+                            "//#define CN1_INCLUDE_WIFI_INFO",
+                            "#define CN1_INCLUDE_WIFI_INFO");
+                } catch (IOException ex) {
+                    throw new BuildException(
+                            "Failed to enable CN1_INCLUDE_WIFI_INFO", ex);
+                }
+            }
+            if (usesWifiHotspotConfig) {
+                if (request.getArg(
+                        "ios.entitlements.com.apple.developer.networking.HotspotConfiguration",
+                        null) == null) {
+                    request.putArgument(
+                            "ios.entitlements.com.apple.developer.networking.HotspotConfiguration",
+                            "true");
+                }
+                // Light up NetworkExtension.framework only when the app uses
+                // hotspot config. The conditional #define keeps stock apps
+                // free of NetworkExtension symbols so the App Store API-usage
+                // scanner does not flag it.
+                try {
+                    replaceInFile(new File(buildinRes,
+                            "IOSNative.m"),
+                            "//#define CN1_INCLUDE_HOTSPOT",
+                            "#define CN1_INCLUDE_HOTSPOT");
+                } catch (IOException ex) {
+                    throw new BuildException(
+                            "Failed to enable CN1_INCLUDE_HOTSPOT", ex);
+                }
+                if (addLibs == null || addLibs.length() == 0) {
+                    addLibs = "NetworkExtension.framework";
+                } else if (!addLibs.contains("NetworkExtension")) {
+                    addLibs += ";NetworkExtension.framework";
+                }
+            }
+            if (usesBonjour) {
+                // iOS 14 requires NSLocalNetworkUsageDescription before any
+                // mDNS traffic can flow; without it discovery silently
+                // returns nothing.
+                if (request.getArg("ios.NSLocalNetworkUsageDescription", null) == null) {
+                    request.putArgument("ios.NSLocalNetworkUsageDescription",
+                            "Allow access to devices on your local network to discover services advertised via Bonjour.");
+                }
+                // The NSBonjourServices array enumerates the service types
+                // the app expects to discover. We seed it with HTTP since
+                // that's the most common; developers should add specific
+                // types via ios.NSBonjourServices = "_myapp._tcp.,_http._tcp."
+                if (request.getArg("ios.NSBonjourServices", null) == null) {
+                    request.putArgument("ios.NSBonjourServices", "_http._tcp.");
+                }
+                // Light up the NSNetServiceBrowser/NSNetService code path.
+                // Apps that never call BonjourBrowser/BonjourPublisher
+                // ship without the delegate, so the iOS 14 local-network
+                // privacy prompt is not triggered for them.
+                try {
+                    replaceInFile(new File(buildinRes, "IOSNative.m"),
+                            "//#define CN1_INCLUDE_BONJOUR",
+                            "#define CN1_INCLUDE_BONJOUR");
+                } catch (IOException ex) {
+                    throw new BuildException(
+                            "Failed to enable CN1_INCLUDE_BONJOUR", ex);
+                }
+            }
+
+            // HCE on iOS requires the iOS 17.4+ EU-only CardSession
+            // entitlement plus the AIDs to register. We inject the
+            // entitlement when the scanner saw HostCardEmulationService.
+            if (usesNfcHce) {
+                if (request.getArg(
+                        "ios.entitlements.com.apple.developer.nfc.hce",
+                        null) == null) {
+                    request.putArgument(
+                            "ios.entitlements.com.apple.developer.nfc.hce",
+                            "true");
+                }
+                String aids = request.getArg("ios.hceAids",
+                        request.getArg("android.hceAids", null));
+                if (aids != null && aids.length() > 0
+                        && request.getArg(
+                            "ios.entitlements.com.apple.developer.nfc.hce.iso7816.select-identifiers",
+                            null) == null) {
+                    StringBuilder list = new StringBuilder();
+                    for (String aid : aids.split("[,;]")) {
+                        aid = aid.trim();
+                        if (aid.length() == 0) {
+                            continue;
+                        }
+                        if (list.length() > 0) {
+                            list.append("\n");
+                        }
+                        list.append(aid);
+                    }
+                    request.putArgument(
+                            "ios.entitlements.com.apple.developer.nfc.hce.iso7816.select-identifiers",
+                            list.toString());
+                }
+            }
+
             try {
                 if (!runPods && googleAdUnitId != null && googleAdUnitId.length() > 0) {
                     unzip(getResourceAsStream("/google-play-services_lib-ios.zip"), classesDir, buildinRes, buildinRes);
@@ -1545,6 +2169,15 @@ public class IPhoneBuilder extends Executor {
                     } else {
                         addLibs += ";UserNotifications.framework";
                     }
+                }
+
+                // BackgroundTasks.framework (BGTaskScheduler / BGProcessingTaskRequest,
+                // iOS 13+) is referenced unconditionally by the IOSNative background
+                // processing bridge, so it must always be linked.
+                if (addLibs == null) {
+                    addLibs = "BackgroundTasks.framework";
+                } else if (!addLibs.toLowerCase().contains("backgroundtasks")) {
+                    addLibs += ";BackgroundTasks.framework";
                 }
 
                 if (request.getArg("ios.useJavascriptCore", "false").equalsIgnoreCase("true")) {
@@ -1616,6 +2249,15 @@ public class IPhoneBuilder extends Executor {
             // includeNullChecks enables null checks on everything else (methods, arrays, etc..)
             String includeNullChecks = Boolean.valueOf(request.getArg("ios.includeNullChecks", "true")) ? "true":"false";
             String bundleVersionNumber = request.getArg("ios.bundleVersion", buildVersion);
+            // On-device-debug toggle: tells the translator to emit per-frame
+            // locals-address tables, the cn1_frame_info side-tables, and to
+            // flip the CN1_ON_DEVICE_DEBUG #define in cn1_globals.h so the
+            // generated Xcode build links the listener thread. Force-off on
+            // release builds so a stray hint in codenameone_settings.properties
+            // can't leak the debug listener into an App Store binary.
+            boolean isReleaseBuild = !request.getArg("ios.buildType", "debug").equals("debug");
+            String onDeviceDebug = !isReleaseBuild
+                    && Boolean.valueOf(request.getArg("ios.onDeviceDebug", "false")) ? "true" : "false";
 
 
             if (enableGalleryMultiselect && photoLibraryUsage) {
@@ -1630,17 +2272,30 @@ public class IPhoneBuilder extends Executor {
             debug("Building using addLibs="+addLibs);
             stopwatch.split("Prepare ParparVM");
             try {
-                if (!exec(userDir, env, 420000, "java", "-DsaveUnitTests=" + isUnitTestMode(), "-DfieldNullChecks=" + fieldNullChecks, "-DINCLUDE_NPE_CHECKS=" + includeNullChecks, "-DbundleVersionNumber=" + bundleVersionNumber, "-Xmx384m",
-                        "-jar", parparVMCompilerJar, "ios",
-                        classesDir.getAbsolutePath() + ";" + resDir.getAbsolutePath() + ";" +
-                                buildinRes.getAbsolutePath(),
-                        tmpFile.getAbsolutePath(),
-                        request.getMainClass(),
-                        request.getPackageName(),
-                        request.getDisplayName(),
-                        buildVersion,
-                        request.getArg("ios.project_type", "ios"), // one of: ios, iphone, ipad
-                        addLibs)) {
+                List<String> parparCmd = new ArrayList<String>();
+                parparCmd.add("java");
+                parparCmd.add("-DsaveUnitTests=" + isUnitTestMode());
+                parparCmd.add("-DfieldNullChecks=" + fieldNullChecks);
+                parparCmd.add("-DINCLUDE_NPE_CHECKS=" + includeNullChecks);
+                parparCmd.add("-Dcn1.onDeviceDebug=" + onDeviceDebug);
+                parparCmd.add("-DbundleVersionNumber=" + bundleVersionNumber);
+                if (macNativeBuilder.isEnabled()) {
+                    parparCmd.add(macNativeBuilder.parparvmOptionalFrameworksArg());
+                }
+                parparCmd.add("-Xmx384m");
+                parparCmd.add("-jar");
+                parparCmd.add(parparVMCompilerJar);
+                parparCmd.add("ios");
+                parparCmd.add(classesDir.getAbsolutePath() + ";" + resDir.getAbsolutePath() + ";"
+                        + buildinRes.getAbsolutePath());
+                parparCmd.add(tmpFile.getAbsolutePath());
+                parparCmd.add(request.getMainClass());
+                parparCmd.add(request.getPackageName());
+                parparCmd.add(request.getDisplayName());
+                parparCmd.add(buildVersion);
+                parparCmd.add(request.getArg("ios.project_type", "ios")); // ios, iphone, ipad
+                parparCmd.add(addLibs);
+                if (!exec(userDir, env, 420000, parparCmd.toArray(new String[0]))) {
                     return false;
                 }
             } catch (Exception ex) {
@@ -2237,6 +2892,26 @@ public class IPhoneBuilder extends Executor {
 
                 injectToPlist(tmpFile, resDir, request);
 
+                addLocalizedIconsBuildSetting(pbxprojFile);
+
+                String teamId = request.getArg("ios.teamId", "");
+                // injectDevelopmentTeam anchors on `SDKROOT = iphoneos;`, which only
+                // matches the project-level XCBuildConfiguration. That stays correct
+                // for the iOS slice. The Mac slice's team is routed by
+                // MacNativeBuilder.applyXcodeSettings via a [sdk=macosx*] key,
+                // so this regex injection is intentionally NOT broadened.
+                injectDevelopmentTeam(pbxprojFile,
+                        request.getArg("ios.debug.teamId", teamId),
+                        request.getArg("ios.release.teamId", teamId));
+
+                if (macNativeBuilder.isEnabled()) {
+                    File appSrcDir = new File(tmpFile, "dist/" + request.getMainClass() + "-src");
+                    macNativeBuilder.writeEntitlements(request, appSrcDir);
+                    macNativeBuilder.writeStubHeaders(appSrcDir);
+                    macNativeBuilder.applyXcodeSettings(request, tmpFile, buildVersion);
+                    macNativeBuilder.writeExportOptions(request, new File(tmpFile, "dist"));
+                }
+
             } catch (Exception ex) {
                 throw new BuildException("Failed to inject into plist");
             }
@@ -2680,10 +3355,58 @@ public class IPhoneBuilder extends Executor {
         if(lang != null) {
             replaceAllInFile(infoPlist, "<string>English</string>", "<string>"  + lang + "</string>");
         }
-        
-        
+
+        if ("true".equalsIgnoreCase(request.getArg("ios.uiscene", "true"))) {
+            // MainWindow.xib auto-instantiates a UIWindow with visibleAtLaunch=YES; under
+            // UIScene the window has no scene and FrontBoard kills the launch in iOS 26.
+            // UIApplicationMain(..., @"CodenameOne_GLAppDelegate") still creates the
+            // delegate from the class name, so the NIB is no longer needed.
+            replaceAllInFile(infoPlist, "<key>NSMainNibFile</key>\\s*<string>[^<]*</string>", "");
+        }
+
         // nothing to inject here? move along
         String inject = request.getArg("ios.plistInject", "<key>CFBundleShortVersionString</key> 	<string>" + buildVersion +"</string>");
+
+        // On-device-debug: drop the proxy host/port into Info.plist so
+        // cn1_debugger.m can read them at app boot without needing the
+        // build to also patch source files. Skipped on release builds for
+        // the same reason as the translator gate above.
+        if ("true".equalsIgnoreCase(request.getArg("ios.onDeviceDebug", "false"))
+                && "debug".equals(request.getArg("ios.buildType", "debug"))) {
+            String proxyHost = request.getArg("ios.onDeviceDebug.proxyHost", "127.0.0.1");
+            String proxyPort = request.getArg("ios.onDeviceDebug.proxyPort", "55333");
+            String waitForAttach = "true".equalsIgnoreCase(
+                    request.getArg("ios.onDeviceDebug.waitForAttach", "false")) ? "true" : "false";
+            inject += "\n<key>CN1ProxyHost</key>\n<string>" + proxyHost + "</string>";
+            inject += "\n<key>CN1ProxyPort</key>\n<integer>" + proxyPort + "</integer>";
+            inject += "\n<key>CN1ProxyWaitForAttach</key><" + waitForAttach + "/>";
+            // ATS exemption for localhost / arbitrary loads so the device
+            // can dial out to the developer's laptop without a TLS chain.
+            if (!inject.contains("NSAppTransportSecurity")) {
+                inject += "\n<key>NSAppTransportSecurity</key>"
+                        + "<dict>"
+                        + "<key>NSAllowsArbitraryLoads</key><true/>"
+                        + "</dict>";
+            }
+        }
+
+        // Export compliance: when the app uses com.codename1.security.* we
+        // route all crypto through Apple's Security framework / CommonCrypto
+        // (and, with the ios.crypto.gcm opt-in, AES-GCM via stable SPI
+        // symbols). All of these qualify for the "uses standard cryptography"
+        // exemption under EAR 740.17, so we set ITSAppUsesNonExemptEncryption
+        // to false. Callers can override by setting the
+        // ios.appUsesNonExemptEncryption build hint -- pass it as "true" if
+        // your app links proprietary crypto in addition to ours, or as ""
+        // (empty) to omit the key entirely and answer in App Store Connect.
+        String exemptOverride = request.getArg("ios.appUsesNonExemptEncryption", null);
+        if (exemptOverride != null) {
+            if (exemptOverride.length() > 0 && !inject.contains("ITSAppUsesNonExemptEncryption")) {
+                inject += "\n<key>ITSAppUsesNonExemptEncryption</key><"+exemptOverride+"/>";
+            }
+        } else if (usesCryptoAPI && !inject.contains("ITSAppUsesNonExemptEncryption")) {
+            inject += "\n<key>ITSAppUsesNonExemptEncryption</key><false/>";
+        }
         
         String applicationQueriesSchemes = request.getArg("ios.applicationQueriesSchemes", null);
         if(applicationQueriesSchemes != null && applicationQueriesSchemes.length() > 0) {
@@ -2737,7 +3460,7 @@ public class IPhoneBuilder extends Executor {
                 inject += "\n<key>UILaunchStoryboardName</key><string>"+request.getArg("ios.launchStoryboardName", "LaunchScreen")+"</string>";
             }
         }
-        if ("true".equalsIgnoreCase(request.getArg("ios.uiscene", "false")) && !inject.contains("UIApplicationSceneManifest")) {
+        if ("true".equalsIgnoreCase(request.getArg("ios.uiscene", "true")) && !inject.contains("UIApplicationSceneManifest")) {
             inject += "\n<key>UIApplicationSceneManifest</key>\n"
                     + "<dict>\n"
                     + "    <key>UIApplicationSupportsMultipleScenes</key>\n"
@@ -2762,6 +3485,20 @@ public class IPhoneBuilder extends Executor {
         }
         if(inject.indexOf("CFBundleShortVersionString") < 0) {
             inject += "\n<key>CFBundleShortVersionString</key> 	<string>" + buildVersion +"</string>";
+        }
+        // Localized icons are emitted by actool through the asset catalog
+        // (Images.xcassets/AppIcon_<locale>.appiconset) and the
+        // ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES build setting; the
+        // resulting partial Info.plist already contains the correct
+        // CFBundleIcons entries, so we deliberately do not inject any
+        // CFBundleAlternateIcons fragment here. Doing so would conflict with
+        // actool's output during the Info.plist merge. We do, however, need
+        // to inject CFBundleIconName -- without it actool will not emit the
+        // partial Info.plist containing CFBundleIcons / CFBundleAlternateIcons,
+        // and -[UIApplication setAlternateIconName:] would then fail at runtime
+        // because the bundle does not advertise the alternate icons.
+        if (!localizedIcons.isEmpty() && !inject.contains("CFBundleIconName")) {
+            inject += "\n<key>CFBundleIconName</key>\n<string>AppIcon</string>";
         }
         String locationUsageDescription = null;
         if (xcodeVersion >= 9) {
@@ -2800,6 +3537,25 @@ public class IPhoneBuilder extends Executor {
                 }
             }
         }
+        // NSBonjourServices is an Array<String> in Info.plist, not a String,
+        // so the generic NS*UsageDescription injector above does not handle
+        // it. We expand a comma- or semicolon-separated build-hint value
+        // into the required <array><string>...</string></array> fragment.
+        String bonjourServices = request.getArg("ios.NSBonjourServices", null);
+        if (bonjourServices != null && bonjourServices.length() > 0
+                && !inject.contains("NSBonjourServices")) {
+            StringBuilder arr = new StringBuilder();
+            arr.append("\n<key>NSBonjourServices</key><array>");
+            for (String s : bonjourServices.split("[,;]")) {
+                s = s.trim();
+                if (s.length() == 0) continue;
+                if (!s.endsWith(".")) s = s + ".";
+                arr.append("<string>").append(s).append("</string>");
+            }
+            arr.append("</array>");
+            inject += arr.toString();
+        }
+
         String backgroundModesStr = request.getArg("ios.background_modes", null);
         if (includePush || "true".equals(request.getArg("ios.delayPushCompletion", "false")) ||
                 "true".equals(request.getArg("delayPushCompletion", "false"))) {
@@ -2810,6 +3566,21 @@ public class IPhoneBuilder extends Executor {
                     backgroundModesStr += ",";
                 }
                 backgroundModesStr += "remote-notification";
+            }
+        }
+
+        // Constraint-aware background work / BackgroundTask map to BGTaskScheduler. The
+        // permitted identifiers are declared via ios.backgroundProcessingIds (comma list,
+        // default <packageName>.processing). Their presence implies the "processing"
+        // background mode.
+        String backgroundProcessingIds = request.getArg("ios.backgroundProcessingIds", null);
+        if (backgroundProcessingIds == null && "true".equals(request.getArg("ios.usesBackgroundProcessing", "false"))) {
+            backgroundProcessingIds = request.getPackageName() + ".processing";
+        }
+        if (backgroundProcessingIds != null && backgroundProcessingIds.trim().length() > 0) {
+            if (backgroundModesStr == null || !backgroundModesStr.contains("processing")) {
+                backgroundModesStr = (backgroundModesStr == null || backgroundModesStr.trim().length() == 0)
+                        ? "processing" : backgroundModesStr + ",processing";
             }
         }
 
@@ -2829,8 +3600,28 @@ public class IPhoneBuilder extends Executor {
                 inject += "</array>";
             } else {
                 throw new IOException("You cannot use both ios.background_modes build hint and use UIBackgroundModes in the ios.plistInject build hint.  Choose one or the other");
-                
+
             }
+        }
+
+        // BGTaskScheduler permitted identifiers (iOS 13+). Required or iOS throws when the
+        // app registers/submits a background processing task.
+        if (backgroundProcessingIds != null && backgroundProcessingIds.trim().length() > 0
+                && !inject.contains("BGTaskSchedulerPermittedIdentifiers")) {
+            inject += "\n<key>BGTaskSchedulerPermittedIdentifiers</key><array>";
+            for (String id : backgroundProcessingIds.split(",")) {
+                if (id.trim().length() > 0) {
+                    inject += "<string>" + id.trim() + "</string>";
+                }
+            }
+            inject += "</array>";
+        }
+
+        // Receive-shared-content: the host app reads the shared payload from this App Group
+        // suite (written by the share extension). See ios.shareAppGroup build hint.
+        String shareAppGroup = request.getArg("ios.shareAppGroup", null);
+        if (shareAppGroup != null && shareAppGroup.trim().length() > 0 && !inject.contains("CN1ShareAppGroup")) {
+            inject += "\n<key>CN1ShareAppGroup</key><string>" + shareAppGroup.trim() + "</string>";
         }
 
         BufferedReader infoReader = new BufferedReader(new InputStreamReader(
@@ -3037,6 +3828,37 @@ public class IPhoneBuilder extends Executor {
         return new String[]{source, target};
     }
 
+    private String resolveMetalColorSpaceDefine(String hint) {
+        String value = hint == null ? "sRGB" : hint.trim();
+        if (value.length() == 0) {
+            value = "sRGB";
+        }
+        String key = value.toLowerCase().replace("-", "").replace("_", "");
+        if (key.equals("srgb")) {
+            return "#define CN1_METAL_COLORSPACE_SRGB";
+        }
+        if (key.equals("displayp3") || key.equals("p3")) {
+            return "#define CN1_METAL_COLORSPACE_DISPLAY_P3";
+        }
+        if (key.equals("devicergb") || key.equals("device")) {
+            return "#define CN1_METAL_COLORSPACE_DEVICE_RGB";
+        }
+        if (key.equals("linearsrgb") || key.equals("linear")) {
+            return "#define CN1_METAL_COLORSPACE_LINEAR_SRGB";
+        }
+        if (key.equals("extendedsrgb")) {
+            return "#define CN1_METAL_COLORSPACE_EXTENDED_SRGB";
+        }
+        if (key.equals("extendedlinearsrgb")) {
+            return "#define CN1_METAL_COLORSPACE_EXTENDED_LINEAR_SRGB";
+        }
+        if (key.equals("none") || key.equals("default") || key.equals("system")) {
+            return "#define CN1_METAL_COLORSPACE_NONE";
+        }
+        log("Unknown ios.metal.colorSpace value: " + hint + " - falling back to sRGB");
+        return "#define CN1_METAL_COLORSPACE_SRGB";
+    }
+
     private String resolveXcodebuild() {
         String explicitXcodebuild = System.getenv("XCODEBUILD");
         if (explicitXcodebuild != null && explicitXcodebuild.length() > 0) {
@@ -3120,6 +3942,81 @@ public class IPhoneBuilder extends Executor {
     private void copyIcon(String name, File srcDir, File destDir) throws IOException {
         copy(new File(srcDir, name), new File(destDir, name));
     }
+
+    private String buildLocalizedIconSelectorObjC() {
+        StringBuilder mapping = new StringBuilder();
+        mapping.append("        @{ ");
+        boolean first = true;
+        for (Map.Entry<String, String> entry : localizedIcons.entrySet()) {
+            if (!first) {
+                mapping.append(", ");
+            }
+            first = false;
+            mapping.append("@\"").append(entry.getValue()).append("\": @\"").append(entry.getKey()).append("\"");
+        }
+        mapping.append(" }");
+        // Wait for UIApplicationDidBecomeActiveNotification before calling
+        // -[UIApplication setAlternateIconName:]. Calling from didFinishLaunching --
+        // even via dispatch_async on the main queue -- routinely fails with
+        // NSCocoaErrorDomain Code=3072 ("operation was cancelled") because the
+        // system alert iOS shows for an icon change has no active foreground scene
+        // to anchor to yet. Deferring to the active state fixes the silent failure
+        // that the user reported on top of #4870. The completion handler is wired
+        // up so any remaining bundle-configuration problem surfaces in the device
+        // log instead of being swallowed (the original nil handler hid this).
+        return "\n    // Codename One localized app icon selection\n"
+                + "    if ([[UIApplication sharedApplication] respondsToSelector:@selector(setAlternateIconName:completionHandler:)]) {\n"
+                + "        NSDictionary *cn1LocalizedIcons =\n"
+                + mapping + ";\n"
+                + "        void (^cn1ApplyIcon)(void) = ^{\n"
+                + "            NSString *cn1CurrentIcon = [[UIApplication sharedApplication] alternateIconName];\n"
+                + "            NSString *cn1TargetIcon = nil;\n"
+                + "            NSArray *cn1PrefLangs = [NSLocale preferredLanguages];\n"
+                + "            if (cn1PrefLangs.count > 0) {\n"
+                + "                NSString *cn1PrefLang = [cn1PrefLangs objectAtIndex:0];\n"
+                + "                NSArray *cn1LangParts = [cn1PrefLang componentsSeparatedByCharactersInSet:\n"
+                + "                    [NSCharacterSet characterSetWithCharactersInString:@\"-_\"]];\n"
+                + "                if (cn1LangParts.count >= 2) {\n"
+                + "                    NSString *cn1Key = [NSString stringWithFormat:@\"%@_%@\",\n"
+                + "                        [[cn1LangParts objectAtIndex:0] lowercaseString],\n"
+                + "                        [[cn1LangParts objectAtIndex:1] uppercaseString]];\n"
+                + "                    cn1TargetIcon = [cn1LocalizedIcons objectForKey:cn1Key];\n"
+                + "                }\n"
+                + "                if (cn1TargetIcon == nil && cn1LangParts.count >= 1) {\n"
+                + "                    NSString *cn1Key = [[cn1LangParts objectAtIndex:0] lowercaseString];\n"
+                + "                    cn1TargetIcon = [cn1LocalizedIcons objectForKey:cn1Key];\n"
+                + "                }\n"
+                + "            }\n"
+                + "            BOOL cn1NeedsUpdate = (cn1TargetIcon == nil && cn1CurrentIcon != nil)\n"
+                + "                || (cn1TargetIcon != nil && ![cn1TargetIcon isEqualToString:cn1CurrentIcon]);\n"
+                + "            if (!cn1NeedsUpdate) {\n"
+                + "                return;\n"
+                + "            }\n"
+                + "            NSString *cn1FinalTarget = cn1TargetIcon;\n"
+                + "            [[UIApplication sharedApplication] setAlternateIconName:cn1FinalTarget completionHandler:^(NSError * _Nullable cn1IconErr) {\n"
+                + "                if (cn1IconErr != nil) {\n"
+                + "                    NSLog(@\"[CodenameOne] Failed to set alternate app icon '%@': %@\", cn1FinalTarget ?: @\"(primary)\", cn1IconErr);\n"
+                + "                } else {\n"
+                + "                    NSLog(@\"[CodenameOne] Set alternate app icon to '%@'\", cn1FinalTarget ?: @\"(primary)\");\n"
+                + "                }\n"
+                + "            }];\n"
+                + "        };\n"
+                + "        if ([UIApplication sharedApplication].applicationState == UIApplicationStateActive) {\n"
+                + "            dispatch_async(dispatch_get_main_queue(), cn1ApplyIcon);\n"
+                + "        } else {\n"
+                + "            __block id cn1ActiveObs = nil;\n"
+                + "            cn1ActiveObs = [[NSNotificationCenter defaultCenter]\n"
+                + "                addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:[NSOperationQueue mainQueue]\n"
+                + "                usingBlock:^(NSNotification *cn1Note) {\n"
+                + "                    if (cn1ActiveObs != nil) {\n"
+                + "                        [[NSNotificationCenter defaultCenter] removeObserver:cn1ActiveObs];\n"
+                + "                        cn1ActiveObs = nil;\n"
+                + "                    }\n"
+                + "                    cn1ApplyIcon();\n"
+                + "                }];\n"
+                + "        }\n"
+                + "    }\n";
+    }
     
     private void copyIcons(File srcDir, File destDir, String... icons) throws IOException {
         for (String icon : icons) {
@@ -3165,7 +4062,7 @@ public class IPhoneBuilder extends Executor {
         createIconFile(new File(iconDirectory, "iPadPro@2x.png"), iconImage, 167, 167);
         createIconFile(new File(iconDirectory, "AppStore.png"), iconImage, 1024, 1024);
         
-        copyIcons(iconDirectory, resDir, 
+        copyIcons(iconDirectory, resDir,
                 "iPhoneNotification@2x.png",
                 "iPhoneNotification@3x.png",
                 "iPhoneSpotlight.png",
@@ -3191,9 +4088,214 @@ public class IPhoneBuilder extends Executor {
                 "iPadApp7@2x.png",
                 "iPadPro@2x.png",
                 "AppStore.png");
-        
-        
+
+        processLocalizedIcons(resDir, request);
+
         return true;
+    }
+
+    /**
+     * Scans the resources directory for files named cn1_icon_LANG[_COUNTRY].png
+     * and registers them as iOS alternate app icons. Each detected locale is
+     * written as its own AppIcon_LOC.appiconset inside Images.xcassets so that
+     * actool produces a coherent CFBundleIcons / CFBundleAlternateIcons
+     * partial Info.plist; mixing manual CFBundleIcons entries in the user
+     * Info.plist with an asset-catalog-managed primary icon is unsafe because
+     * actool's partial plist replaces ours during the merge. The matching
+     * ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES build setting is added in
+     * {@link #addLocalizedIconsBuildSetting}; runtime icon selection is wired
+     * up in the GL app delegate.
+     */
+    private void processLocalizedIcons(File resDir, BuildRequest request) throws IOException {
+        File[] candidates = resDir.listFiles(new FilenameFilter() {
+            @Override
+            public boolean accept(File dir, String name) {
+                String lower = name.toLowerCase();
+                return lower.startsWith("cn1_icon_") && lower.endsWith(".png");
+            }
+        });
+        if (candidates == null || candidates.length == 0) {
+            return;
+        }
+        File assetCatalogDir = new File(tmpFile, "dist/" + request.getMainClass()
+                + "-src/Images.xcassets");
+        for (File candidate : candidates) {
+            String base = candidate.getName();
+            // strip prefix/suffix
+            String core = base.substring("cn1_icon_".length(), base.length() - ".png".length());
+            String[] parts = core.split("_");
+            if (parts.length < 1 || parts[0].length() != 2) {
+                log("Ignoring localized icon with unsupported name: " + base
+                        + ". Expected cn1_icon_<lang>[_<country>].png");
+                continue;
+            }
+            String lang = parts[0].toLowerCase();
+            String country = parts.length >= 2 && parts[1].length() == 2 ? parts[1].toUpperCase() : null;
+            String localeKey = country != null ? lang + "_" + country : lang;
+            String iconName = "AppIcon_" + localeKey;
+
+            BufferedImage img;
+            try {
+                img = ImageIO.read(candidate);
+            } catch (IOException ex) {
+                log("Failed to read localized icon " + base + ": " + ex.getMessage());
+                candidate.delete();
+                continue;
+            }
+            if (img == null) {
+                log("Localized icon " + base + " is not a valid PNG image. Skipping.");
+                candidate.delete();
+                continue;
+            }
+
+            File alternateIconset = new File(assetCatalogDir, iconName + ".appiconset");
+            if (!alternateIconset.exists() && !alternateIconset.mkdirs()) {
+                log("Failed to create alternate icon set directory: "
+                        + alternateIconset.getAbsolutePath());
+                candidate.delete();
+                continue;
+            }
+            String iphone2x = iconName + "60x60@2x.png";
+            String iphone3x = iconName + "60x60@3x.png";
+            String ipad2x = iconName + "76x76@2x~ipad.png";
+            String ipadPro2x = iconName + "83.5x83.5@2x~ipad.png";
+            createIconFile(new File(alternateIconset, iphone2x), img, 120, 120);
+            createIconFile(new File(alternateIconset, iphone3x), img, 180, 180);
+            createIconFile(new File(alternateIconset, ipad2x), img, 152, 152);
+            createIconFile(new File(alternateIconset, ipadPro2x), img, 167, 167);
+            writeAlternateAppIconContentsJson(new File(alternateIconset, "Contents.json"),
+                    iphone2x, iphone3x, ipad2x, ipadPro2x);
+            localizedIcons.put(iconName, localeKey);
+            // Remove the original so it isn't bundled as a stray resource.
+            candidate.delete();
+            log("Registered localized app icon '" + iconName + "' for locale " + localeKey);
+        }
+    }
+
+    private void writeAlternateAppIconContentsJson(File contentsJson,
+            String iphone2x, String iphone3x, String ipad2x, String ipadPro2x) throws IOException {
+        String json = "{\n"
+                + "  \"images\" : [\n"
+                + "    {\n"
+                + "      \"size\" : \"60x60\",\n"
+                + "      \"idiom\" : \"iphone\",\n"
+                + "      \"filename\" : \"" + iphone2x + "\",\n"
+                + "      \"scale\" : \"2x\"\n"
+                + "    },\n"
+                + "    {\n"
+                + "      \"size\" : \"60x60\",\n"
+                + "      \"idiom\" : \"iphone\",\n"
+                + "      \"filename\" : \"" + iphone3x + "\",\n"
+                + "      \"scale\" : \"3x\"\n"
+                + "    },\n"
+                + "    {\n"
+                + "      \"size\" : \"76x76\",\n"
+                + "      \"idiom\" : \"ipad\",\n"
+                + "      \"filename\" : \"" + ipad2x + "\",\n"
+                + "      \"scale\" : \"2x\"\n"
+                + "    },\n"
+                + "    {\n"
+                + "      \"size\" : \"83.5x83.5\",\n"
+                + "      \"idiom\" : \"ipad\",\n"
+                + "      \"filename\" : \"" + ipadPro2x + "\",\n"
+                + "      \"scale\" : \"2x\"\n"
+                + "    }\n"
+                + "  ],\n"
+                + "  \"info\" : {\n"
+                + "    \"version\" : 1,\n"
+                + "    \"author\" : \"xcode\"\n"
+                + "  }\n"
+                + "}\n";
+        try (Writer w = new OutputStreamWriter(Files.newOutputStream(contentsJson.toPath()),
+                StandardCharsets.UTF_8)) {
+            w.write(json);
+        }
+    }
+
+    // Apple Team IDs are 10-character alphanumeric strings (e.g. "2K4UGY23XQ").
+    // Anything outside that range is rejected to avoid corrupting the pbxproj.
+    private static final Pattern TEAM_ID_PATTERN = Pattern.compile("[A-Za-z0-9]+");
+
+    private void injectDevelopmentTeam(File pbx, String debugTeam, String releaseTeam) throws IOException {
+        debugTeam = sanitizeTeamId(debugTeam, "ios.debug.teamId");
+        releaseTeam = sanitizeTeamId(releaseTeam, "ios.release.teamId");
+        if (debugTeam.isEmpty() && releaseTeam.isEmpty()) {
+            return;
+        }
+        String contents = readFileToString(pbx);
+        // Anchor on each XCBuildConfiguration's "buildSettings { ... }; name = Debug|Release;"
+        // boundary so we can route the right value per configuration when ios.debug.teamId
+        // and ios.release.teamId differ. DEVELOPMENT_TEAM is injected at the project level
+        // (the configurations that declare SDKROOT) so it inherits to every target.
+        Pattern blockPattern = Pattern.compile(
+                "buildSettings = \\{.*?\\};\\s*name = (Debug|Release);",
+                Pattern.DOTALL);
+        Matcher m = blockPattern.matcher(contents);
+        StringBuffer out = new StringBuffer();
+        boolean modified = false;
+        while (m.find()) {
+            String block = m.group(0);
+            String configName = m.group(1);
+            String team = "Debug".equals(configName) ? debugTeam : releaseTeam;
+            if (team.isEmpty()
+                    || block.contains("DEVELOPMENT_TEAM")
+                    || !block.contains("SDKROOT = iphoneos;")) {
+                m.appendReplacement(out, Matcher.quoteReplacement(block));
+                continue;
+            }
+            String injected = block.replace(
+                    "SDKROOT = iphoneos;",
+                    "SDKROOT = iphoneos;\n\t\t\t\tDEVELOPMENT_TEAM = " + team + ";");
+            m.appendReplacement(out, Matcher.quoteReplacement(injected));
+            modified = true;
+        }
+        m.appendTail(out);
+        if (modified) {
+            try (Writer w = new OutputStreamWriter(Files.newOutputStream(pbx.toPath()), StandardCharsets.UTF_8)) {
+                w.write(out.toString());
+            }
+        }
+    }
+
+    /** Package-private so {@link MacNativeBuilder} can validate its own
+     *  {@code macNative.teamId} hint with the same regex as the iOS team. */
+    String sanitizeTeamId(String raw, String hint) {
+        if (raw == null) {
+            return "";
+        }
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) {
+            return "";
+        }
+        if (!TEAM_ID_PATTERN.matcher(trimmed).matches()) {
+            log("Ignoring " + hint + "='" + raw + "': expected an alphanumeric Apple Team ID");
+            return "";
+        }
+        return trimmed;
+    }
+
+
+    private void addLocalizedIconsBuildSetting(File pbx) throws IOException {
+        if (localizedIcons.isEmpty()) {
+            return;
+        }
+        StringBuilder names = new StringBuilder();
+        boolean first = true;
+        for (String iconName : localizedIcons.keySet()) {
+            if (!first) {
+                names.append(' ');
+            }
+            first = false;
+            names.append(iconName);
+        }
+        // actool reads ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES and emits a
+        // partial Info.plist with both CFBundlePrimaryIcon and CFBundleAlternateIcons,
+        // which is what we need for setAlternateIconName: to resolve at runtime.
+        replaceAllInFile(pbx,
+                "ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;",
+                "ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;\n"
+                        + "\t\t\t\tASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = \""
+                        + names + "\";");
     }
 
     
@@ -3241,6 +4343,10 @@ public class IPhoneBuilder extends Executor {
                 delTree(legacyLaunchImages);
             }
         }
+
+        if (macNativeBuilder.isEnabled()) {
+            macNativeBuilder.writeAppIconset(new File(appSrcDir, "Images.xcassets"), icon512);
+        }
     }
 
     
@@ -3273,7 +4379,4 @@ public class IPhoneBuilder extends Executor {
         return out.toString();
     }
 
-
-
-            
 }

@@ -90,6 +90,13 @@ import com.codename1.media.MediaManager;
 import com.codename1.media.MediaRecorderBuilder;
 import com.codename1.notifications.LocalNotification;
 import com.codename1.notifications.LocalNotificationCallback;
+import com.codename1.notifications.NotificationPermissionCallback;
+import com.codename1.notifications.NotificationPermissionRequest;
+import com.codename1.notifications.NotificationPermissionResult;
+import com.codename1.background.BackgroundWorker;
+import com.codename1.background.ForegroundService;
+import com.codename1.background.WorkRequest;
+import com.codename1.share.SharedContent;
 import com.codename1.payment.RestoreCallback;
 import com.codename1.push.PushAction;
 import com.codename1.push.PushActionCategory;
@@ -110,9 +117,11 @@ import com.codename1.util.AsyncResource;
 import com.codename1.util.Callback;
 import com.codename1.util.StringUtil;
 import com.codename1.util.SuccessCallback;
+import com.codename1.util.Simd;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.FileNotFoundException;
 import java.util.Collections;
 import com.codename1.ui.plaf.DefaultLookAndFeel;
 
@@ -136,6 +145,24 @@ public class IOSImplementation extends CodenameOneImplementation {
     private NativeGraphics currentlyDrawingOn;
     //private NativeImage backBuffer;
     private NativeGraphics globalGraphics;
+    /// True when iOS was built with -Dios.metal=true. The mutable-image
+    /// alpha-mask routing in MutableGraphics relies on the C-side
+    /// drawTextureAlphaMaskImpl tagging the op with currentMutableImage so
+    /// drawFrame's drain switches the encoder to the mutable's MTLTexture
+    /// before drawing -- a Metal-only code path (`#ifdef CN1_USE_METAL`
+    /// guard around `setTarget` in CodenameOne_GLViewController.m). On a
+    /// GL build the same alpha-mask op runs against the screen encoder,
+    /// so the round-rect mask lands on the screen instead of inside the
+    /// mutable's UIImage and Switch's track / thumb come out empty.
+    /// `metalRendering` keeps the CG-bitmap-then-DrawImage fallback in
+    /// place for GL while letting Metal use the unified alpha-mask
+    /// pipeline.
+    ///
+    /// Static so inner-class accessors don't trip over javac's synthesized
+    /// outer-instance lookup (CI bisect 25259320137 traced "mutable shape
+    /// ops render via the CG fallback instead of the alpha-mask Metal
+    /// pipeline" to that gate not firing).
+    static boolean metalRendering;
     static IOSImplementation instance;
     private TextArea currentEditing;
     private static boolean initialized;
@@ -212,6 +239,13 @@ public class IOSImplementation extends CodenameOneImplementation {
     
     public void init(Object m) {
         instance = this;
+        // Set the metalRendering static gate as early as possible -- before
+        // any NativeImage / NativeGraphics is constructed -- so mutable-image
+        // rendering routes through the alpha-mask Metal pipeline from the
+        // very first paint on Metal builds, and through the CG-bitmap
+        // fallback on GL builds (where the alpha-mask op can't target a
+        // mutable, see comment on the static field above).
+        metalRendering = nativeInstance.isMetalRendering();
         setUseNativeCookieStore(false);
         Display.getInstance().setTransitionYield(10);
         Display.getInstance().setDefaultVirtualKeyboard(new IOSVirtualKeyboard(this));
@@ -297,7 +331,12 @@ public class IOSImplementation extends CodenameOneImplementation {
     }
 
     public boolean isTablet() {
-        return nativeInstance.isTablet();
+        return isDesktop() || nativeInstance.isTablet();
+    }
+
+    @Override
+    public boolean isDesktop() {
+        return nativeInstance.isRunningOnMac();
     }
     
     @Override
@@ -329,6 +368,7 @@ public class IOSImplementation extends CodenameOneImplementation {
 
         screenshotCallback = callback;
         try {
+            forceScreenRenderForCapture();
             nativeInstance.screenshot();
         } catch (Throwable t) {
             screenshotCallback = null;
@@ -339,6 +379,43 @@ public class IOSImplementation extends CodenameOneImplementation {
                     callback.onSucess(null);
                 }
             });
+        }
+    }
+
+    /// On Mac Catalyst (desktop) the native capture reads pixels back from the
+    /// Metal screenTexture (see cn1_copyMetalScreenTextureImage in IOSNative.m),
+    /// which is the genuine on-screen render target. On the headless Catalyst
+    /// window a static form's show() doesn't reliably re-drive a screen frame
+    /// (no display-link present), so the screenTexture can still hold an earlier
+    /// form. Animated screens flush continuously and are fine; static ones are
+    /// not. Force the current form through the real EDT screen-render pipeline
+    /// -- the same paintComponent-to-screen + flushGraphics that paintDirty()
+    /// runs -- so the texture reflects the live UI before we capture it. This
+    /// renders through the actual Metal draw path (not an off-screen re-paint),
+    /// so the screenshot remains a genuine test of the display pipeline.
+    private void forceScreenRenderForCapture() {
+        if (!isDesktop()) {
+            return;
+        }
+        final Runnable paintAndFlush = new Runnable() {
+            @Override
+            public void run() {
+                Form f = Display.getInstance().getCurrent();
+                if (f == null) {
+                    return;
+                }
+                Graphics wrapper = getCodenameOneGraphics();
+                wrapper.translate(-wrapper.getTranslateX(), -wrapper.getTranslateY());
+                wrapper.resetAffine();
+                wrapper.setClip(0, 0, getDisplayWidth(), getDisplayHeight());
+                f.paintComponent(wrapper, true);
+                flushGraphics();
+            }
+        };
+        if (Display.getInstance().isEdt()) {
+            paintAndFlush.run();
+        } else {
+            Display.getInstance().callSeriallyAndWait(paintAndFlush);
         }
     }
 
@@ -785,7 +862,144 @@ public class IOSImplementation extends CodenameOneImplementation {
             stopTextEditing();
         }
         super.setCurrentForm(f);
+        syncMacWindowAppearance(f);
+        syncMacDesktopChrome(f);
+        // Push the form title to the OS window for every desktop mode (unchanged from before); in
+        // "custom" mode the title bar is hidden so this is invisible but harmless.
+        if (isDesktop() && f != null && !(f instanceof Dialog)) {
+            pushMacWindowTitle(f);
+        }
+    }
 
+    @Override
+    public boolean isNativeTitle() {
+        // On Mac Catalyst, only the "native" desktop title-bar mode puts the form title into the OS
+        // window title bar (and hides the CN1 Toolbar). In "custom" mode the visible Toolbar is the
+        // title bar, so the OS title is not used. Opt-in only: defaults to toolbar (unchanged).
+        return isDesktop() && "native".equals(getDesktopTitleBarMode());
+    }
+
+    // Tracks the last desktop title-bar mode pushed to the native window chrome so the (idempotent)
+    // native call is only made when the mode actually changes.
+    private String lastMacChromeMode;
+
+    /// Applies the desktop title-bar mode to the host macOS window chrome: the {@code custom} mode
+    /// undecorates the window so the CN1 Toolbar becomes the title bar. The {@code native} and
+    /// {@code toolbar} modes leave the window chrome completely untouched, so existing Catalyst apps
+    /// are byte-for-byte unaffected. No-op off the Mac desktop.
+    private void syncMacDesktopChrome(Form f) {
+        if (f == null || !isDesktop()) {
+            return;
+        }
+        String mode = getDesktopTitleBarMode();
+        if (mode.equals(lastMacChromeMode)) {
+            return;
+        }
+        lastMacChromeMode = mode;
+        // Only the "custom" mode touches the native window. Non-custom modes never call into the
+        // native chrome, preserving the exact prior window appearance for existing apps.
+        if ("custom".equals(mode)) {
+            nativeInstance.setMacWindowUndecorated(true);
+        }
+    }
+
+    @Override
+    public String getDesktopTitleBarMode() {
+        if (!isDesktop()) {
+            return "toolbar";
+        }
+        // Opt-in via the desktop.titleBar build hint (codename1.arg.desktop.titleBar), surfaced as a
+        // Display property by the generated iOS stub. Default toolbar = unchanged legacy behavior.
+        return Display.getInstance().getProperty("desktop.titleBar", "toolbar");
+    }
+
+    @Override
+    public void refreshNativeTitle() {
+        Form f = getCurrentForm();
+        if (f != null && isDesktop() && !(f instanceof Dialog)) {
+            pushMacWindowTitle(f);
+        }
+    }
+
+    private void pushMacWindowTitle(Form f) {
+        String t = f.getTitle();
+        nativeInstance.setWindowTitle(t == null ? "" : t);
+    }
+
+    // Commands currently exposed in the Mac native menu, index-aligned with the labels pushed to
+    // native; fireMacMenuCommand(int) (invoked from the native menu action) resolves through this.
+    private static List<com.codename1.ui.Command> macNativeCommands;
+
+    @Override
+    public void setNativeCommands(Vector commands) {
+        if (!isDesktop()) {
+            return;
+        }
+        ArrayList<com.codename1.ui.Command> filtered = new ArrayList<com.codename1.ui.Command>();
+        // Encode one row per command as "<menuHint>\t<label>\t<shortcutKeyChar>\t<shortcutModifiers>",
+        // rows separated by '\n'. The native side groups rows into the matching standard macOS menus
+        // (App/File/Edit/View/Window/Help) or a top-level menu named by the hint; an empty hint means
+        // the default commands menu. A non-zero shortcutKeyChar produces a UIKeyCommand so the menu
+        // item shows (and responds to) the keyboard accelerator.
+        StringBuilder sb = new StringBuilder();
+        if (commands != null) {
+            for (int i = 0; i < commands.size(); i++) {
+                Object o = commands.elementAt(i);
+                if (!(o instanceof com.codename1.ui.Command)) {
+                    continue;
+                }
+                com.codename1.ui.Command c = (com.codename1.ui.Command) o;
+                String name = c.getCommandName();
+                if (name == null || name.length() == 0) {
+                    continue;
+                }
+                String hint = c.getDesktopMenu();
+                if (hint == null) {
+                    hint = "";
+                }
+                if (sb.length() > 0) {
+                    sb.append('\n');
+                }
+                sb.append(hint).append('\t').append(name).append('\t')
+                        .append(c.getDesktopShortcutKeyChar()).append('\t')
+                        .append(c.getDesktopShortcutModifiers());
+                filtered.add(c);
+            }
+        }
+        macNativeCommands = filtered;
+        nativeInstance.setNativeMenuCommands(sb.toString());
+    }
+
+    /**
+     * Invoked from the native Mac menu action when the user selects the command at the given
+     * index. Dispatches the corresponding Codename One command on the EDT.
+     */
+    public static void fireMacMenuCommand(final int index) {
+        final List<com.codename1.ui.Command> cmds = macNativeCommands;
+        if (cmds == null || index < 0 || index >= cmds.size()) {
+            return;
+        }
+        final com.codename1.ui.Command c = cmds.get(index);
+        Display.getInstance().callSerially(new Runnable() {
+            @Override
+            public void run() {
+                c.actionPerformed(new ActionEvent(c));
+            }
+        });
+    }
+
+    private Boolean lastMacWindowDark;
+    private void syncMacWindowAppearance(Form f) {
+        if (f == null || !isDesktop()) return;
+        int bg = f.getContentPane().getStyle().getBgColor();
+        int r = (bg >> 16) & 0xff;
+        int g = (bg >> 8) & 0xff;
+        int b = bg & 0xff;
+        int luma = (r * 299 + g * 587 + b * 114) / 1000;
+        boolean dark = luma < 128;
+        if (lastMacWindowDark != null && lastMacWindowDark.booleanValue() == dark) return;
+        lastMacWindowDark = Boolean.valueOf(dark);
+        nativeInstance.setMacWindowDarkAppearance(dark);
     }
 
     @Override
@@ -1019,23 +1233,29 @@ public class IOSImplementation extends CodenameOneImplementation {
                     }
                     if ( currentEditing != null ){
                         int align = currentEditing.getStyle().getAlignment();
+                        // iosReturnExitsEditing: opt-in client property that makes Return on a
+                        // multi-line TextArea exit editing (firing the Done listener) instead of
+                        // inserting a newline -- mirrors iOS Reminders task-title behavior.
+                        boolean returnExitsEditing = Boolean.TRUE.equals(cmp.getClientProperty("iosReturnExitsEditing"))
+                                && !currentEditing.isSingleLineTextArea();
                         nativeInstance.editStringAt(x,
                                 y,
                                 w,
                                 h,
                                 fnt.peer, currentEditing.isSingleLineTextArea(),
                                 currentEditing.getRows(), maxSize, constraint, text, forceSlideUp,
-                                stl.getFgColor(), 0,//peer, 
+                                stl.getFgColor(), 0,//peer,
                                 pt,
                                 pb,
                                 pl,
-                                pr, 
+                                pr,
                                 hint,
                                 hintColor,
-                                showToolbar, 
+                                showToolbar,
                                 Boolean.TRUE.equals(cmp.getClientProperty("blockCopyPaste")),
                                 DefaultLookAndFeel.reverseAlignForBidi(cmp, align),
-                                currentEditing.getVerticalAlignment());
+                                currentEditing.getVerticalAlignment(),
+                                returnExitsEditing);
                     }
                 }
             });
@@ -1175,6 +1395,14 @@ public class IOSImplementation extends CodenameOneImplementation {
     public void flushGraphics(int x, int y, int width, int height) {
         globalGraphics.clipApplied = false;
         flushBuffer(0, x, y, width, height);
+        if (isDesktop()) {
+            // Form-show isn't the only path that changes dark mode -- a theme
+            // refresh or a system appearance toggle re-styles the contentPane
+            // without dropping a new Form on the EDT. Re-check after every
+            // flush so the host NSWindow titlebar tracks the live form.
+            // syncMacWindowAppearance is no-op when the state hasn't changed.
+            syncMacWindowAppearance(Display.getInstance().getCurrent());
+        }
     }
 
     private final static int[] singleDimensionX = new int[1];
@@ -1216,6 +1444,87 @@ public class IOSImplementation extends CodenameOneImplementation {
         super.pointerDragged(x, y);
     }
 
+    // Sentinel keycodes forwarded from the native iOS hardware-keyboard handler
+    // for non-printable keys. Values match Android's DROID_IMPL_KEY_* sentinels
+    // so apps can write platform-agnostic key handlers.
+    static final int IOS_IMPL_KEY_LEFT = -23446;
+    static final int IOS_IMPL_KEY_RIGHT = -23447;
+    static final int IOS_IMPL_KEY_UP = -23448;
+    static final int IOS_IMPL_KEY_DOWN = -23449;
+    static final int IOS_IMPL_KEY_FIRE = -23450;
+    static final int IOS_IMPL_KEY_BACKSPACE = -23453;
+    static final int IOS_IMPL_KEY_ENTER = -23460;
+    static final int IOS_IMPL_KEY_TAB = -23461;
+    static final int IOS_IMPL_KEY_ESCAPE = -23462;
+    static final int IOS_IMPL_KEY_HOME = -23463;
+    static final int IOS_IMPL_KEY_END = -23464;
+    static final int IOS_IMPL_KEY_PAGE_UP = -23465;
+    static final int IOS_IMPL_KEY_PAGE_DOWN = -23466;
+    static final int IOS_IMPL_KEY_INSERT = -23467;
+    static final int IOS_IMPL_KEY_FORWARD_DEL = -23468;
+    static final int IOS_IMPL_KEY_F1 = -23469;
+    static final int IOS_IMPL_KEY_F2 = -23470;
+    static final int IOS_IMPL_KEY_F3 = -23471;
+    static final int IOS_IMPL_KEY_F4 = -23472;
+    static final int IOS_IMPL_KEY_F5 = -23473;
+    static final int IOS_IMPL_KEY_F6 = -23474;
+    static final int IOS_IMPL_KEY_F7 = -23475;
+    static final int IOS_IMPL_KEY_F8 = -23476;
+    static final int IOS_IMPL_KEY_F9 = -23477;
+    static final int IOS_IMPL_KEY_F10 = -23478;
+    static final int IOS_IMPL_KEY_F11 = -23479;
+    static final int IOS_IMPL_KEY_F12 = -23480;
+
+    public static void keyPressedCallback(int keyCode) {
+        if (dropEvents) {
+            return;
+        }
+        Display.getInstance().keyPressed(keyCode);
+    }
+
+    public static void keyReleasedCallback(int keyCode) {
+        if (dropEvents) {
+            return;
+        }
+        Display.getInstance().keyReleased(keyCode);
+    }
+
+    public static void pointerHoverPressedCallback(int x, int y) {
+        if (dropEvents) {
+            return;
+        }
+        singleDimensionX[0] = x; singleDimensionY[0] = y;
+        instance.pointerHoverPressed(singleDimensionX, singleDimensionY);
+    }
+
+    public static void pointerHoverCallback(int x, int y) {
+        if (dropEvents) {
+            return;
+        }
+        singleDimensionX[0] = x; singleDimensionY[0] = y;
+        instance.pointerHover(singleDimensionX, singleDimensionY);
+    }
+
+    public static void pointerHoverReleasedCallback(int x, int y) {
+        if (dropEvents) {
+            return;
+        }
+        singleDimensionX[0] = x; singleDimensionY[0] = y;
+        instance.pointerHoverReleased(singleDimensionX, singleDimensionY);
+    }
+
+    protected void pointerHover(final int[] x, final int[] y) {
+        super.pointerHover(x, y);
+    }
+
+    protected void pointerHoverPressed(final int[] x, final int[] y) {
+        super.pointerHoverPressed(x, y);
+    }
+
+    protected void pointerHoverReleased(final int[] x, final int[] y) {
+        super.pointerHoverReleased(x, y);
+    }
+
     static void sizeChangedImpl(int w, int h) {
         instance.sizeChanged(w, h);
     }
@@ -1236,6 +1545,21 @@ public class IOSImplementation extends CodenameOneImplementation {
     @Override
     public boolean isVPNActive() {
         return nativeInstance.isVPNActive();
+    }
+
+    @Override
+    protected com.codename1.io.wifi.WifiPlatform createWifiPlatform() {
+        return new IOSWifiPlatform();
+    }
+
+    @Override
+    protected com.codename1.io.bonjour.BonjourPlatform createBonjourPlatform() {
+        return new IOSBonjourPlatform();
+    }
+
+    @Override
+    protected com.codename1.io.NetworkTypePlatform createNetworkTypePlatform() {
+        return new IOSNetworkTypePlatform();
     }
 
     @Override
@@ -1340,30 +1664,65 @@ public class IOSImplementation extends CodenameOneImplementation {
     public void installNativeTheme() {
         try {
             Resources r;
-            
-            if(iosMode.equals("modern")) {
+            String mode = iosMode == null ? "auto" : iosMode.toLowerCase();
+            // Modern (liquid-glass) theme is opt-in via ios.themeMode=modern /
+            // liquid / material. Keep the default ("auto" or unset) on the
+            // legacy iOS 7 / pre-flat theme so existing apps and screenshot
+            // goldens aren't disturbed. Apps that want the new look set
+            // ios.themeMode=modern in their build hints or via
+            // Display.setProperty("ios.themeMode", "modern") before the
+            // first Form is shown.
+            if(mode.equals("modern") || mode.equals("liquid")) {
+                InputStream in = getResourceAsStream("/iOSModernTheme.res");
+                if (in != null) {
+                    r = Resources.open(in);
+                    Hashtable tp = r.getTheme(r.getThemeResourceNames()[0]);
+                    injectDesktopThemeConstants(tp);
+                    UIManager.getInstance().setThemeProps(tp);
+                    return;
+                }
+                // Modern theme isn't in the jar (e.g. framework build hasn't
+                // generated it yet) - fall back to iOS 7 so the app still boots.
+            }
+            if(mode.equals("ios7") || mode.equals("flat") || mode.equals("auto") || mode.equals("modern") || mode.equals("liquid")) {
                 r = Resources.open("/iOS7Theme.res");
                 Hashtable tp = r.getTheme(r.getThemeResourceNames()[0]);
                 if(!nativeInstance.isIOS7()) {
                     tp.put("TitleArea.padding", "0,0,0,0");
                 }
+                injectDesktopThemeConstants(tp);
                 UIManager.getInstance().setThemeProps(tp);
                 return;
             }
-            if(iosMode.equals("auto")) {
-                if(nativeInstance.isIOS7()) {
-                    r = Resources.open("/iOS7Theme.res");
-                } else {
-                    r = Resources.open("/iPhoneTheme.res");
-                }
-                UIManager.getInstance().setThemeProps(r.getTheme(r.getThemeResourceNames()[0]));
-                return;
-            }
+            // "legacy" / "iphone" / anything else: pre-flat iPhone theme.
             r = Resources.open("/iPhoneTheme.res");
-            UIManager.getInstance().setThemeProps(r.getTheme(r.getThemeResourceNames()[0]));
+            Hashtable tp = r.getTheme(r.getThemeResourceNames()[0]);
+            injectDesktopThemeConstants(tp);
+            UIManager.getInstance().setThemeProps(tp);
         } catch (IOException ex) {
             ex.printStackTrace();
-        }        
+        }
+    }
+
+    /**
+     * On Mac Catalyst (isDesktop()) the app should feel like a desktop app: enable the
+     * cross-platform interactive scrollbars and the native window chrome (OS title bar +
+     * native menu bar). These theme constants are injected only on the desktop so iOS
+     * phones/tablets are unaffected. Mirrors JavaSEPort.injectDesktopThemeConstants.
+     */
+    private void injectDesktopThemeConstants(Hashtable tp) {
+        if (tp == null || !isDesktop()) {
+            return;
+        }
+        // Opt-in via the desktop.interactiveScrollbars build hint; default off so existing Catalyst
+        // apps render scrollbars exactly as before.
+        if ("true".equalsIgnoreCase(Display.getInstance().getProperty("desktop.interactiveScrollbars", "false"))) {
+            tp.put("@interactiveScrollBool", "true");
+        }
+    }
+
+    private InputStream getResourceAsStream(String name) {
+        return IOSImplementation.class.getResourceAsStream(name);
     }
 
     private long getNSData(InputStream i) {
@@ -1513,7 +1872,7 @@ public class IOSImplementation extends CodenameOneImplementation {
         ((NativeGraphics)graphics).color = RGB;
     }
 
-    public void setAlpha(Object graphics, int alpha) {        
+    public void setAlpha(Object graphics, int alpha) {
         ((NativeGraphics)graphics).alpha = alpha;
     }
 
@@ -1594,28 +1953,52 @@ public class IOSImplementation extends CodenameOneImplementation {
         Rectangle bounds = shape.getBounds();
         if ( shape.isRectangle() || bounds.getWidth() <= 0 || bounds.getHeight() <= 0){
             setNativeClippingGlobal(bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(), true);
-        } else if (shape.isPolygon()) {
-            int pointsSize = shape.getPointsSize();
-            if (polygonPointsBuffer == null || polygonPointsBuffer.length < pointsSize) {
+            return;
+        }
+        // Curved clips (anything containing QUADTO / CUBICTO) get
+        // flattened first so the polygon path below sees real polyline
+        // vertices instead of interleaved control / anchor pairs. Without
+        // this, setClip(circularPath) reaches the native side as 17 raw
+        // floats that include 8 outside-the-curve control points, and
+        // the triangle-fan stencil writer turns the circle into the
+        // visible "triangle clip" on gradient_circle.svg and
+        // clipped_badge.svg (see SVGStaticScreenshotTest).
+        ClipShape polyShape = flattenClipShapeIfNeeded(shape);
+        if (polyShape.isPolygon()) {
+            int pointsSize = polyShape.getPointsSize();
+            // Reallocate when the buffer doesn't EXACTLY match -- previously
+            // this only reallocated when undersized, so a smaller polygon
+            // reused a larger buffer and the trailing slots retained the
+            // previous (larger) polygon's vertices. The native side reads
+            // the JAVA_ARRAY's allocated length, not a separate count, so
+            // those stale vertices became "real" polygon corners and
+            // produced visible spike artefacts in the rendered clip on
+            // iOS Metal (#3921 / PR #4924). Allocate exactly the size we
+            // need so trailing garbage can't appear.
+            if (polygonPointsBuffer == null || polygonPointsBuffer.length != pointsSize) {
                 polygonPointsBuffer = new float[pointsSize];
             }
-            shapeToPolygon(shape, polygonPointsBuffer);
+            shapeToPolygon(polyShape, polygonPointsBuffer);
             nativeInstance.setNativeClippingPolygonGlobal(polygonPointsBuffer);
         } else {
-            
+            // The path didn't reduce to a polygon (still has multiple
+            // disjoint sub-paths or other oddities). Fall back to the
+            // alpha-mask Renderer; on the GL backend this paints the
+            // shape into the stencil, on the Metal backend the texture
+            // handle isn't compatible with MTLTexture and the bounding
+            // box is used as a coarse fallback (see ClipRect.m).
             TextureAlphaMask mask = (TextureAlphaMask)textureCache.get(shape, null);
             if ( mask == null ){
                 mask = (TextureAlphaMask)this.createAlphaMask(shape, null);
                 textureCache.add(shape, null, mask);
             }
-            
+
            if ( mask != null ){
-               //Log.p("Setting native clipping mask global with bounds "+mask.getBounds()+" : "+shape);
                 nativeInstance.setNativeClippingMaskGlobal(mask.getTextureName(), mask.getBounds().getX(), mask.getBounds().getY(), mask.getBounds().getWidth(), mask.getBounds().getHeight());
             } else {
                Log.p("Failed to create texture mask for clipping region");
             }
-            
+
         }
     }
 
@@ -1894,27 +2277,12 @@ public class IOSImplementation extends CodenameOneImplementation {
         ng.nativeDrawRoundRect(ng.color, ng.alpha, x, y, width, height, arcWidth, arcHeight);
     }
 
-    private static void nativeDrawRoundRectMutable(int color, int alpha, int x, int y, int width, int height, int arcWidth, int arcHeight) {
-        nativeInstance.nativeDrawRoundRectMutable(color, alpha, x, y, width, height, arcWidth, arcHeight);
-    }
-    private static void nativeDrawRoundRectGlobal(int color, int alpha, int x, int y, int width, int height, int arcWidth, int arcHeight) {
-        nativeInstance.nativeDrawRoundRectGlobal(color, alpha, x, y, width, height, arcWidth, arcHeight);        
-    }
-
-
     public void fillRoundRect(Object graphics, int x, int y, int width, int height, int arcWidth, int arcHeight) {
         NativeGraphics ng = (NativeGraphics)graphics;
         ng.checkControl();
         ng.applyTransform();
         ng.applyClip();
         ng.nativeFillRoundRect(ng.color, ng.alpha, x, y, width, height, arcWidth, arcHeight);
-    }
-
-    private static void nativeFillRoundRectMutable(int color, int alpha, int x, int y, int width, int height, int arcWidth, int arcHeight) {
-        nativeInstance.nativeFillRoundRectMutable(color, alpha, x, y, width, height, arcWidth, arcHeight);
-    }
-    private static void nativeFillRoundRectGlobal(int color, int alpha, int x, int y, int width, int height, int arcWidth, int arcHeight) {
-        nativeInstance.nativeFillRoundRectGlobal(color, alpha, x, y, width, height, arcWidth, arcHeight);
     }
 
     public void fillArc(Object graphics, int x, int y, int width, int height, int startAngle, int arcAngle) {
@@ -1946,12 +2314,6 @@ public class IOSImplementation extends CodenameOneImplementation {
     
     
 
-    private static void nativeFillArcMutable(int color, int alpha, int x, int y, int width, int height, int startAngle, int arcAngle) {
-        nativeInstance.nativeFillArcMutable(color, alpha, x, y, width, height, startAngle, arcAngle);
-    }
-    private static void nativeDrawArcMutable(int color, int alpha, int x, int y, int width, int height, int startAngle, int arcAngle) {
-        nativeInstance.nativeDrawArcMutable(color, alpha, x, y, width, height, startAngle, arcAngle);
-    }
     public void drawArc(Object graphics, int x, int y, int width, int height, int startAngle, int arcAngle) {
         NativeGraphics ng = (NativeGraphics)graphics;
         ng.checkControl();
@@ -1965,6 +2327,25 @@ public class IOSImplementation extends CodenameOneImplementation {
     }
     private static void nativeDrawStringGlobal(int color, int alpha, long fontPeer, String str, int x, int y) {
         nativeInstance.nativeDrawStringGlobal(color, alpha, fontPeer, str, x, y);
+    }
+
+    @Override
+    public void drawString(Object graphics, Object nativeFont, String str, int x, int y, int textDecoration) {
+        // Re-sync ng.font with the Java-side current font before drawing.
+        // Display.impl.drawLabelComponent calls setNativeFont(ng, labelStyleFont)
+        // directly to push the label's style font into NativeGraphics for fast
+        // native rendering, but does NOT update Graphics.current. After the
+        // title bar (or any Label) renders, ng.font holds the label's font
+        // while Graphics.current holds the Java-side font from before the
+        // label's draw. The user's next g.drawString() on the same Graphics
+        // expects to use Graphics.current; the iOS 4-arg drawString below
+        // reads ng.font instead, so they diverge. Graphics.drawString already
+        // passes Graphics.current as the nativeFont parameter -- pin ng.font
+        // to it here so the 4-arg drawString picks up the correct font.
+        if (nativeFont != null && graphics instanceof NativeGraphics) {
+            ((NativeGraphics) graphics).font = (NativeFont) nativeFont;
+        }
+        super.drawString(graphics, nativeFont, str, x, y, textDecoration);
     }
 
     public void drawString(Object graphics, String str, int x, int y) {
@@ -2004,7 +2385,25 @@ public class IOSImplementation extends CodenameOneImplementation {
     public void tileImage(Object graphics, Object img, int x, int y, int w, int h) {
         if (img == null) return;
         NativeGraphics ng = (NativeGraphics)graphics;
-        if(ng instanceof GlobalGraphics) {
+        if (ng instanceof GlobalGraphics) {
+            ng.checkControl();
+            ng.applyTransform();
+            ng.applyClip();
+            NativeImage nm = (NativeImage)img;
+            nativeInstance.nativeTileImageGlobal(nm.peer, ng.alpha, x, y, w, h);
+        } else if (metalRendering) {
+            // Phase 3 v2 (Metal only): queue a single TileImage op tagged
+            // with the current mutable image as target. nativeTileImage-
+            // Global's C side picks up currentMutableImage and tags
+            // accordingly. Mirrors the GlobalGraphics branch above except
+            // ng.checkControl already set currentMutableImage. Avoids
+            // super.tileImage's 1500-iter drawImage loop which would
+            // queue ~1500 ops per panel and stall the EDT past the test
+            // timeout on slow CI runners. On GL the same tagging doesn't
+            // happen (drawTextureAlphaMask/TileImage setTarget is gated
+            // by `#ifdef CN1_USE_METAL`) so the op would land on the
+            // screen instead of inside the mutable -- fall back to the
+            // EDT-side super.tileImage there.
             ng.checkControl();
             ng.applyTransform();
             ng.applyClip();
@@ -2151,7 +2550,184 @@ public class IOSImplementation extends CodenameOneImplementation {
             throw new RuntimeException("shapeToPolygon requires out array at least the size of the points in the polygon.  Requires "+size+" but found "+pointsOut.length);
         }
         shape.getPoints(pointsOut);
-        
+
+    }
+
+    // Reusable buffer for flattening curves into a polyline GeneralPath
+    // before handing the clip down to the native polygon path. Reused
+    // across clip applications to avoid per-frame allocation.
+    private GeneralPath flattenedClipPath;
+    private ClipShape flattenedClipShape;
+
+    /// Walks `src` and builds a polyline GeneralPath in `dst` by replacing
+    /// every QUADTO / CUBICTO with a chain of straight LINETO segments
+    /// produced by midpoint subdivision. The native iOS clip pipeline
+    /// (GL ES2 FillPolygon and Metal CN1MetalApplyPolygonStencilClip) both
+    /// consume their input as a flat polygon: the only points they look
+    /// at are the (x, y) pairs in the buffer. When the source path is a
+    /// curve (e.g. a circle built from arc() emits 8 quadTos) the raw
+    /// points buffer contains alternating control / anchor pairs, and the
+    /// stencil writer treats every control point as a real polygon
+    /// vertex. The result is the degenerate "triangle clip" described in
+    /// the SVG tests on gradient_circle.svg / clipped_badge.svg. Flatten
+    /// first so only true vertices survive.
+    private void flattenShapeToPolyline(Shape src, GeneralPath dst) {
+        dst.reset();
+        PathIterator it = src.getPathIterator();
+        dst.setWindingRule(it.getWindingRule());
+        float[] coords = new float[6];
+        float curX = 0f, curY = 0f, moveX = 0f, moveY = 0f;
+        while (!it.isDone()) {
+            int seg = it.currentSegment(coords);
+            switch (seg) {
+                case PathIterator.SEG_MOVETO:
+                    dst.moveTo(coords[0], coords[1]);
+                    curX = moveX = coords[0];
+                    curY = moveY = coords[1];
+                    break;
+                case PathIterator.SEG_LINETO:
+                    dst.lineTo(coords[0], coords[1]);
+                    curX = coords[0];
+                    curY = coords[1];
+                    break;
+                case PathIterator.SEG_QUADTO:
+                    flattenQuadInto(dst, curX, curY, coords[0], coords[1], coords[2], coords[3], 0);
+                    curX = coords[2];
+                    curY = coords[3];
+                    break;
+                case PathIterator.SEG_CUBICTO:
+                    flattenCubicInto(dst, curX, curY,
+                            coords[0], coords[1], coords[2], coords[3], coords[4], coords[5], 0);
+                    curX = coords[4];
+                    curY = coords[5];
+                    break;
+                case PathIterator.SEG_CLOSE:
+                    dst.closePath();
+                    curX = moveX;
+                    curY = moveY;
+                    break;
+            }
+            it.next();
+        }
+    }
+
+    // Squared distance threshold (in user-space units) for the
+    // subdivision flatness test. 0.25 px is well below 1 device pixel
+    // even after the typical retina upscale and matches the precision of
+    // the alpha-mask Renderer used by the rest of the iOS port.
+    private static final float FLATTEN_TOLERANCE_SQ = 0.25f * 0.25f;
+    // Safety cap on the recursion depth. 18 = 2^18 sub-segments which is
+    // far past anything a real SVG path needs; the flatness test should
+    // always converge well before this.
+    private static final int FLATTEN_MAX_DEPTH = 18;
+
+    private static void flattenQuadInto(GeneralPath dst,
+                                        float x0, float y0,
+                                        float x1, float y1,
+                                        float x2, float y2,
+                                        int depth) {
+        // Distance from the control point to the chord P0-P2. For a
+        // quadratic Bezier the maximum deviation between the curve and
+        // its chord is bounded by half the control-point-to-chord
+        // distance, so testing the control point against the threshold
+        // is a safe (slightly conservative) flatness criterion.
+        float dx = x2 - x0;
+        float dy = y2 - y0;
+        float lenSq = dx * dx + dy * dy;
+        float distSq;
+        if (lenSq < 1e-6f) {
+            distSq = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
+        } else {
+            float cross = (x1 - x0) * dy - (y1 - y0) * dx;
+            distSq = (cross * cross) / lenSq;
+        }
+        if (distSq <= FLATTEN_TOLERANCE_SQ || depth >= FLATTEN_MAX_DEPTH) {
+            dst.lineTo(x2, y2);
+            return;
+        }
+        float mx1 = (x0 + x1) * 0.5f, my1 = (y0 + y1) * 0.5f;
+        float mx2 = (x1 + x2) * 0.5f, my2 = (y1 + y2) * 0.5f;
+        float mx = (mx1 + mx2) * 0.5f, my = (my1 + my2) * 0.5f;
+        flattenQuadInto(dst, x0, y0, mx1, my1, mx, my, depth + 1);
+        flattenQuadInto(dst, mx, my, mx2, my2, x2, y2, depth + 1);
+    }
+
+    private static void flattenCubicInto(GeneralPath dst,
+                                         float x0, float y0,
+                                         float x1, float y1,
+                                         float x2, float y2,
+                                         float x3, float y3,
+                                         int depth) {
+        // Max distance from either inner control point to the chord
+        // P0-P3. A cubic curve never strays farther than its furthest
+        // control point from its chord, so the larger of the two
+        // perpendicular distances is a conservative flatness bound.
+        float dx = x3 - x0;
+        float dy = y3 - y0;
+        float lenSq = dx * dx + dy * dy;
+        float d1Sq, d2Sq;
+        if (lenSq < 1e-6f) {
+            d1Sq = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
+            d2Sq = (x2 - x0) * (x2 - x0) + (y2 - y0) * (y2 - y0);
+        } else {
+            float c1 = (x1 - x0) * dy - (y1 - y0) * dx;
+            float c2 = (x2 - x0) * dy - (y2 - y0) * dx;
+            d1Sq = (c1 * c1) / lenSq;
+            d2Sq = (c2 * c2) / lenSq;
+        }
+        float distSq = d1Sq > d2Sq ? d1Sq : d2Sq;
+        if (distSq <= FLATTEN_TOLERANCE_SQ || depth >= FLATTEN_MAX_DEPTH) {
+            dst.lineTo(x3, y3);
+            return;
+        }
+        float mx01 = (x0 + x1) * 0.5f, my01 = (y0 + y1) * 0.5f;
+        float mx12 = (x1 + x2) * 0.5f, my12 = (y1 + y2) * 0.5f;
+        float mx23 = (x2 + x3) * 0.5f, my23 = (y2 + y3) * 0.5f;
+        float mxA = (mx01 + mx12) * 0.5f, myA = (my01 + my12) * 0.5f;
+        float mxB = (mx12 + mx23) * 0.5f, myB = (my12 + my23) * 0.5f;
+        float mx = (mxA + mxB) * 0.5f, my = (myA + myB) * 0.5f;
+        flattenCubicInto(dst, x0, y0, mx01, my01, mxA, myA, mx, my, depth + 1);
+        flattenCubicInto(dst, mx, my, mxB, myB, mx23, my23, x3, y3, depth + 1);
+    }
+
+    // True if the path has only MOVETO / LINETO / CLOSE segments, i.e.
+    // it is already a polyline and flattening would just copy it.
+    private boolean isAlreadyFlat(Shape s) {
+        if (s instanceof ClipShape && ((ClipShape) s).isRect()) {
+            return true;
+        }
+        PathIterator it = s.getPathIterator();
+        float[] coords = new float[6];
+        while (!it.isDone()) {
+            int seg = it.currentSegment(coords);
+            if (seg == PathIterator.SEG_QUADTO || seg == PathIterator.SEG_CUBICTO) {
+                return false;
+            }
+            it.next();
+        }
+        return true;
+    }
+
+    // Flatten if necessary and return the ClipShape that should be sent
+    // through the native polygon clip path. When the input is already a
+    // polyline (the common case for rectangular clipRect intersections
+    // built by NativeGraphics.clipRect) the input is returned as-is. The
+    // returned ClipShape is reused across calls (not shared with the
+    // input), so callers must finish reading from it before the next
+    // clip is applied.
+    private ClipShape flattenClipShapeIfNeeded(ClipShape src) {
+        if (isAlreadyFlat(src)) {
+            return src;
+        }
+        if (flattenedClipPath == null) {
+            flattenedClipPath = new GeneralPath();
+        }
+        flattenShapeToPolyline(src, flattenedClipPath);
+        if (flattenedClipShape == null) {
+            flattenedClipShape = new ClipShape();
+        }
+        flattenedClipShape.setShape(flattenedClipPath, null);
+        return flattenedClipShape;
     }
     /*
     public void drawConvexPolygon(Object graphics, Shape shape, Stroke stroke, int color, int alpha){
@@ -2341,9 +2917,22 @@ public class IOSImplementation extends CodenameOneImplementation {
             ng.transform = transform == null ? null : transform.copy();
         }
         ng.transformApplied = false;
+        // The cached clip / inverseClip / inverseTransform are derived from
+        // the current transform; replacing the transform leaves them
+        // pointing at the previous transform's space. Subsequent draw ops
+        // (e.g. fillRect or fillLinearGradient on the form Graphics) read
+        // those caches via loadClipBounds / inverseClip and end up clipped
+        // to the wrong region, which is why TransformRotation and
+        // Scale/AffineScale produced empty top cells on iOS Metal while
+        // the equivalent rotation via g.rotate (which DOES invalidate
+        // these flags, line 5513) rendered correctly. Match the
+        // rotate/scale/translate/resetAffine paths so the cache is rebuilt
+        // before the next draw.
+        ng.clipDirty = true;
+        ng.inverseClipDirty = true;
+        ng.inverseTransformDirty = true;
         ng.checkControl();
         ng.applyTransform();
-        
     }
     
     public void setNativeTransformGlobal(Transform transform){
@@ -3167,14 +3756,44 @@ public class IOSImplementation extends CodenameOneImplementation {
         
     }
     
+    private IOSBiometrics biometrics;
+    private IOSSecureStorage secureStorage;
+    private IOSNfc nfc;
+
+    @Override
+    public com.codename1.security.Biometrics getBiometrics() {
+        if (biometrics == null) {
+            biometrics = new IOSBiometrics(nativeInstance);
+        }
+        return biometrics;
+    }
+
+    @Override
+    public com.codename1.security.SecureStorage getSecureStorage() {
+        if (secureStorage == null) {
+            secureStorage = new IOSSecureStorage(nativeInstance);
+        }
+        return secureStorage;
+    }
+
+    @Override
+    public com.codename1.nfc.Nfc getNfc() {
+        if (nfc == null) {
+            nfc = new IOSNfc(nativeInstance);
+        }
+        return nfc;
+    }
+
     public LocationManager getLocationManager() {
         if (!nativeInstance.checkLocationUsage()) {
             throw new RuntimeException("Please add the ios.NSLocationUsageDescription or ios.NSLocationAlwaysUsageDescription build hint");
         }
-        if(lm == null) {
-            lm = new Loc();
+        synchronized (IOSImplementation.class) {
+            if (lm == null) {
+                lm = new Loc();
+            }
+            return lm;
         }
-        return lm;
     }
 
     /**
@@ -3269,6 +3888,11 @@ public class IOSImplementation extends CodenameOneImplementation {
         captureCallback.addListener(response);
         nativeInstance.captureCamera(false, 0, 0);
         dropEvents = true;
+    }
+
+    @Override
+    public com.codename1.impl.CameraImpl createCameraImpl() {
+        return new IOSCameraImpl();
     }
 
     @Override
@@ -4145,20 +4769,28 @@ public class IOSImplementation extends CodenameOneImplementation {
         ((NativeGraphics)nativeGraphics).rotate(angle, x, y);
     }
 
-    
+    @Override
+    public boolean isTranslateMatrixSupported() {
+        // iOS dispatches translateMatrix into NativeGraphics.transform the
+        // same way it dispatches scale/rotate, so the impl matrix sees the
+        // translate as a real composition step.
+        return true;
+    }
+
+    @Override
+    public void translateMatrix(Object nativeGraphics, float x, float y) {
+        ((NativeGraphics)nativeGraphics).translateMatrix(x, y);
+    }
 
     @Override
     public boolean isTranslationSupported() {
         //return true;
-        // We'll leave this as false until the next iteration... 
-        // ES2 should allow us to do all of this using transforms but 
+        // We'll leave this as false until the next iteration...
+        // ES2 should allow us to do all of this using transforms but
         // let's take small steps first
         return false;
     }
 
-    
-    
-    
     public void shear(Object nativeGraphics, float x, float y) {
         ((NativeGraphics)nativeGraphics).shear(x, y);
     }
@@ -4810,48 +5442,179 @@ public class IOSImplementation extends CodenameOneImplementation {
         }
         
         void setNativeClipping(ClipShape shape){
-            
+
             if (shape.isRect()) {
                 shape.getBounds(reusableRect);
                 setNativeClippingMutable(reusableRect.getX(), reusableRect.getY(), reusableRect.getWidth(), reusableRect.getHeight(), clipApplied);
-                
+
             } else {
-                int commandsLen = shape.getTypesSize();
-                int pointsLen = shape.getPointsSize();
+                // The native side (setNativeClippingShapeMutableImpl in
+                // CodenameOne_GLViewController.m) ignores the commands
+                // array and treats every (x, y) pair in the points buffer
+                // as a polygon vertex. For a path with curves that means
+                // control points appear as polygon vertices, producing
+                // the SVG "triangle clip" symptom for gradient_circle.svg
+                // and clipped_badge.svg. Flatten on the Java side so the
+                // points buffer contains only true polyline vertices.
+                ClipShape polyShape = flattenClipShapeIfNeeded(shape);
+                int commandsLen = polyShape.getTypesSize();
+                int pointsLen = polyShape.getPointsSize();
                 byte[] commandsArr = getTmpNativeDrawShape_commands(commandsLen);
                 float[] pointsArr = getTmpNativeDrawShape_coords(pointsLen);
-                shape.getTypes(commandsArr);
-                shape.getPoints(pointsArr);
+                polyShape.getTypes(commandsArr);
+                polyShape.getPoints(pointsArr);
                 nativeInstance.setNativeClippingMutable(commandsLen, commandsArr, pointsLen, pointsArr);
             }
         }
 
         void nativeDrawLine(int color, int alpha, int x1, int y1, int x2, int y2) {
+            // The C-side nativeDrawLineMutableImpl already short-circuits
+            // through Metal under #ifdef CN1_USE_METAL (queues a DrawLine op
+            // tagged with currentMutableImage). No Java-side Metal/GL gate
+            // needed.
             nativeDrawLineMutable(color, alpha, x1, y1, x2, y2);
         }
 
         void nativeFillRect(int color, int alpha, int x, int y, int width, int height) {
+            // Same as nativeDrawLine: the C-side nativeFillRectMutableImpl
+            // routes through the Metal pipeline under #ifdef CN1_USE_METAL.
             nativeFillRectMutable(color, alpha, x, y, width, height);
         }
 
         void nativeDrawRect(int color, int alpha, int x, int y, int width, int height) {
+            // Same as nativeDrawLine / nativeFillRect: the C-side
+            // nativeDrawRectMutableImpl routes through the Metal pipeline
+            // under #ifdef CN1_USE_METAL.
             nativeDrawRectMutable(color, alpha, x, y, width, height);
         }
 
         void nativeDrawRoundRect(int color, int alpha, int x, int y, int width, int height, int arcWidth, int arcHeight) {
-            nativeDrawRoundRectMutable(color, alpha, x, y, width, height, arcWidth, arcHeight);
+            if (metalRendering) {
+                // Build a round-rect GeneralPath and stroke it via the
+                // alpha-mask Metal pipeline (Renderer.c -> R8 MTLTexture ->
+                // DrawTextureAlphaMask op tagged with currentMutableImage).
+                GeneralPath p = roundRectPath(x, y, width, height, arcWidth, arcHeight);
+                if (tmpStroke1px == null) tmpStroke1px = new Stroke(1, Stroke.CAP_BUTT, Stroke.JOIN_ROUND, 1f);
+                renderShapeViaAlphaMask(p, tmpStroke1px);
+                return;
+            }
+            // GL: drawTextureAlphaMaskImpl can't tag the alpha-mask op with
+            // a mutable target on a non-Metal build, so the mask would land
+            // on the screen instead of inside the mutable's UIImage. Fall
+            // back to the legacy CG-rasterise-and-DrawImage JNI which
+            // writes directly to the mutable's CGContextRef.
+            nativeInstance.nativeDrawRoundRectMutable(color, alpha, x, y, width, height, arcWidth, arcHeight);
         }
 
         void nativeFillRoundRect(int color, int alpha, int x, int y, int width, int height, int arcWidth, int arcHeight) {
-            nativeFillRoundRectMutable(color, alpha, x, y, width, height, arcWidth, arcHeight);
+            if (metalRendering) {
+                GeneralPath p = roundRectPath(x, y, width, height, arcWidth, arcHeight);
+                renderShapeViaAlphaMask(p, null);
+                return;
+            }
+            nativeInstance.nativeFillRoundRectMutable(color, alpha, x, y, width, height, arcWidth, arcHeight);
         }
 
         void nativeDrawArc(int color, int alpha, int x, int y, int width, int height, int startAngle, int arcAngle) {
-            nativeDrawArcMutable(color, alpha, x, y, width, height, startAngle, arcAngle);
+            if (metalRendering) {
+                if (drawingArcPath == null) drawingArcPath = new GeneralPath();
+                if (tmpStroke1px == null) tmpStroke1px = new Stroke(1, Stroke.CAP_BUTT, Stroke.JOIN_ROUND, 1f);
+                drawingArcPath.reset();
+                drawingArcPath.arc(x, y, width, height, startAngle * Math.PI / 180, arcAngle * Math.PI / 180, false);
+                renderShapeViaAlphaMask(drawingArcPath, tmpStroke1px);
+                return;
+            }
+            nativeInstance.nativeDrawArcMutable(color, alpha, x, y, width, height, startAngle, arcAngle);
         }
 
         void nativeFillArc(int color, int alpha, int x, int y, int width, int height, int startAngle, int arcAngle) {
-            nativeFillArcMutable(color, alpha, x, y, width, height, startAngle, arcAngle);
+            if (metalRendering) {
+                if (drawingArcPath == null) drawingArcPath = new GeneralPath();
+                drawingArcPath.reset();
+                if (arcAngle >= 360 || arcAngle <= -360) {
+                    // Full circle/ellipse: omit the moveTo(center). With it the
+                    // path is center -> arc start -> 360 -> close back to
+                    // center, which Renderer.c rasterises with a visible slice
+                    // line from center to the start point.
+                    drawingArcPath.arc(x, y, width, height, startAngle * Math.PI / 180, arcAngle * Math.PI / 180, false);
+                } else {
+                    drawingArcPath.moveTo(x + width / 2, y + height / 2);
+                    drawingArcPath.arc(x, y, width, height, startAngle * Math.PI / 180, arcAngle * Math.PI / 180, true);
+                }
+                drawingArcPath.closePath();
+                renderShapeViaAlphaMask(drawingArcPath, null);
+                return;
+            }
+            nativeInstance.nativeFillArcMutable(color, alpha, x, y, width, height, startAngle, arcAngle);
+        }
+
+        private Stroke tmpStroke1px;
+        private GeneralPath drawingArcPath;
+
+        // Build a round-rect path from the parametric (x,y,w,h,arcW,arcH) form
+        // so the alpha-mask pipeline can rasterise it. arcW/arcH are full
+        // ellipse-axis lengths (matching the Java2D / cn1 roundRect contract);
+        // half each gives the corner radii.
+        private GeneralPath roundRectPath(int x, int y, int width, int height, int arcWidth, int arcHeight) {
+            GeneralPath p = new GeneralPath();
+            float rx = Math.min(arcWidth / 2f, width / 2f);
+            float ry = Math.min(arcHeight / 2f, height / 2f);
+            if (rx <= 0 || ry <= 0) {
+                // Degenerate: just emit a rectangle outline.
+                p.moveTo(x, y);
+                p.lineTo(x + width, y);
+                p.lineTo(x + width, y + height);
+                p.lineTo(x, y + height);
+                p.closePath();
+                return p;
+            }
+            // Trace the round-rect outline as a single closed sub-path going
+            // CW in screen coords (Y-down): top edge -> top-right corner ->
+            // right edge -> bottom-right corner -> bottom edge -> bottom-left
+            // corner -> left edge -> top-left corner -> close.
+            //
+            // Each corner arc starts where the previous edge ended and ends
+            // where the next edge begins, so every joinPath=true draws a
+            // zero-length connector. cn1's GeneralPath.arc internally negates
+            // the angles (math-Y-up convention -> screen-Y-down via
+            // -startAngle / -sweepAngle in addToPath), and getPointAtAngle
+            // uses cy + b*sin(theta), which means a user-facing angle of
+            // +pi/2 evaluates to (cx, cy - b) in screen coords (top of bbox)
+            // and 0 evaluates to (cx + a, cy) (right). Sweep -pi/2 traces a
+            // single quadrant CW visually. Concretely:
+            //   top-right    : start +pi/2 (top),    sweep -pi/2 -> right
+            //   bottom-right : start  0    (right),  sweep -pi/2 -> bottom
+            //   bottom-left  : start -pi/2 (bottom), sweep -pi/2 -> left
+            //   top-left     : start +pi   (left),   sweep -pi/2 -> top
+            // The previous version used sweep +pi/2 with the opposite start
+            // angles, which produced an arc traversing the *opposite*
+            // quadrant of the corner bbox. For pills (where adjacent corner
+            // bboxes overlap because h-2ry == 0) the resulting path looped
+            // back through the bbox interior and Renderer.c's winding-fill
+            // pass interpreted that as a tear -- visible as the Switch
+            // track's right-half collapsing into a triangular wedge.
+            //
+            // Skip the inter-corner lineTos when their endpoints would
+            // coincide with the next arc's join target (pill case: rx ==
+            // width/2 collapses the top/bottom edges; ry == height/2
+            // collapses the left/right edges). Emitting a zero-length lineTo
+            // would leave a phantom edge that the winding pass also reads
+            // as a tear.
+            boolean hasTopBottomEdges = rx < width / 2f;
+            boolean hasLeftRightEdges = ry < height / 2f;
+            float twoRx = 2f * rx;
+            float twoRy = 2f * ry;
+            p.moveTo(x + rx, y);
+            if (hasTopBottomEdges) p.lineTo(x + width - rx, y);
+            p.arc(x + width - twoRx, y,                  twoRx, twoRy,  Math.PI / 2, -Math.PI / 2, true);
+            if (hasLeftRightEdges) p.lineTo(x + width, y + height - ry);
+            p.arc(x + width - twoRx, y + height - twoRy, twoRx, twoRy,  0,           -Math.PI / 2, true);
+            if (hasTopBottomEdges) p.lineTo(x + rx, y + height);
+            p.arc(x,                 y + height - twoRy, twoRx, twoRy, -Math.PI / 2, -Math.PI / 2, true);
+            if (hasLeftRightEdges) p.lineTo(x, y + ry);
+            p.arc(x,                 y,                  twoRx, twoRy,  Math.PI,     -Math.PI / 2, true);
+            p.closePath();
+            return p;
         }
 
         void nativeDrawString(int color, int alpha, long fontPeer, String str, int x, int y) {
@@ -4878,7 +5641,14 @@ public class IOSImplementation extends CodenameOneImplementation {
         // BEGIN DRAW SHAPE METHODS
         
         void nativeDrawAlphaMask(TextureAlphaMask mask){
-            
+            // Mirror GlobalGraphics: hand the alpha-mask MTLTexture handle
+            // off to drawTextureAlphaMask. The JNI side picks up
+            // currentMutableImage and tags the queued op so drawFrame's
+            // drain (Phase 3 v2) routes it to the mutable's encoder.
+            if (mask != null && mask.getTextureName() != 0) {
+                Rectangle r = mask.getBounds();
+                nativeInstance.drawTextureAlphaMask(mask.getTextureName(), this.color, this.alpha, r.getX(), r.getY(), r.getWidth(), r.getHeight());
+            }
         }
         
         
@@ -4924,40 +5694,138 @@ public class IOSImplementation extends CodenameOneImplementation {
          * @param shape
          * @param stroke
          */
-        void nativeDrawShape(Shape shape, Stroke stroke){//float lineWidth, int capStyle, int miterStyle, float miterLimit){
+        void nativeDrawShape(Shape shape, Stroke stroke) {
+            if (metalRendering) {
+                renderShapeViaAlphaMask(shape, stroke);
+                return;
+            }
+            // GL: serialize the path commands and call the legacy CG-based
+            // JNI which strokes the shape into the mutable's CGContextRef.
+            // The alpha-mask path can't target a mutable on a non-Metal
+            // build (drawTextureAlphaMaskImpl's setTarget is gated by
+            // #ifdef CN1_USE_METAL), so the mask would otherwise land on
+            // the screen and the mutable would come back empty.
             if (shape.getClass() == GeneralPath.class) {
-                // GeneralPath gives us some easy access to the points
-                GeneralPath p = (GeneralPath)shape;
+                GeneralPath p = (GeneralPath) shape;
                 int commandsLen = p.getTypesSize();
                 int pointsLen = p.getPointsSize();
                 byte[] commandsArr = getTmpNativeDrawShape_commands(commandsLen);
                 float[] pointsArr = getTmpNativeDrawShape_coords(pointsLen);
                 p.getTypes(commandsArr);
                 p.getPoints(pointsArr);
-                
-                nativeInstance.nativeDrawShapeMutable(color, alpha, commandsLen, commandsArr, pointsLen, pointsArr, stroke.getLineWidth(), stroke.getCapStyle(), stroke.getJoinStyle(), stroke.getMiterLimit());
+                nativeInstance.nativeDrawShapeMutable(color, alpha, commandsLen, commandsArr, pointsLen, pointsArr,
+                        stroke.getLineWidth(), stroke.getCapStyle(), stroke.getJoinStyle(), stroke.getMiterLimit());
             } else {
                 Log.p("Drawing shapes that are not GeneralPath objects is not yet supported on mutable images.");
             }
-            
-            
         }
-        
+
+        // Render a shape on the current mutable target via Renderer.c
+        // -> R8 MTLTexture -> DrawTextureAlphaMask op tagged with the
+        // mutable's GLUIImage. Stroke == null means fill.
+        //
+        // Caches the resulting MTLTexture in textureCache keyed on
+        // (shape, stroke) so repeated draws of the same path (typical
+        // theme rendering) hit the cache instead of re-rasterising.
+        //
+        // For non-identity transforms, bakes the transform's scale into
+        // a copy of the shape (so the alpha-mask is rasterised at the
+        // displayed scale, not at unit scale and then scaled), then
+        // draws with the inverse-scale transform applied so the result
+        // lands at the right coordinates. Mirrors what GlobalGraphics
+        // does on the screen-side path.
+        private void renderShapeViaAlphaMask(Shape shape, Stroke stroke) {
+            if (!(shape instanceof GeneralPath)) {
+                Log.p("Drawing shapes that are not GeneralPath objects is not yet supported on mutable images.");
+                return;
+            }
+            if (transform == null || transform.isIdentity()) {
+                TextureAlphaMask mask = textureCache.get(shape, stroke);
+                if (mask == null) {
+                    mask = createAlphaMask(shape, stroke);
+                    textureCache.add(shape, stroke, mask);
+                }
+                if (mask == null) return;
+                nativeDrawAlphaMask(mask);
+                return;
+            }
+            if (tmpDrawShape == null) tmpDrawShape = new GeneralPath();
+            if (tmpTransform == null) tmpTransform = Transform.makeIdentity();
+            if (tmpDrawStroke == null) tmpDrawStroke = new Stroke();
+            if (tmpRect2 == null) tmpRect2 = new Rectangle();
+            // Metal-only path (entry to this method is already gated on
+            // metalRendering). Factor the user transform into a non-uniform
+            // pre-rasterisation scale (sx, sy) plus a residual GPU transform
+            // -- see the matching block in GlobalGraphics.nativeDrawShape for
+            // the rationale (GH-3302 inscribed-shape drift).
+            Matrix nm = (Matrix) transform.getNativeTransform();
+            float[] m = nm.getData();
+            float c0x = m[0], c0y = m[1];
+            float c1x = m[4], c1y = m[5];
+            float sx = (float) Math.sqrt((double) c0x * c0x + (double) c0y * c0y);
+            float sy = (float) Math.sqrt((double) c1x * c1x + (double) c1y * c1y);
+            if (sx < 1e-6f) sx = 1f;
+            if (sy < 1e-6f) sy = 1f;
+            float strokeScale = (sx == sy) ? sx : (float) Math.sqrt((double) sx * (double) sy);
+            tmpTransform.setScale(sx, sy);
+            tmpDrawShape.setShape(shape, tmpTransform);
+            Stroke scaledStroke = null;
+            if (stroke != null) {
+                tmpDrawStroke.setStroke(stroke);
+                tmpDrawStroke.setLineWidth(tmpDrawStroke.getLineWidth() * strokeScale);
+                scaledStroke = tmpDrawStroke;
+            }
+            TextureAlphaMask mask = textureCache.get(tmpDrawShape, scaledStroke);
+            if (mask == null) {
+                mask = createAlphaMask(tmpDrawShape, scaledStroke);
+                textureCache.add(tmpDrawShape, scaledStroke, mask);
+            }
+            if (mask == null) return;
+            // Apply the residual S(1/sx, 1/sy) via the impl-side scale path
+            // -- the same path g.scale uses. Going through setTransform with
+            // a separately-built composed Transform has been documented to
+            // silently fail to update the Metal-side currentTransform in
+            // some cases (see the Transform.setTransform comment about
+            // "iOS Metal port has shown that without this flag
+            // setTransform(composed) silently fails to apply"). The scale
+            // path queues a SetTransform op that reliably reaches both the
+            // screen and mutable-image encoders.
+            scale(1f / sx, 1f / sy);
+            try {
+                nativeDrawAlphaMask(mask);
+            } finally {
+                // Restore by composing the inverse residual back onto the
+                // matrix. After this call the impl matrix is back at
+                // T(...) * S(sx, sy) -- exactly what the caller expects.
+                scale(sx, sy);
+            }
+        }
+
+        private GeneralPath tmpDrawShape;
+        private Transform tmpTransform;
+        private Stroke tmpDrawStroke;
+        private Rectangle tmpRect2;
+
         /**
          * Fills a shape in the graphics context.
          * @param shape
          */
         void nativeFillShape(Shape shape) {
+            if (metalRendering) {
+                // Fill is the same alpha-mask path as draw with a null
+                // stroke. Renderer.c on the C side decides fill-vs-stroke
+                // from the stroke being NULL.
+                renderShapeViaAlphaMask(shape, null);
+                return;
+            }
             if (shape.getClass() == GeneralPath.class) {
-                // GeneralPath gives us some easy access to the points
-                GeneralPath p = (GeneralPath)shape;
+                GeneralPath p = (GeneralPath) shape;
                 int commandsLen = p.getTypesSize();
                 int pointsLen = p.getPointsSize();
                 byte[] commandsArr = getTmpNativeDrawShape_commands(commandsLen);
                 float[] pointsArr = getTmpNativeDrawShape_coords(pointsLen);
                 p.getTypes(commandsArr);
                 p.getPoints(pointsArr);
-                
                 nativeInstance.nativeFillShapeMutable(color, alpha, commandsLen, commandsArr, pointsLen, pointsArr);
             } else {
                 Log.p("Drawing shapes that are not GeneralPath objects is not yet supported on mutable images.");
@@ -4984,8 +5852,13 @@ public class IOSImplementation extends CodenameOneImplementation {
             return true;
         }
         
-        boolean isAlphaMaskSupported(){
-            return false;
+        boolean isAlphaMaskSupported() {
+            // On Metal nativeDrawShape / nativeFillShape route through the
+            // Renderer.c-driven alpha-mask pipeline (same as GlobalGraphics
+            // on screen). On GL the alpha-mask op can't target a mutable,
+            // so we fall back to the CG path; tell the framework not to
+            // bother building alpha masks for mutable on GL.
+            return metalRendering;
         }
 
         // END DRAW SHAPE METHODS
@@ -5026,9 +5899,25 @@ public class IOSImplementation extends CodenameOneImplementation {
             inverseTransformDirty = true;
             this.applyTransform();
         }
-        
+
+        public void translateMatrix(float x, float y) {
+            // Composes T(x, y) onto the impl-side matrix, exactly like
+            // scale/rotate. NOTE: deliberately does NOT touch the
+            // framework-level xTranslate/yTranslate accumulator that the
+            // legacy g.translate(int, int) path uses. Mixing them is well-
+            // defined (xTranslate is added to draw coords first, then this
+            // matrix applies) but apps that switch to translateMatrix
+            // should generally avoid g.translate so the two don't fight.
+            this.transform.translate(x, y, 0);
+            clipDirty = true;
+            transformApplied = false;
+            inverseClipDirty = true;
+            inverseTransformDirty = true;
+            this.applyTransform();
+        }
+
         public void translate(int x, int y){
-            
+
         }
         
         public int getTranslateX(){
@@ -5205,6 +6094,17 @@ public class IOSImplementation extends CodenameOneImplementation {
             if(currentlyDrawingOn != this) {
                 if(currentlyDrawingOn != null) {
                     currentlyDrawingOn.associatedImage.peer = finishDrawingOnImage();
+                    // Returning to the screen after drawing into a mutable image:
+                    // on the Metal backend the mutable-image draw runs on its own
+                    // render encoder, so the screen encoder's scissor is whatever
+                    // it was last set to -- NOT necessarily the current screen
+                    // clip. clipApplied still reads true, so applyClip() would
+                    // skip re-emitting it and the next screen draw would use a
+                    // stale (often full-screen) scissor. That makes a clip set
+                    // before the mutable-image draw silently not apply to the
+                    // draw after it -> content drawn outside its clip (#5171).
+                    // Invalidate so the screen clip is re-applied for the next draw.
+                    clipApplied = false;
                 }
                 currentlyDrawingOn = null;
             }
@@ -5295,11 +6195,68 @@ public class IOSImplementation extends CodenameOneImplementation {
         }
 
         void nativeDrawRoundRect(int color, int alpha, int x, int y, int width, int height, int arcWidth, int arcHeight) {
-            nativeDrawRoundRectGlobal(color, alpha, x, y, width, height, arcWidth, arcHeight);
+            if (metalRendering) {
+                // Route through the alpha-mask Metal pipeline (build a path,
+                // then nativeDrawShape uses Renderer.c -> R8 MTLTexture ->
+                // DrawTextureAlphaMask op).
+                GeneralPath p = roundRectPath(x, y, width, height, arcWidth, arcHeight);
+                if (tmpStroke1px == null) tmpStroke1px = new Stroke(1, Stroke.CAP_BUTT, Stroke.JOIN_ROUND, 1f);
+                nativeDrawShape(p, tmpStroke1px);
+                return;
+            }
+            // GL screen: legacy CG path. Pre-c764fd4 GlobalGraphics already
+            // gated with metalRendering; the unification commit collapsed
+            // it which made the GL screen alpha-mask render diverge from
+            // the GL goldens captured against the CG path. Restoring the
+            // gate keeps existing GL goldens valid.
+            nativeInstance.nativeDrawRoundRectGlobal(color, alpha, x, y, width, height, arcWidth, arcHeight);
         }
 
         void nativeFillRoundRect(int color, int alpha, int x, int y, int width, int height, int arcWidth, int arcHeight) {
-            nativeFillRoundRectGlobal(color, alpha, x, y, width, height, arcWidth, arcHeight);
+            if (metalRendering) {
+                GeneralPath p = roundRectPath(x, y, width, height, arcWidth, arcHeight);
+                nativeFillShape(p);
+                return;
+            }
+            nativeInstance.nativeFillRoundRectGlobal(color, alpha, x, y, width, height, arcWidth, arcHeight);
+        }
+
+        // Build a round-rect path from the parametric (x,y,w,h,arcW,arcH) form
+        // so the alpha-mask Metal pipeline can rasterise it. arcW/arcH are
+        // full ellipse-axis lengths (cn1 / Java2D contract); half each gives
+        // the corner radii. Mirrors MutableGraphics.roundRectPath.
+        private GeneralPath roundRectPath(int x, int y, int width, int height, int arcWidth, int arcHeight) {
+            GeneralPath p = new GeneralPath();
+            float rx = Math.min(arcWidth / 2f, width / 2f);
+            float ry = Math.min(arcHeight / 2f, height / 2f);
+            if (rx <= 0 || ry <= 0) {
+                p.moveTo(x, y);
+                p.lineTo(x + width, y);
+                p.lineTo(x + width, y + height);
+                p.lineTo(x, y + height);
+                p.closePath();
+                return p;
+            }
+            // CW screen-coord traversal with sweep=-pi/2 per corner -- see
+            // MutableGraphics.roundRectPath above for the angle-convention
+            // analysis and why sweep=+pi/2 (the prior code) traced the
+            // opposite quadrant of each corner bbox and produced a
+            // triangular tear on pills.
+            boolean hasTopBottomEdges = rx < width / 2f;
+            boolean hasLeftRightEdges = ry < height / 2f;
+            float twoRx = 2f * rx;
+            float twoRy = 2f * ry;
+            p.moveTo(x + rx, y);
+            if (hasTopBottomEdges) p.lineTo(x + width - rx, y);
+            p.arc(x + width - twoRx, y,                  twoRx, twoRy,  Math.PI / 2, -Math.PI / 2, true);
+            if (hasLeftRightEdges) p.lineTo(x + width, y + height - ry);
+            p.arc(x + width - twoRx, y + height - twoRy, twoRx, twoRy,  0,           -Math.PI / 2, true);
+            if (hasTopBottomEdges) p.lineTo(x + rx, y + height);
+            p.arc(x,                 y + height - twoRy, twoRx, twoRy, -Math.PI / 2, -Math.PI / 2, true);
+            if (hasLeftRightEdges) p.lineTo(x, y + ry);
+            p.arc(x,                 y,                  twoRx, twoRy,  Math.PI,     -Math.PI / 2, true);
+            p.closePath();
+            return p;
         }
 
         private Stroke tmpStroke1px;
@@ -5327,14 +6284,22 @@ public class IOSImplementation extends CodenameOneImplementation {
         void nativeFillArc(int color, int alpha, int x, int y, int width, int height, int startAngle, int arcAngle) {
             // Turns out that using a Shape instead of using a Shader is much faster so we just pipe this
             // through to DrawShape.
-            // See https://gist.github.com/shannah/85d93674d709c7733e98 for Shader implementation that we decided 
+            // See https://gist.github.com/shannah/85d93674d709c7733e98 for Shader implementation that we decided
             // not to use.
             if (drawingArcPath == null) {
                 drawingArcPath = new GeneralPath();
             }
             drawingArcPath.reset();
-            drawingArcPath.moveTo(x + width / 2, y + height / 2);
-            drawingArcPath.arc(x, y, width, height, startAngle * Math.PI / 180, arcAngle * Math.PI / 180, true);
+            if (arcAngle >= 360 || arcAngle <= -360) {
+                // Full circle/ellipse: skip moveTo(center). Without this the
+                // path is center -> arc start -> 360 -> close back to
+                // center, which rasterises as a pacman with a visible
+                // slice line through the fill (broken thumb on Switch).
+                drawingArcPath.arc(x, y, width, height, startAngle * Math.PI / 180, arcAngle * Math.PI / 180, false);
+            } else {
+                drawingArcPath.moveTo(x + width / 2, y + height / 2);
+                drawingArcPath.arc(x, y, width, height, startAngle * Math.PI / 180, arcAngle * Math.PI / 180, true);
+            }
             drawingArcPath.closePath();
             nativeFillShape(drawingArcPath);
         }
@@ -5389,7 +6354,6 @@ public class IOSImplementation extends CodenameOneImplementation {
 
 
                 } else {
-                    GeneralPath p = (GeneralPath)shape;
                     if (tmpDrawShape == null) {
                         tmpDrawShape = new GeneralPath();
                     }
@@ -5405,63 +6369,98 @@ public class IOSImplementation extends CodenameOneImplementation {
                     if (tmpDrawStroke == null) {
                         tmpDrawStroke = new Stroke();
                     }
-                    // If the shape is very small and would be scaled dramatically
-                    // by the transform, then we will want to rasterize the shape in a larger
-                    // size to prevent the OGL transform from making the path too blurry.
-                    // But we can't just apply the full transform because the renderer
-                    // won't render the stroke correctly with transform
-                    // So we need to factor the transformation matrix
-                    Rectangle origBounds = reusableRect;
-                    Rectangle transformedBounds = tmpRect2;
-                    p.getBounds(origBounds);
-                    tmpDrawShape.setShape(shape, transform);
-                    tmpDrawShape.getBounds(transformedBounds);
-                    
-                    double h1 = Math.sqrt(origBounds.getWidth() * origBounds.getWidth() + origBounds.getHeight() * origBounds.getHeight());
-                    double h2 = Math.sqrt(transformedBounds.getWidth() * transformedBounds.getWidth() + transformedBounds.getHeight() * transformedBounds.getHeight());
-                    if (h2 < 1) h2 = 1;
-                    if (h1 < 1) h1 = 1;
-                    
-                    
-                    float scale = (float)(h2/h1);
-                    tmpTransform.setScale(scale, scale);
+                    // Factor the user transform into a pre-rasterisation scale
+                    // (sx, sy) and a residual GPU transform = transform *
+                    // S(1/sx, 1/sy). Two strategies:
+                    //
+                    // - Metal: take sx, sy from the column norms of the 2x2
+                    //   linear part of the transform. The path is rasterised
+                    //   at the actual per-axis scale so the residual GPU
+                    //   transform is pure rotation/shear -- no non-uniform
+                    //   texture stretch. This fixes GH-3302: under
+                    //   g.translate + non-uniform g.scale + fillShape the
+                    //   inscribed shape used to drift off the axis-aligned
+                    //   drawRect because the uniform-scale rasterise +
+                    //   non-uniform GPU stretch round to different pixel
+                    //   grids.
+                    //
+                    // - GL ES2: keep the legacy uniform h2/h1 diagonal ratio.
+                    //   Existing GL goldens are calibrated against this
+                    //   behaviour; only Metal opts in to the per-axis
+                    //   decomposition.
+                    float sx, sy;
+                    if (metalRendering) {
+                        Matrix nm = (Matrix) transform.getNativeTransform();
+                        float[] m = nm.getData();
+                        // Column-major 4x4: column 0 = [m[0], m[1], ...],
+                        // column 1 = [m[4], m[5], ...]. Length of each column
+                        // is the per-axis scale magnitude (true for pure
+                        // scale, scale-then-rotate, and rotate-then-scale;
+                        // shear contributes to both norms equally).
+                        float c0x = m[0], c0y = m[1];
+                        float c1x = m[4], c1y = m[5];
+                        sx = (float) Math.sqrt((double) c0x * c0x + (double) c0y * c0y);
+                        sy = (float) Math.sqrt((double) c1x * c1x + (double) c1y * c1y);
+                        if (sx < 1e-6f) sx = 1f;
+                        if (sy < 1e-6f) sy = 1f;
+                    } else {
+                        GeneralPath p = (GeneralPath) shape;
+                        Rectangle origBounds = reusableRect;
+                        Rectangle transformedBounds = tmpRect2;
+                        p.getBounds(origBounds);
+                        tmpDrawShape.setShape(shape, transform);
+                        tmpDrawShape.getBounds(transformedBounds);
+                        double h1 = Math.sqrt(origBounds.getWidth() * origBounds.getWidth() + origBounds.getHeight() * origBounds.getHeight());
+                        double h2 = Math.sqrt(transformedBounds.getWidth() * transformedBounds.getWidth() + transformedBounds.getHeight() * transformedBounds.getHeight());
+                        if (h2 < 1) h2 = 1;
+                        if (h1 < 1) h1 = 1;
+                        float scale = (float) (h2 / h1);
+                        sx = sy = scale;
+                    }
+                    // Stroke widening: in path space the renderer can only
+                    // produce a circular pen, but the residual GPU transform
+                    // does not scale (Metal) or applies a non-uniform stretch
+                    // (GL legacy). Use the geometric mean of the per-axis
+                    // scales so the on-screen stroke matches what the user
+                    // asked for on average; when sx == sy this collapses to
+                    // the uniform legacy behaviour.
+                    float strokeScale = (sx == sy) ? sx : (float) Math.sqrt((double) sx * (double) sy);
+                    tmpTransform.setScale(sx, sy);
                     tmpDrawShape.setShape(shape, tmpTransform);
 
-                    tmpTransform.setTransform(transform);
-                    tmpTransform.scale(1/scale, 1/scale);
-
-                    tmpTransform2.setTransform(transform);
+                    if (stroke != null) {
+                        tmpDrawStroke.setStroke(stroke);
+                        tmpDrawStroke.setLineWidth(tmpDrawStroke.getLineWidth() * strokeScale);
+                    }
+                    TextureAlphaMask mask = textureCache.get(tmpDrawShape, stroke==null?null:tmpDrawStroke);
+                    if ( mask == null ){
+                        mask = (TextureAlphaMask)createAlphaMask(tmpDrawShape, stroke==null?null:tmpDrawStroke);
+                        textureCache.add(tmpDrawShape, stroke==null?null:tmpDrawStroke, mask);
+                    }
+                    if (mask==null){
+                        return;
+                    }
+                    if (paint != null && paint instanceof RadialGradient) {
+                        RadialGradient rgp = (RadialGradient)paint;
+                        rgp.x = (int) (rgp.x * sx);
+                        rgp.y = (int) (rgp.y * sy);
+                        rgp.width = (int) (rgp.width * sx);
+                        rgp.height = (int) (rgp.height * sy);
+                        applyPaint();
+                    }
+                    // Apply the residual S(1/sx, 1/sy) via the impl-side scale
+                    // path (the same path g.scale uses). Going through
+                    // setTransform with a separately-built composed Transform
+                    // has been documented to silently fail to update the
+                    // Metal-side currentTransform (see the comment in
+                    // Transform.setTransform). The scale path reliably queues
+                    // a SetTransform op that reaches both the screen and the
+                    // mutable-image encoders.
+                    scale(1f / sx, 1f / sy);
                     try {
-                        this.setTransform(tmpTransform);
-                        if (stroke != null) {
-
-                            tmpDrawStroke.setStroke(stroke);
-                            tmpDrawStroke.setLineWidth(tmpDrawStroke.getLineWidth() * scale);
-                        }
-                        //applyTransform();
-                        TextureAlphaMask mask = textureCache.get(tmpDrawShape, stroke==null?null:tmpDrawStroke);
-                        if ( mask == null ){
-                            mask = (TextureAlphaMask)createAlphaMask(tmpDrawShape, stroke==null?null:tmpDrawStroke);
-                            textureCache.add(tmpDrawShape, stroke==null?null:tmpDrawStroke, mask);
-
-                        }
-                        if (mask==null){
-                            // A null mask generally means the shape had zero bounds
-                            return;
-                        }
-                        //mask = (TextureAlphaMask)createAlphaMask(shape, stroke);
-                        if (paint != null && paint instanceof RadialGradient) {
-                            RadialGradient rgp = (RadialGradient)paint;
-                            rgp.x *= scale;
-                            rgp.y *= scale;
-                            rgp.width *= scale;
-                            rgp.height *= scale;
-                            applyPaint();
-                        }
                         nativeDrawAlphaMask(mask);
                     } finally {
-                        setTransform(tmpTransform2);
-                        //applyTransform();
+                        scale(sx, sy);
                     }
                 }
             } else {
@@ -5624,27 +6623,6 @@ public class IOSImplementation extends CodenameOneImplementation {
         }
     }
     
-    class NativeAlphaMask {
-        long peer;
-        String debugText;
-        public NativeAlphaMask(String debugText){
-            this.debugText = debugText;
-        }
-        
-        
-        void deleteTexture(){
-            if ( peer != 0 ){
-                nativeDeleteTexture(peer);
-            }
-        }
-        
-        protected void finalize(){
-            deleteTexture();
-        }
-        
-        
-    }
-
     @Override
     public boolean animateImage(Object nativeImage, long lastFrame) {
         return super.animateImage(nativeImage, lastFrame);
@@ -5815,28 +6793,47 @@ public class IOSImplementation extends CodenameOneImplementation {
                     return dDensity;
                 }
                 else if (largest == 2532 && smallest == 1170) {
-                    // 12
+                    // iPhone 12, 12 Pro, 13, 13 Pro, 14
+                    dDensity = Display.DENSITY_560;
+                    return dDensity;
+                }
+                else if (largest == 2556 && smallest == 1179) {
+                    // iPhone 14 Pro, 15, 15 Pro, 16
+                    //ppi = PPI_460;
+                    dDensity = Display.DENSITY_560;
+                    return dDensity;
+                }
+                else if (largest == 2796 && smallest == 1290) {
+                    // iPhone 14 Pro Max, 15 Plus, 15 Pro Max, 16 Plus
+                    //ppi = PPI_460;
+                    dDensity = Display.DENSITY_560;
+                    return dDensity;
+                }
+                else if (largest == 2622 && smallest == 1206) {
+                    // iPhone 16 Pro
+                    //ppi = PPI_460;
+                    dDensity = Display.DENSITY_560;
+                    return dDensity;
+                }
+                else if (largest == 2868 && smallest == 1320) {
+                    // iPhone 16 Pro Max
+                    //ppi = PPI_460;
+                    dDensity = Display.DENSITY_560;
+                    return dDensity;
+                }
+                else if (largest == 2778 && smallest == 1284) {
+                    // iPhone 12 Pro Max, 13 Pro Max, 14 Plus
+                    //ppi = PPI_458;
                     dDensity = Display.DENSITY_560;
                     return dDensity;
                 }
                 else if (largest == 1792 && smallest == 828) {
-                    // iPhone 11
+                    // iPhone 11, XR
                     //ppi = PPI_326;
                     dDensity = Display.DENSITY_VERY_HIGH;
                     return dDensity;
                 } else if (largest == 2688 && smallest == 1242) {
-                    // iPhone 11 max pro
-                    //ppi = PPI_458;
-                    dDensity = Display.DENSITY_560;
-                    return dDensity;
-                } else if (largest == 1792 && smallest == 828) {
-                    // 11, XR
-                    //ppi = PPI_326;
-                    dDensity = Display.DENSITY_VERY_HIGH;
-                    return dDensity;
-
-                } else if (largest == 2688 && smallest == 1242) {
-                    // 11 Pro Max, Xs Max
+                    // iPhone 11 Pro Max, Xs Max
                     //ppi = PPI_458;
                     dDensity = Display.DENSITY_560;
                     return dDensity;
@@ -5918,29 +6915,43 @@ public class IOSImplementation extends CodenameOneImplementation {
                         ppi = PPI_476;
                     }
                     else if (largest == 2532 && smallest == 1170) {
-                        // 12
+                        // iPhone 12, 12 Pro, 13, 13 Pro, 14
                         ppi = PPI_460;
                     }
-                    else if (largest == 1792 && smallest == 828) {
-                        // iPhone 11
-                        ppi = PPI_326;
-                    } else if (largest == 2688 && smallest == 1242) {
-                        // iPhone 11 max pro
+                    else if (largest == 2556 && smallest == 1179) {
+                        // iPhone 14 Pro, 15, 15 Pro, 16
+                        ppi = PPI_460;
+                    }
+                    else if (largest == 2796 && smallest == 1290) {
+                        // iPhone 14 Pro Max, 15 Plus, 15 Pro Max, 16 Plus
+                        ppi = PPI_460;
+                    }
+                    else if (largest == 2622 && smallest == 1206) {
+                        // iPhone 16 Pro
+                        ppi = PPI_460;
+                    }
+                    else if (largest == 2868 && smallest == 1320) {
+                        // iPhone 16 Pro Max
+                        ppi = PPI_460;
+                    }
+                    else if (largest == 2778 && smallest == 1284) {
+                        // iPhone 12 Pro Max, 13 Pro Max, 14 Plus
                         ppi = PPI_458;
-                    } else if (largest == 1792 && smallest == 828) {
-                        // 11, XR
+                    }
+                    else if (largest == 1792 && smallest == 828) {
+                        // iPhone 11, XR
                         ppi = PPI_326;
                     } else if (largest == 2688 && smallest == 1242) {
-                        // 11 Pro Max, Xs Max
+                        // iPhone 11 Pro Max, Xs Max
                         ppi = PPI_458;
                     } else if (largest == 2208 && smallest == 1242) {
-                        // 6+, 6s, 7+, 8+
+                        // 6+, 6s+, 7+, 8+
                         ppi = PPI_401;
                     } else if (largest == 1334 && smallest == 750) {
-                        // 6, 6s, 7, 8
+                        // 6, 6s, 7, 8, SE 2nd/3rd gen
                         ppi = PPI_326;
                     } else if (largest == 1136 && smallest == 640) {
-                        //5, 5s, 5c, SE
+                        //5, 5s, 5c, SE 1st gen
                         ppi = PPI_326;
                     } else if (largest == 960 && smallest == 640) {
                         // 4, 4s
@@ -5950,19 +6961,17 @@ public class IOSImplementation extends CodenameOneImplementation {
                         ppi = PPI_163;
                     }
                     else if (largest == 2436) {
-                        // iphone X
-                        ppi = 18.031496062992126;
+                        // iPhone X, Xs, 11 Pro
+                        ppi = PPI_458;
                     } else {
-                        if(largest > 2000) {
-                            // iphone 6 plus
-                            ppi = 19.25429416;                    
+                        // Unknown 3x device. Apple has held 460 ppi for every
+                        // non-Plus iPhone since the iPhone 12, so default future
+                        // phones to that rather than the legacy 6 Plus value.
+                        if (largest > 2000) {
+                            ppi = PPI_460;
                         } else {
-                            if(largest > 1300) {
-                                // iphone 6
-                                ppi = 12.8369704749679;                    
-                            } else {
-                                ppi = 12.8369704749679;                    
-                            }
+                            // Older 2x device fallback (~PPI_326).
+                            ppi = 12.8369704749679;
                         }
                     }
                 }
@@ -6456,7 +7465,36 @@ public class IOSImplementation extends CodenameOneImplementation {
         if(key.equalsIgnoreCase("UDID")) {
             return nativeInstance.getUDID();
         }
-        
+        if("cn1.iosStatusBarTap.count".equals(key)) {
+            return String.valueOf(nativeInstance.getStatusBarTapCount());
+        }
+        if("cn1.iosStatusBarTap.lastEpochMillis".equals(key)) {
+            return String.valueOf(nativeInstance.getStatusBarTapLastEpochMillis());
+        }
+        if("cn1.iosStatusBarTap.lastX".equals(key)) {
+            return String.valueOf(nativeInstance.getStatusBarTapLastX());
+        }
+        if("cn1.iosStatusBarTap.lastY".equals(key)) {
+            return String.valueOf(nativeInstance.getStatusBarTapLastY());
+        }
+        if("cn1.iosStatusBarTap.proxyInstalled".equals(key)) {
+            return String.valueOf(nativeInstance.isStatusBarTapProxyInstalled());
+        }
+        if("cn1.iosStatusBarTap.diagnostics".equals(key)) {
+            int count = nativeInstance.getStatusBarTapCount();
+            long lastTime = nativeInstance.getStatusBarTapLastEpochMillis();
+            int lastX = nativeInstance.getStatusBarTapLastX();
+            int lastY = nativeInstance.getStatusBarTapLastY();
+            boolean installed = nativeInstance.isStatusBarTapProxyInstalled();
+            StringBuilder sb = new StringBuilder();
+            sb.append("count=").append(count);
+            sb.append(", lastEpochMillis=").append(lastTime);
+            sb.append(", lastX=").append(lastX);
+            sb.append(", lastY=").append(lastY);
+            sb.append(", proxyInstalled=").append(installed);
+            return sb.toString();
+        }
+
         return super.getProperty(key, defaultValue);
     }
 
@@ -7099,7 +8137,77 @@ public class IOSImplementation extends CodenameOneImplementation {
         ng.applyClip();
         ng.fillLinearGradient(startColor, endColor, x, y, width, height, horizontal);
     }
-    
+
+    // Metal builds route the multi-stop CSS Gradient API through a pure-GPU
+    // shader (CN1MetalPipelineMultiStopGradient). GL builds (or Metal builds
+    // that can't pack the gradient into the shader's 8-stop budget) fall back
+    // to the base CodenameOneImplementation software rasterizer, which builds
+    // an ARGB raster via Gradient.sampleArgb() and uploads it through
+    // drawImage. The Java side caches that raster on the Gradient via a
+    // WeakReference so repaint storms don't re-rasterise. gaussianBlurImage
+    // wraps either the Metal-native two-pass blur or CIGaussianBlur for the
+    // filter:blur effect on Image inputs.
+    @Override
+    public void fillGradient(Object graphics, com.codename1.ui.Gradient gradient, int x, int y, int width, int height) {
+        if (gradient == null || width <= 0 || height <= 0) {
+            return;
+        }
+        if (metalRendering && gradient.getColors().length <= 8) {
+            NativeGraphics ng = (NativeGraphics) graphics;
+            ng.checkControl();
+            ng.applyTransform();
+            ng.applyClip();
+            int kind = gradient.getKind();
+            int[] argb = gradient.getColors();
+            float[] pos = gradient.getPositions();
+            int stopCount = argb.length;
+            float[] colors = new float[stopCount * 4];
+            for (int i = 0; i < stopCount; i++) {
+                int c = argb[i];
+                int a8 = (c >>> 24) & 0xff;
+                if (a8 == 0) {
+                    a8 = 0xff;
+                }
+                float a = a8 / 255f;
+                colors[i * 4] = ((c >> 16) & 0xff) / 255f * a;
+                colors[i * 4 + 1] = ((c >> 8) & 0xff) / 255f * a;
+                colors[i * 4 + 2] = (c & 0xff) / 255f * a;
+                colors[i * 4 + 3] = a;
+            }
+            float angleOrFromAngle = 0f;
+            float cx = 0.5f;
+            float cy = 0.5f;
+            float rx = 0.5f;
+            float ry = 0.5f;
+            int shape = 1;
+            if (kind == com.codename1.ui.Gradient.KIND_LINEAR) {
+                angleOrFromAngle = ((com.codename1.ui.LinearGradient) gradient).getAngleDegrees();
+            } else if (kind == com.codename1.ui.Gradient.KIND_RADIAL) {
+                com.codename1.ui.RadialGradient rg = (com.codename1.ui.RadialGradient) gradient;
+                float[] geom = new float[4];
+                rg.computeRadii(width, height, geom);
+                cx = geom[0] / width;
+                cy = geom[1] / height;
+                rx = geom[2] / width;
+                ry = geom[3] / height;
+                shape = rg.getShape();
+            } else if (kind == com.codename1.ui.Gradient.KIND_CONIC) {
+                com.codename1.ui.ConicGradient cg = (com.codename1.ui.ConicGradient) gradient;
+                angleOrFromAngle = cg.getFromAngleDegrees();
+                cx = cg.getRelativeCenterX();
+                cy = cg.getRelativeCenterY();
+            }
+            boolean mutable = !(ng instanceof GlobalGraphics);
+            nativeInstance.fillGradient(kind, stopCount, pos, colors,
+                    gradient.getCycleMethod(), angleOrFromAngle,
+                    cx, cy, rx, ry, shape,
+                    x, y, width, height, mutable);
+            return;
+        }
+        super.fillGradient(graphics, gradient, x, y, width, height);
+    }
+
+
     public static void appendData(long peer, long data) {
         NetworkConnection n = null;
         synchronized(CONNECTIONS_LOCK) {
@@ -7646,7 +8754,15 @@ public class IOSImplementation extends CodenameOneImplementation {
      */
     public InputStream openInputStream(Object connection) throws IOException {
         if(connection instanceof String) {
-            BufferedInputStream o = new BufferedInputStream(new NSFileInputStream((String)connection), (String)connection);
+            // Match openFileInputStream(String): if the path is missing, throw
+            // a FileNotFoundException instead of silently opening an empty
+            // NSFileInputStream (which Apple's fileHandleForReadingAtPath:
+            // returns when the file does not exist). See #1502.
+            String path = (String) connection;
+            if(!nativeInstance.fileExists(path)) {
+                throw new FileNotFoundException("File not found: " + path);
+            }
+            BufferedInputStream o = new BufferedInputStream(new NSFileInputStream(path), path);
             return o;
         }
         NetworkConnection n = (NetworkConnection)connection;
@@ -7816,10 +8932,12 @@ public class IOSImplementation extends CodenameOneImplementation {
                             } catch (IOException ex) {
                                 throw new RuntimeException(ex.getMessage());
                             } finally {
-                                try {
-                                    i.close();
-                                } catch (IOException ex) {
-                                    //throw new RuntimeException(ex.getMessage());
+                                if (i != null) {
+                                    try {
+                                        i.close();
+                                    } catch (IOException ex) {
+                                        //throw new RuntimeException(ex.getMessage());
+                                    }
                                 }
                             }
                         }
@@ -8036,7 +9154,10 @@ public class IOSImplementation extends CodenameOneImplementation {
     public InputStream openFileInputStream(String file) throws IOException {
         file = unfile(file);
         if(!nativeInstance.fileExists(file)) {
-            throw new IOException("File not found: " + file);
+            // FileNotFoundException is more precise than IOException and
+            // matches what FileInputStream throws on JavaSE, so callers can
+            // distinguish "missing" from other I/O errors. See #1502.
+            throw new FileNotFoundException("File not found: " + file);
         }
         return new BufferedInputStream(new NSFileInputStream(file), file);
     }
@@ -8089,6 +9210,11 @@ public class IOSImplementation extends CodenameOneImplementation {
      */
     public String getPlatformName() {
         return "ios";
+    }
+
+    @Override
+    public Simd createSimd() {
+        return new IOSSimd();
     }
 
     /**
@@ -8261,6 +9387,7 @@ public class IOSImplementation extends CodenameOneImplementation {
     
     
     public static void setMainClass(Object main) {
+        setCurrentApplicationInstance(main);
         if(main instanceof PushCallback) {
             pushCallback = (PushCallback)main;
         }
@@ -8748,22 +9875,72 @@ public class IOSImplementation extends CodenameOneImplementation {
     
     @Override
     public void share(String text, String image, String mimeType, Rectangle sourceRect){
-        if(image != null && image.length() > 0) {
+        share(text, image, mimeType, sourceRect, null);
+    }
+
+    @Override
+    public void share(String text, String image, String mimeType, Rectangle sourceRect, com.codename1.share.ShareResultListener listener) {
+        long imagePeer = 0;
+        if (image != null && image.length() > 0) {
             try {
                 Image img = Image.createImage(image);
-                if(img == null) {
-                    nativeInstance.socialShare(text, 0, sourceRect );
+                if (img != null) {
+                    NativeImage n = (NativeImage) img.getImage();
+                    imagePeer = n.peer;
+                }
+            } catch (IOException err) {
+                err.printStackTrace();
+                if (listener != null) {
+                    listener.onResult(com.codename1.share.ShareResult.failed("Error loading image: " + image));
                     return;
                 }
-                NativeImage n = (NativeImage)img.getImage();
-                nativeInstance.socialShare(text, n.peer, sourceRect);
-            } catch(IOException err) {
-                err.printStackTrace();
                 Dialog.show("Error", "Error loading image: " + image, "OK", null);
+                return;
             }
-        } else {
-            nativeInstance.socialShare(text, 0, sourceRect);
         }
+        if (listener == null) {
+            nativeInstance.socialShare(text, imagePeer, sourceRect);
+            return;
+        }
+        int callbackId = registerShareCallback(listener);
+        nativeInstance.socialShareWithCallback(text, imagePeer, sourceRect, callbackId);
+    }
+
+    // Pending share-result callbacks. Native code invokes
+    // socialShareCallback(...) once per id.
+    private static final java.util.HashMap<Integer, com.codename1.share.ShareResultListener> pendingShareCallbacks = new java.util.HashMap<Integer, com.codename1.share.ShareResultListener>();
+    private static int nextShareCallbackId = 1;
+
+    private static synchronized int registerShareCallback(com.codename1.share.ShareResultListener l) {
+        int id = nextShareCallbackId++;
+        pendingShareCallbacks.put(Integer.valueOf(id), l);
+        return id;
+    }
+
+    /// Invoked from native code with the outcome of a share. Public so the
+    /// VM-emitted symbol stays stable. `status` matches
+    /// [com.codename1.share.ShareResult]: 1=SHARED_TO, 2=DISMISSED, 3=FAILED.
+    public static void socialShareCallback(int callbackId, int status, String activityType, String errorMessage) {
+        com.codename1.share.ShareResultListener listener;
+        synchronized (IOSImplementation.class) {
+            listener = pendingShareCallbacks.remove(Integer.valueOf(callbackId));
+        }
+        if (listener == null) {
+            return;
+        }
+        com.codename1.share.ShareResult result;
+        switch (status) {
+            case 1:
+                result = com.codename1.share.ShareResult.sharedTo(activityType);
+                break;
+            case 2:
+                result = com.codename1.share.ShareResult.dismissed();
+                break;
+            default:
+                result = com.codename1.share.ShareResult.failed(errorMessage);
+                break;
+        }
+        listener.onResult(result);
     }
 
     private Purchase pur;
@@ -9204,30 +10381,257 @@ public class IOSImplementation extends CodenameOneImplementation {
     }
 
     @Override
+    public boolean isWebSocketSupported() {
+        return true;
+    }
+
+    @Override
+    public com.codename1.impl.WebSocketImpl createWebSocketImpl(String url) {
+        return new IOSWebSocketImpl(url);
+    }
+
+    @Override
+    public void writeToSocketStream(Object socket, byte[] data, int offset, int len) {
+        nativeInstance.writeToSocketStream(((Long)socket).longValue(), data, offset, len);
+    }
+
+    @Override
     public void splitString(String source, char separator, ArrayList<String> out) {
         nativeInstance.splitString(source, separator, out);
     }
    
     public void scheduleLocalNotification(LocalNotification n, long firstTime, int repeat) {
-        
-        nativeInstance.sendLocalNotification(
-                n.getId(),
-                n.getAlertTitle(),
-                n.getAlertBody(),
-                n.getAlertSound(),
-                n.getBadgeNumber(),
-                firstTime,
-                repeat,
-                n.isForeground()
-        );
-        
-       
+        boolean enriched = !n.getActions().isEmpty() || n.getGroupId() != null
+                || n.isTimeSensitive() || (n.getAlertImage() != null && n.getAlertImage().length() > 0);
+        if (enriched) {
+            String categoryId = null;
+            String actionsEncoded = null;
+            if (!n.getActions().isEmpty()) {
+                categoryId = "cn1-ln-" + n.getId();
+                StringBuilder sb = new StringBuilder();
+                for (LocalNotification.Action a : n.getActions()) {
+                    if (sb.length() > 0) {
+                        sb.append('\u0002');
+                    }
+                    sb.append(nullToEmpty(a.getId())).append('\u0001')
+                      .append(nullToEmpty(a.getTitle())).append('\u0001')
+                      .append(nullToEmpty(a.getTextInputPlaceholder())).append('\u0001')
+                      .append(nullToEmpty(a.getTextInputButtonText()));
+                }
+                actionsEncoded = sb.toString();
+            }
+            nativeInstance.sendLocalNotification2(
+                    n.getId(), n.getAlertTitle(), n.getAlertBody(), n.getAlertSound(),
+                    n.getBadgeNumber(), firstTime, repeat, n.isForeground(),
+                    categoryId, n.getGroupId(), n.isTimeSensitive(), n.getAlertImage(), actionsEncoded);
+        } else {
+            nativeInstance.sendLocalNotification(
+                    n.getId(),
+                    n.getAlertTitle(),
+                    n.getAlertBody(),
+                    n.getAlertSound(),
+                    n.getBadgeNumber(),
+                    firstTime,
+                    repeat,
+                    n.isForeground()
+            );
+        }
     }
 
-   
-    
+    private static String nullToEmpty(String s) {
+        return s == null ? "" : s;
+    }
+
     public void cancelLocalNotification(String id) {
          nativeInstance.cancelLocalNotification(id);
+    }
+
+    // ---- notification permission ----
+
+    private static NotificationPermissionCallback pendingNotificationPermissionCallback;
+
+    @Override
+    public void requestNotificationPermission(NotificationPermissionRequest request, NotificationPermissionCallback callback) {
+        pendingNotificationPermissionCallback = callback;
+        nativeInstance.requestNotificationPermission(request == null ? 7 : request.toAuthorizationOptionsMask());
+    }
+
+    /// Invoked from native once the authorization request resolves. authLevel is the
+    /// ordinal of NotificationPermissionResult.AuthorizationLevel as produced by the
+    /// native UNAuthorizationStatus mapping (granted is derived from the level).
+    public static void notificationPermissionResult(final boolean granted, final int authLevel) {
+        final NotificationPermissionCallback cb = pendingNotificationPermissionCallback;
+        pendingNotificationPermissionCallback = null;
+        if (cb != null) {
+            final NotificationPermissionResult.AuthorizationLevel[] levels =
+                    NotificationPermissionResult.AuthorizationLevel.values();
+            final NotificationPermissionResult.AuthorizationLevel level =
+                    (authLevel >= 0 && authLevel < levels.length)
+                            ? levels[authLevel]
+                            : NotificationPermissionResult.AuthorizationLevel.NOT_DETERMINED;
+            Display.getInstance().callSerially(new Runnable() {
+                public void run() {
+                    cb.notificationPermissionResult(new NotificationPermissionResult(level));
+                }
+            });
+        }
+    }
+
+    // ---- constraint-aware background work / processing (BGTaskScheduler) ----
+
+    @Override
+    public boolean isBackgroundWorkSupported() {
+        return nativeInstance.isBackgroundProcessingSupported();
+    }
+
+    @Override
+    public boolean isBackgroundProcessingSupported() {
+        return nativeInstance.isBackgroundProcessingSupported();
+    }
+
+    @Override
+    public void scheduleBackgroundWork(WorkRequest request) {
+        // persist worker class and input so the work can be reconstructed after a cold launch
+        com.codename1.io.Preferences.set("$$CN1_BGWORK_CLASS_" + request.getId(), request.getWorkerClass());
+        StringBuilder input = new StringBuilder();
+        for (java.util.Map.Entry<String, String> e : request.getInputData().entrySet()) {
+            if (input.length() > 0) {
+                input.append('\u0002');
+            }
+            input.append(e.getKey()).append('\u0001').append(e.getValue());
+        }
+        com.codename1.io.Preferences.set("$$CN1_BGWORK_INPUT_" + request.getId(), input.toString());
+        com.codename1.io.Preferences.set("$$CN1_BGWORK_PERIODIC_" + request.getId(), request.isPeriodic());
+        double earliest = (System.currentTimeMillis() + Math.max(0, request.getInitialDelayMillis())) / 1000.0;
+        nativeInstance.submitBackgroundProcessingTask(request.getId(), earliest,
+                request.isRequiresNetwork() || request.isRequiresUnmeteredNetwork(), request.isRequiresCharging());
+    }
+
+    @Override
+    public void cancelBackgroundWork(String workId) {
+        nativeInstance.cancelBackgroundTask(workId);
+    }
+
+    @Override
+    public void scheduleBackgroundProcessing(String id, long earliestBeginEpochMs, boolean requiresNetwork, boolean requiresPower, Runnable task) {
+        if (task != null) {
+            backgroundProcessingRunnables.put(id, task);
+        }
+        double earliest = earliestBeginEpochMs <= 0 ? System.currentTimeMillis() / 1000.0 : earliestBeginEpochMs / 1000.0;
+        nativeInstance.submitBackgroundProcessingTask(id, earliest, requiresNetwork, requiresPower);
+    }
+
+    @Override
+    public void cancelBackgroundProcessing(String id) {
+        backgroundProcessingRunnables.remove(id);
+        nativeInstance.cancelBackgroundTask(id);
+    }
+
+    private static final java.util.Map<String, Runnable> backgroundProcessingRunnables = new java.util.HashMap<String, Runnable>();
+
+    /// Invoked from the BGTaskScheduler launch handler. Runs the worker (reconstructed from
+    /// persisted state) or a live processing runnable for the given identifier.
+    public static void runBackgroundProcessing(final String id) {
+        Runnable live = backgroundProcessingRunnables.remove(id);
+        if (live != null) {
+            try {
+                live.run();
+            } catch (Throwable t) {
+                com.codename1.io.Log.e(t);
+            }
+            return;
+        }
+        String workerClass = com.codename1.io.Preferences.get("$$CN1_BGWORK_CLASS_" + id, null);
+        if (workerClass == null) {
+            return;
+        }
+        try {
+            Class<?> cls = Class.forName(workerClass);
+            BackgroundWorker worker = (BackgroundWorker) cls.newInstance();
+            java.util.Map<String, String> input = new java.util.HashMap<String, String>();
+            String enc = com.codename1.io.Preferences.get("$$CN1_BGWORK_INPUT_" + id, "");
+            if (enc != null && enc.length() > 0) {
+                for (String pair : com.codename1.io.Util.split(enc, "\u0002")) {
+                    int idx = pair.indexOf('\u0001');
+                    if (idx >= 0) {
+                        input.put(pair.substring(0, idx), pair.substring(idx + 1));
+                    }
+                }
+            }
+            final boolean periodic = com.codename1.io.Preferences.get("$$CN1_BGWORK_PERIODIC_" + id, false);
+            worker.performWork(id, input, System.currentTimeMillis() + 25000, new com.codename1.util.Callback<Boolean>() {
+                public void onSucess(Boolean value) {
+                    if (periodic) {
+                        // resubmit to approximate periodic behavior on iOS
+                        instance.nativeInstance.submitBackgroundProcessingTask(id, (System.currentTimeMillis() + 60000) / 1000.0, false, false);
+                    }
+                }
+                public void onError(Object sender, Throwable err, int errorCode, String errorMessage) {
+                    com.codename1.io.Log.e(err);
+                }
+            });
+        } catch (Throwable t) {
+            com.codename1.io.Log.e(t);
+        }
+    }
+
+    @Override
+    public void subscribeToPushTopic(String topic) {
+        com.codename1.io.Log.p("Push topics are not supported on iOS APNs; topic '" + topic
+                + "' must be handled server side");
+    }
+
+    @Override
+    public void unsubscribeFromPushTopic(String topic) {
+        com.codename1.io.Log.p("Push topics are not supported on iOS APNs; topic '" + topic
+                + "' must be handled server side");
+    }
+
+    @Override
+    public boolean isReceiveSharedContentSupported() {
+        return true;
+    }
+
+    /// Invoked from native (on app activation) with the JSON payload written by the share
+    /// extension. Parses it into a SharedContent and dispatches to the app.
+    public static void fireSharedContentFromNative(String json) {
+        if (json == null || json.length() == 0) {
+            return;
+        }
+        try {
+            com.codename1.io.JSONParser parser = new com.codename1.io.JSONParser();
+            java.util.Map parsed = parser.parseJSON(new java.io.StringReader(json));
+            SharedContent.Builder b = SharedContent.builder();
+            Object subject = parsed.get("subject");
+            if (subject instanceof String) {
+                b.subject((String) subject);
+            }
+            Object items = parsed.get("items");
+            if (items instanceof java.util.List) {
+                for (Object o : (java.util.List) items) {
+                    if (!(o instanceof java.util.Map)) {
+                        continue;
+                    }
+                    java.util.Map item = (java.util.Map) o;
+                    String kind = (String) item.get("kind");
+                    String value = (String) item.get("value");
+                    if ("url".equals(kind)) {
+                        b.addUrl(value);
+                    } else if ("image".equals(kind)) {
+                        b.addImage(null, value, null);
+                    } else if ("file".equals(kind)) {
+                        b.addFile(null, value, null);
+                    } else {
+                        b.addText(value);
+                    }
+                }
+            }
+            if (instance != null) {
+                instance.fireSharedContentReceived(b.build());
+            }
+        } catch (Throwable t) {
+            com.codename1.io.Log.e(t);
+        }
     }
 
     
@@ -9533,5 +10937,114 @@ public class IOSImplementation extends CodenameOneImplementation {
     @Override
     public void announceForAccessibility(final Component cmp, final String text) {
         IOSNative.announceForAccessibility(text);
+    }
+
+    // ================================================================
+    // Crypto bridge -- routes through CN1Crypto.{h,m} in nativeSources/
+    // (the corresponding native methods live on IOSNative). The defaults
+    // inherited from CodenameOneImplementation use java.security via
+    // reflection, which isn't on the ParparVM runtime classpath.
+
+    private static byte[] cryptoTrim(byte[] buf, int len) {
+        if (len < 0) {
+            throw new RuntimeException("crypto operation failed with code " + len);
+        }
+        if (len == buf.length) return buf;
+        byte[] out = new byte[len];
+        System.arraycopy(buf, 0, out, 0, len);
+        return out;
+    }
+
+    @Override
+    public void secureRandomBytes(byte[] out) {
+        nativeInstance.secureRandomBytes(out);
+    }
+
+    @Override
+    public byte[] aesEncrypt(String transformation, byte[] key, byte[] iv, byte[] aad, byte[] plaintext) {
+        return doAes(transformation, key, iv, aad, plaintext, 1);
+    }
+
+    @Override
+    public byte[] aesDecrypt(String transformation, byte[] key, byte[] iv, byte[] aad, byte[] ciphertext) {
+        return doAes(transformation, key, iv, aad, ciphertext, 0);
+    }
+
+    private byte[] doAes(String transformation, byte[] key, byte[] iv, byte[] aad, byte[] input, int encrypt) {
+        String t = transformation == null ? "" : transformation.toUpperCase();
+        if (t.indexOf("GCM") >= 0) {
+            // Encrypt output = ciphertext + 16-byte tag; decrypt output is
+            // the same length as the ciphertext minus the tag.
+            int outLen = encrypt == 1 ? input.length + 16 : Math.max(0, input.length - 16);
+            byte[] outBuf = new byte[outLen];
+            int written = nativeInstance.aesGcm(encrypt, key, iv, aad, input, outBuf);
+            return cryptoTrim(outBuf, written);
+        }
+        boolean padded = t.indexOf("NOPADDING") < 0;
+        // CBC ciphertext is at most input + one extra block (16 bytes).
+        int outLen = input.length + 16;
+        byte[] outBuf = new byte[outLen];
+        int written = nativeInstance.aesCbc(encrypt, key, iv, input, outBuf, padded ? 1 : 0);
+        return cryptoTrim(outBuf, written);
+    }
+
+    @Override
+    public byte[] rsaEncrypt(String transformation, byte[] publicKeyX509, byte[] plaintext) {
+        int padding = rsaPaddingKind(transformation);
+        // Modern key sizes never exceed 2048 bytes of output.
+        byte[] outBuf = new byte[2048];
+        int written = nativeInstance.rsaEncrypt(padding, publicKeyX509, plaintext, outBuf);
+        return cryptoTrim(outBuf, written);
+    }
+
+    @Override
+    public byte[] rsaDecrypt(String transformation, byte[] privateKeyPkcs8, byte[] ciphertext) {
+        int padding = rsaPaddingKind(transformation);
+        byte[] outBuf = new byte[2048];
+        int written = nativeInstance.rsaDecrypt(padding, privateKeyPkcs8, ciphertext, outBuf);
+        return cryptoTrim(outBuf, written);
+    }
+
+    private static int rsaPaddingKind(String transformation) {
+        if (transformation == null) return 1;
+        return transformation.toUpperCase().indexOf("OAEP") >= 0 ? 2 : 1;
+    }
+
+    @Override
+    public byte[] cryptoSign(String algorithm, String keyAlgorithm, byte[] privateKeyPkcs8, byte[] data) {
+        int alg = signatureAlgorithmKind(algorithm);
+        byte[] outBuf = new byte[2048];
+        int written = nativeInstance.sign(alg, privateKeyPkcs8, data, outBuf);
+        return cryptoTrim(outBuf, written);
+    }
+
+    @Override
+    public boolean cryptoVerify(String algorithm, String keyAlgorithm, byte[] publicKeyX509, byte[] data, byte[] signature) {
+        int alg = signatureAlgorithmKind(algorithm);
+        int rc = nativeInstance.verify(alg, publicKeyX509, data, signature);
+        if (rc < 0) throw new RuntimeException("verify failed: code " + rc);
+        return rc == 1;
+    }
+
+    private static int signatureAlgorithmKind(String algorithm) {
+        if ("SHA256withRSA".equals(algorithm)) return 0;
+        if ("SHA384withRSA".equals(algorithm)) return 1;
+        if ("SHA512withRSA".equals(algorithm)) return 2;
+        if ("SHA256withECDSA".equals(algorithm)) return 3;
+        if ("SHA384withECDSA".equals(algorithm)) return 4;
+        if ("SHA512withECDSA".equals(algorithm)) return 5;
+        throw new RuntimeException("unsupported signature algorithm: " + algorithm);
+    }
+
+    @Override
+    public byte[][] generateRsaKeyPair(int bits) {
+        // 4096-bit RSA produces ~600 bytes of DER for the public side and
+        // ~2300 for the private; round up generously.
+        byte[] pubBuf = new byte[bits + 1024];
+        byte[] privBuf = new byte[bits * 3];
+        int[] lens = new int[2];
+        int rc = nativeInstance.generateRsaKeyPair(bits, pubBuf, privBuf, lens);
+        if (rc < 0) throw new RuntimeException("RSA keypair generation failed: code " + rc);
+        return new byte[][]{ cryptoTrim(pubBuf, lens[0]), cryptoTrim(privBuf, lens[1]) };
     }
 }

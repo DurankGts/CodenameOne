@@ -62,6 +62,9 @@ import java.util.HashMap;
 /// [this discussion](https://stackoverflow.com/questions/48481888/codename-one-regexconstraint-to-check-a-valid-phone-number/48483465#48483465) on StackOverflow):
 ///
 /// ```java
+/// Form hi = new Form("Phone Validator", BoxLayout.y());
+/// TextField phone = new TextField("", "Phone");
+/// Validator val = new Validator();
 /// val.addConstraint(phone, new Constraint() {
 ///   public  boolean isValid(Object value) {
 ///     String v = (String)value;
@@ -78,6 +81,8 @@ import java.util.HashMap;
 ///     return "Must be valid phone number";
 ///   }
 /// });
+/// hi.add(phone);
+/// hi.show();
 /// ```
 ///
 /// @author Shai Almog
@@ -525,6 +530,22 @@ public class Validator {
     /// @deprecated this method was exposed by accident, constraint implicitly calls it and you don't need to
     /// call it directly. It will be made protected in a future update to Codename One!
     public void bindDataListener(Component cmp) {
+        // Re-validate on focus loss in every configuration so a user who
+        // leaves the field by tapping into another field gets the same
+        // highlight feedback as a user who hits the VKB 'next' / Enter key.
+        // The action-listener registration below only catches the VKB Enter
+        // path; without an explicit focus-lost validate(), the field stays
+        // un-highlighted after a tap-away. See #1459.
+        cmp.addFocusListener(new FocusListener() {
+            @Override
+            public void focusGained(Component focused) {
+            }
+
+            @Override
+            public void focusLost(Component focused) {
+                validate(focused);
+            }
+        });
         if (showErrorMessageForFocusedComponent) {
             if (!(cmp instanceof InputComponent && ((InputComponent) cmp).isOnTopMode())) {
                 cmp.addFocusListener(new FocusListener() {
@@ -577,6 +598,10 @@ public class Validator {
 
                     @Override
                     public void focusLost(Component cmp) {
+                        // Validation on focus-loss is handled by the
+                        // unconditional focus listener registered at the top
+                        // of bindDataListener (see #1459); this listener is
+                        // only responsible for the focus-gained error popup.
                     }
                 });
             }

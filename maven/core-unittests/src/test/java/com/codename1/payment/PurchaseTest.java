@@ -5,6 +5,7 @@ import com.codename1.junit.EdtTest;
 import com.codename1.junit.FormTest;
 import com.codename1.junit.TestLogger;
 import com.codename1.junit.UITestBase;
+import com.codename1.testing.TestCodenameOneImplementation;
 import com.codename1.ui.Display;
 import com.codename1.util.SuccessCallback;
 import org.junit.jupiter.api.AfterEach;
@@ -24,6 +25,7 @@ class PurchaseTest extends UITestBase {
     private static final String RECEIPTS_STORAGE = "CN1SubscriptionsData.dat";
     private static final String RECEIPTS_REFRESH_STORAGE = "CN1SubscriptionsDataRefreshTime.dat";
     private static final String PENDING_STORAGE = "PendingPurchases.dat";
+    private static final String PROCESSED_STORAGE = "ProcessedPurchases.dat";
 
     private TestPurchase purchase;
 
@@ -56,6 +58,7 @@ class PurchaseTest extends UITestBase {
         storage.deleteStorageFile(RECEIPTS_STORAGE);
         storage.deleteStorageFile(RECEIPTS_REFRESH_STORAGE);
         storage.deleteStorageFile(PENDING_STORAGE);
+        storage.deleteStorageFile(PROCESSED_STORAGE);
         ReceiptStore clearingStore = new ReceiptStore() {
             public void fetchReceipts(SuccessCallback<Receipt[]> callback) {
                 callback.onSucess(new Receipt[0]);
@@ -243,6 +246,164 @@ class PurchaseTest extends UITestBase {
         assertEquals("silver", pending.get(0).getSku());
     }
 
+    @EdtTest
+    void testSynchronizeReceiptsSyncDrainsMultiplePendingReceipts() {
+        List<Receipt> pending = new ArrayList<Receipt>();
+        pending.add(createReceipt("gold", new Date(1000L), new Date(5000L)));
+        pending.add(createReceipt("silver", new Date(2000L), new Date(6000L)));
+        pending.add(createReceipt("bronze", new Date(3000L), new Date(7000L)));
+        Storage.getInstance().writeObject(PENDING_STORAGE, pending);
+
+        TestReceiptStore store = new TestReceiptStore();
+        purchase.setReceiptStore(store);
+
+        boolean success = purchase.synchronizeReceiptsSync(0);
+        assertTrue(success);
+        assertEquals(3, store.getSubmittedReceipts().size(),
+                "Each pending receipt should be submitted exactly once");
+        assertTrue(purchase.getPendingPurchases().isEmpty());
+    }
+
+    @EdtTest
+    void testSynchronizeReceiptsCallbackFiresOnceWhenDrainingMultiplePendingReceipts() {
+        List<Receipt> pending = new ArrayList<Receipt>();
+        pending.add(createReceipt("gold", new Date(1000L), new Date(5000L)));
+        pending.add(createReceipt("silver", new Date(2000L), new Date(6000L)));
+        pending.add(createReceipt("bronze", new Date(3000L), new Date(7000L)));
+        Storage.getInstance().writeObject(PENDING_STORAGE, pending);
+
+        TestReceiptStore store = new TestReceiptStore();
+        purchase.setReceiptStore(store);
+
+        final int[] callCount = new int[1];
+        final boolean[] result = new boolean[1];
+        purchase.synchronizeReceipts(0, new SuccessCallback<Boolean>() {
+            public void onSucess(Boolean value) {
+                callCount[0]++;
+                result[0] = value;
+            }
+        });
+        flushSerialCalls();
+
+        assertEquals(1, callCount[0],
+                "Synchronize callback must fire exactly once, not once per drained receipt");
+        assertTrue(result[0]);
+        assertEquals(3, store.getSubmittedReceipts().size());
+    }
+
+    @FormTest
+    void testReceiptStoreSharedAcrossFreshPurchaseInstances() {
+        // Regression test for #5186: Display.getInAppPurchase() returns a
+        // FRESH Purchase instance on every call on every real port (iOS
+        // ZoozPurchase, Android ZoozPurchase, the JavaSE anonymous subclass).
+        // The native receipt path enters through the static
+        // Purchase.postReceipt(...) which calls getInAppPurchase().postReceipt(r)
+        // on yet another fresh instance.  If receiptStore were a per-instance
+        // field, the store installed by the app would be invisible to that
+        // instance and submitReceipt would never fire.  This test pins the
+        // ports' behaviour with a factory so it fails if receiptStore stops
+        // being shared across instances.
+        implementation.setInAppPurchase(null);
+        implementation.setInAppPurchaseFactory(new TestCodenameOneImplementation.InAppPurchaseFactory() {
+            public Purchase create() {
+                return new TestPurchase();
+            }
+        });
+        try {
+            TestReceiptStore store = new TestReceiptStore();
+
+            // Sanity-check the harness reproduces the ports' behaviour: each
+            // getInAppPurchase() call yields a distinct instance.
+            assertNotSame(Display.getInstance().getInAppPurchase(),
+                    Display.getInstance().getInAppPurchase(),
+                    "Factory must hand out a fresh Purchase per call, like the real ports");
+
+            // Configure the store on ONE freshly-returned instance...
+            ((Purchase) Display.getInstance().getInAppPurchase()).setReceiptStore(store);
+
+            // ...then drive the native entry point, which internally uses a
+            // DIFFERENT freshly-returned instance.
+            Purchase.postReceipt(Receipt.STORE_CODE_ITUNES, "pro", "tx-shared",
+                    System.currentTimeMillis(), "order-shared");
+            flushSerialCalls();
+
+            assertEquals(1, store.getSubmittedReceipts().size(),
+                    "ReceiptStore set on one Purchase instance must be visible to the native "
+                            + "postReceipt path that arrives on a different instance");
+            assertEquals("tx-shared", store.getSubmittedReceipts().get(0).getTransactionId());
+            assertTrue(((Purchase) Display.getInstance().getInAppPurchase()).getPendingPurchases().isEmpty(),
+                    "Successfully submitted receipt should be drained from the pending queue");
+        } finally {
+            ((Purchase) Display.getInstance().getInAppPurchase()).setReceiptStore(null);
+            implementation.setInAppPurchaseFactory(null);
+        }
+    }
+
+    @FormTest
+    void testPostReceiptSkipsReceiptThatWasAlreadySuccessfullySubmitted() {
+        // Simulate iOS StoreKit redelivering a transaction across app
+        // sessions: the same transactionId arrives via postReceipt after
+        // it was already successfully submitted in a prior cycle.
+        TestReceiptStore store = new TestReceiptStore();
+        purchase.setReceiptStore(store);
+
+        long purchaseTime = System.currentTimeMillis();
+        Purchase.postReceipt(Receipt.STORE_CODE_ITUNES, "pro", "tx-redelivery", purchaseTime, "order-1");
+        flushSerialCalls();
+
+        assertEquals(1, store.getSubmittedReceipts().size());
+        assertTrue(purchase.getPendingPurchases().isEmpty());
+
+        // Same transactionId arrives again (e.g. iOS redelivery on the
+        // next app launch).  Framework should drop it before it reaches
+        // the pending queue, so submitReceipt is not invoked a second
+        // time.
+        Purchase.postReceipt(Receipt.STORE_CODE_ITUNES, "pro", "tx-redelivery", purchaseTime, "order-1");
+        flushSerialCalls();
+
+        assertEquals(1, store.getSubmittedReceipts().size(),
+                "Receipt with already-processed transactionId must not be re-submitted");
+        assertTrue(purchase.getPendingPurchases().isEmpty());
+    }
+
+    @FormTest
+    void testPostReceiptSkipsDuplicateTransactionIdAlreadyPending() {
+        // Same transactionId queued twice before any sync happens (e.g.
+        // native layer fires postReceipt twice for one transaction).
+        // The second add must be silently dropped so the receipt is only
+        // submitted once when sync runs.
+        long purchaseTime = System.currentTimeMillis();
+        Purchase.postReceipt(Receipt.STORE_CODE_ITUNES, "pro", "tx-dupe", purchaseTime, "order-1");
+        Purchase.postReceipt(Receipt.STORE_CODE_ITUNES, "pro", "tx-dupe", purchaseTime, "order-1");
+        flushSerialCalls();
+
+        List<Receipt> pending = purchase.getPendingPurchases();
+        assertEquals(1, pending.size(),
+                "Duplicate transactionId enqueued before sync should be dropped at addPendingPurchase");
+    }
+
+    @EdtTest
+    void testSynchronizeReceiptsDoesNotInfinitelyResubmitReceiptWithNullTransactionId() {
+        // A receipt with a null transactionId must still be removable from the
+        // pending queue.  Otherwise synchronizeReceipts recurses forever,
+        // resubmitting the same receipt to the ReceiptStore on every iteration.
+        Receipt nullTxReceipt = createReceipt("orphan", new Date(1000L), new Date(5000L));
+        nullTxReceipt.setTransactionId(null);
+        List<Receipt> pending = new ArrayList<Receipt>();
+        pending.add(nullTxReceipt);
+        Storage.getInstance().writeObject(PENDING_STORAGE, pending);
+
+        CountingReceiptStore store = new CountingReceiptStore(5);
+        purchase.setReceiptStore(store);
+
+        boolean success = purchase.synchronizeReceiptsSync(0);
+        assertTrue(success);
+        assertEquals(1, store.getSubmittedReceipts().size(),
+                "Receipt with null transactionId should be submitted exactly once, not in a loop");
+        assertTrue(purchase.getPendingPurchases().isEmpty(),
+                "Receipt with null transactionId should be removed from pending queue after successful submit");
+    }
+
     @Test
     void testSynchronizeReceiptsSyncWaitsForAsyncFetch() {
         final Receipt asyncReceipt = createReceipt("async", new Date(1000L), new Date(5000L));
@@ -298,6 +459,35 @@ class PurchaseTest extends UITestBase {
         public void submitReceipt(Receipt receipt, SuccessCallback<Boolean> callback) {
             submitted.add(receipt);
             callback.onSucess(Boolean.valueOf(submitResult));
+        }
+    }
+
+    /// Receipt store that refuses further submissions after a hard cap is hit
+    /// so a regression of the null-transactionId loop bug fails the test
+    /// instead of hanging it.
+    private static class CountingReceiptStore implements ReceiptStore {
+        private final List<Receipt> submitted = new ArrayList<Receipt>();
+        private final int maxSubmits;
+
+        CountingReceiptStore(int maxSubmits) {
+            this.maxSubmits = maxSubmits;
+        }
+
+        List<Receipt> getSubmittedReceipts() {
+            return new ArrayList<Receipt>(submitted);
+        }
+
+        public void fetchReceipts(SuccessCallback<Receipt[]> callback) {
+            callback.onSucess(new Receipt[0]);
+        }
+
+        public void submitReceipt(Receipt receipt, SuccessCallback<Boolean> callback) {
+            submitted.add(receipt);
+            if (submitted.size() > maxSubmits) {
+                throw new AssertionError("submitReceipt invoked more than " + maxSubmits
+                        + " times; pending receipt is being resubmitted in a loop");
+            }
+            callback.onSucess(Boolean.TRUE);
         }
     }
 

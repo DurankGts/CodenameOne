@@ -138,13 +138,18 @@ public class RGBImage extends Image {
     /// {@inheritDoc}
     @Override
     public Image modifyAlpha(byte alpha) {
-        int[] arr = new int[rgb.length];
+        int[] arr = Image.allocateRgbArray(rgb.length);
         System.arraycopy(rgb, 0, arr, 0, rgb.length);
-        int alphaInt = (((int) alpha) << 24) & 0xff000000;
-        int rlen = rgb.length;
-        for (int iter = 0; iter < rlen; iter++) {
-            if ((arr[iter] & 0xff000000) != 0) {
-                arr[iter] = (arr[iter] & 0xffffff) | alphaInt;
+        if (Image.isSimdOptimizationsEnabled() && arr.length >= 16) {
+            int alphaInt = (((int) alpha) << 24) & 0xff000000;
+            Image.replaceAlphaPreserveTransparentSimd(arr, 0, alphaInt, arr.length);
+        } else {
+            int alphaInt = (((int) alpha) << 24) & 0xff000000;
+            int rlen = rgb.length;
+            for (int iter = 0; iter < rlen; iter++) {
+                if ((arr[iter] & 0xff000000) != 0) {
+                    arr[iter] = (arr[iter] & 0xffffff) | alphaInt;
+                }
             }
         }
         return new RGBImage(arr, width, height);
@@ -190,6 +195,47 @@ public class RGBImage extends Image {
     @Override
     protected void drawImage(Graphics g, Object nativeGraphics, int x, int y) {
         g.drawRGB(rgb, 0, x, y, width, height, !opaque);
+    }
+
+    /// {@inheritDoc}
+    ///
+    /// `RGBImage` has no native peer, so the inherited scaled-draw path
+    /// (`g.drawImageWH(image, ...)`) renders nothing. Instead, build a
+    /// translate + scale affine transform on top of the graphics context's
+    /// current transform and emit `drawRGB` at the image's native size --
+    /// the platform pipeline (iOS Metal, Android Skia, Graphics2D, ...)
+    /// performs the actual scaling in hardware / native code.
+    ///
+    /// `Graphics.setTransform` is used (rather than `translateMatrix` +
+    /// `scale`) because on ports where `impl.isTranslationSupported()` is
+    /// false (iOS), prior `g.translate(int, int)` calls accumulate into a
+    /// per-Graphics integer translate that is baked into draw coordinates
+    /// **before** the impl matrix is applied. A naked `translateMatrix` /
+    /// `scale` composition would therefore multiply that accumulator by
+    /// the scale factor, shifting the on-screen position. `setTransform`
+    /// conjugates the matrix with `T(xTranslate, yTranslate)`, cancelling
+    /// the accumulator so the result lands at the requested coordinates
+    /// on every port.
+    @Override
+    protected void drawImage(Graphics g, Object nativeGraphics, int x, int y, int w, int h) {
+        if (w <= 0 || h <= 0) {
+            return;
+        }
+        if (w == width && h == height) {
+            g.drawRGB(rgb, 0, x, y, width, height, !opaque);
+            return;
+        }
+        Transform saved = Transform.makeIdentity();
+        g.getTransform(saved);
+        try {
+            Transform scaled = saved.copy();
+            scaled.translate(x, y);
+            scaled.scale(((float) w) / width, ((float) h) / height);
+            g.setTransform(scaled);
+            g.drawRGB(rgb, 0, 0, 0, width, height, !opaque);
+        } finally {
+            g.setTransform(saved);
+        }
     }
 
     /// Indicates if an image should be treated as opaque, this can improve support

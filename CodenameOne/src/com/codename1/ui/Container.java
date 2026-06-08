@@ -24,6 +24,7 @@
 package com.codename1.ui;
 
 import com.codename1.impl.CodenameOneImplementation;
+import com.codename1.ui.animations.AnimationTime;
 import com.codename1.ui.animations.ComponentAnimation;
 import com.codename1.ui.animations.Motion;
 import com.codename1.ui.animations.Transition;
@@ -3264,7 +3265,15 @@ public class Container extends Component implements Iterable<Component> {
     /// {@inheritDoc}
     @Override
     public boolean isScrollableX() {
-        return scrollableX && (getScrollDimension().getWidth() + getStyle().getHorizontalPadding() > getWidth());
+        // Mirror isScrollableY()'s alwaysTensile check so the documented #1399
+        // workaround (setAlwaysTensile(true)) produces visible scroll feedback
+        // on horizontal scrollables whose content fits the container.
+        //
+        // We consult the raw alwaysTensileFlag() rather than isAlwaysTensile()
+        // because the latter calls isScrollableX() (to suppress pull-to-refresh
+        // glow when the X axis is already scrollable), which would recurse
+        // back into us.
+        return scrollableX && (getScrollDimension().getWidth() + getStyle().getHorizontalPadding() > getWidth() || alwaysTensileFlag());
     }
 
     /// Sets whether the component should/could scroll on the X axis
@@ -4497,7 +4506,7 @@ public class Container extends Component implements Iterable<Component> {
         private Component scrollTo;
 
         public MorphAnimation(Container thisContainer, int duration, Motion[][] motions) {
-            startTime = System.currentTimeMillis();
+            startTime = AnimationTime.now();
             this.duration = duration;
             if (Motion.isSlowMotion()) {
                 this.duration *= 50;
@@ -4566,7 +4575,7 @@ public class Container extends Component implements Iterable<Component> {
                 thisContainer.setSmoothScrolling(s);
             }
             thisContainer.repaint();
-            if (System.currentTimeMillis() - startTime >= duration) {
+            if (AnimationTime.now() - startTime >= duration) {
                 setEnableLayoutOnPaint(true);
                 thisContainer.dontRecurseContainer = false;
                 Form f = thisContainer.getComponentForm();

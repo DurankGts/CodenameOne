@@ -1,7 +1,9 @@
 package com.codenameone.examples.hellocodenameone
 
+import com.codename1.camera.Camera
 import com.codename1.system.Lifecycle
 import com.codename1.testing.TestReporting
+import com.codename1.ui.CN
 import com.codename1.ui.Display
 import com.codenameone.examples.hellocodenameone.tests.Cn1ssDeviceRunner
 import com.codenameone.examples.hellocodenameone.tests.Cn1ssDeviceRunnerReporter
@@ -14,6 +16,20 @@ open class HelloCodenameOne : Lifecycle() {
             "Jailbroken device detected by Display.isJailbrokenDevice()."
         }
         DefaultMethodDemo.validate()
+        // Reference the low-level camera API (com.codename1.camera.*) so the
+        // build's bytecode scanner flips IPhoneBuilder.usesCn1Camera /
+        // AiDependencyTable: this compiles the CN1Camera AVFoundation natives
+        // on iOS & Mac Catalyst and pulls in CameraX on Android. Without an app
+        // exercising this API, that native code is gated out of every CI build
+        // and never gets compiled. isSupported()/getCameras() never open a
+        // session, so no runtime permission prompt is triggered.
+        try {
+            val cameraSupported = Camera.isSupported()
+            val cameraCount = if (cameraSupported) Camera.getCameras().size else 0
+            System.out.println("CN1SS:CAMERA_DIAG supported=$cameraSupported cameras=$cameraCount")
+        } catch (t: Throwable) {
+            System.out.println("CN1SS:CAMERA_DIAG:EXCEPTION " + t.javaClass.name + ": " + t.message)
+        }
         try {
             NativeInterfaceLanguageValidator.validate()
         } catch (t: Throwable) {
@@ -26,6 +42,14 @@ open class HelloCodenameOne : Lifecycle() {
     }
 
     override fun runApp() {
-        Thread(Runnable { Cn1ssDeviceRunner().runSuite() }).start()
+        // HTML5 runs inside a Web Worker whose single thread hosts the EDT —
+        // starting a java.lang.Thread there would never get to execute, so
+        // call the runner serially on the EDT instead.
+        val runner = Runnable { Cn1ssDeviceRunner().runSuite() }
+        if (Display.getInstance().platformName == "HTML5") {
+            CN.callSerially(runner)
+        } else {
+            Thread(runner, "CN1SS-Runner").start()
+        }
     }
 }

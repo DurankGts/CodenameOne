@@ -17,11 +17,19 @@ HUGO_BIN="${HUGO_BIN:-hugo}"
 HUGO_ENVIRONMENT="${HUGO_ENVIRONMENT:-production}"
 HUGO_MINIFY="${HUGO_MINIFY:-true}"
 HUGO_BASEURL="${HUGO_BASEURL:-https://www.codenameone.com/}"
+# When true, include posts whose front-matter date is in the future
+# (e.g. weekly release posts staged for later in the week). Off by
+# default so the live site only shows posts whose publish date has
+# arrived; PR previews flip this on so reviewers can read the draft.
+HUGO_BUILD_FUTURE="${HUGO_BUILD_FUTURE:-false}"
+# When true, include posts marked draft: true.
+HUGO_BUILD_DRAFTS="${HUGO_BUILD_DRAFTS:-false}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 WEBSITE_INCLUDE_JAVADOCS="${WEBSITE_INCLUDE_JAVADOCS:-false}"
 WEBSITE_INCLUDE_DEVGUIDE="${WEBSITE_INCLUDE_DEVGUIDE:-auto}"
 WEBSITE_INCLUDE_INITIALIZR="${WEBSITE_INCLUDE_INITIALIZR:-false}"
 WEBSITE_INCLUDE_PLAYGROUND="${WEBSITE_INCLUDE_PLAYGROUND:-false}"
+WEBSITE_INCLUDE_SKINDESIGNER="${WEBSITE_INCLUDE_SKINDESIGNER:-true}"
 WEBSITE_BOOTSTRAP_CN1_SNAPSHOTS="${WEBSITE_BOOTSTRAP_CN1_SNAPSHOTS:-auto}"
 WEBSITE_CN1_VERSION="${WEBSITE_CN1_VERSION:-auto}"
 CN1_USER="${CN1_USER:-}"
@@ -71,6 +79,10 @@ if [ "${WEBSITE_INCLUDE_PLAYGROUND}" = "auto" ]; then
   else
     WEBSITE_INCLUDE_PLAYGROUND="false"
   fi
+fi
+
+if [ "${WEBSITE_INCLUDE_SKINDESIGNER}" = "auto" ]; then
+  WEBSITE_INCLUDE_SKINDESIGNER="true"
 fi
 
 if [ "${WEBSITE_BOOTSTRAP_CN1_SNAPSHOTS}" = "auto" ]; then
@@ -343,6 +355,9 @@ build_developer_guide_for_site() {
   rm -f "${WEBSITE_DIR}/static/developer-guide.html"
   mkdir -p "${html_out}" "${guide_dir}" "${generated_dir}"
 
+  local build_date
+  build_date="$(date +%Y-%m-%d)"
+
   (
     cd "${REPO_ROOT}"
     asciidoctor \
@@ -350,6 +365,7 @@ build_developer_guide_for_site() {
       -a linkcss \
       -a copycss \
       -a rouge-css=style \
+      -a revdate="${build_date}" \
       -D "${html_out}" \
       -o developer-guide-full.html \
       docs/developer-guide/developer-guide.asciidoc
@@ -665,6 +681,73 @@ build_playground_for_site() {
   fi
 }
 
+
+build_skindesigner_for_site() {
+  if [ "${WEBSITE_INCLUDE_SKINDESIGNER}" != "true" ]; then
+    return
+  fi
+
+  bootstrap_local_cn1_snapshots
+
+  echo "Building Skin Designer JavaScript bundle for website..." >&2
+  (
+    cd "${REPO_ROOT}/scripts/skindesigner"
+    ./tools/sync-zipsupport-from-initializr.sh
+    if [ "${WEBSITE_BOOTSTRAP_CN1_SNAPSHOTS}" = "true" ]; then
+      activate_bootstrapped_java17
+    fi
+
+    run_skindesigner_mvn() {
+      if command -v xvfb-run >/dev/null 2>&1; then
+        xvfb-run -a sh ./mvnw "$@"
+      else
+        sh ./mvnw "$@"
+      fi
+    }
+
+    set_cn1_user_token "Skin Designer"
+    local skindesigner_workspace_args=()
+    if [ "${WEBSITE_BOOTSTRAP_CN1_SNAPSHOTS}" = "true" ]; then
+      skindesigner_workspace_args+=(-Dcn1.localWorkspace=true)
+    fi
+
+    # Ensure attached classifier artifact skindesigner-ZipSupport:jar:common
+    # is present in the local Maven repo before building skindesigner-common.
+    run_skindesigner_mvn -q -U -pl cn1libs/ZipSupport -am \
+      "${skindesigner_workspace_args[@]}" \
+      -DskipTests \
+      -Dcodename1.platform=javascript \
+      install
+
+    run_skindesigner_mvn -q -U -pl javascript -am \
+      "${skindesigner_workspace_args[@]}" \
+      -DskipTests \
+      -Dautomated=true \
+      -Dcodename1.platform=javascript \
+      package
+  )
+
+  local output_dir="${WEBSITE_DIR}/static/skindesigner-app"
+  local result_zip="${REPO_ROOT}/scripts/skindesigner/javascript/target/result.zip"
+  if [ ! -f "${result_zip}" ]; then
+    result_zip="$(ls -1 "${REPO_ROOT}"/scripts/skindesigner/javascript/target/skindesigner-javascript-*.zip 2>/dev/null | head -n1 || true)"
+  fi
+
+  if [ -z "${result_zip}" ] || [ ! -f "${result_zip}" ]; then
+    echo "Could not locate Skin Designer JavaScript build zip output in scripts/skindesigner/javascript/target." >&2
+    exit 1
+  fi
+
+  rm -rf "${output_dir}"
+  mkdir -p "${output_dir}"
+  unzip -q -o "${result_zip}" -d "${output_dir}"
+
+  if [ ! -f "${output_dir}/index.html" ]; then
+    echo "Skin Designer website bundle is missing index.html after extraction." >&2
+    exit 1
+  fi
+}
+
 if ! command -v "${HUGO_BIN}" >/dev/null 2>&1; then
   echo "Hugo binary not found. Install Hugo (extended) and retry." >&2
   exit 1
@@ -674,6 +757,7 @@ build_javadocs_for_site
 build_developer_guide_for_site
 build_initializr_for_site
 build_playground_for_site
+build_skindesigner_for_site
 
 cd "${WEBSITE_DIR}"
 
@@ -688,11 +772,23 @@ if [ "${HUGO_MINIFY}" = "true" ]; then
   MINIFY_FLAG="--minify"
 fi
 
+BUILD_FUTURE_FLAG=""
+if [ "${HUGO_BUILD_FUTURE}" = "true" ]; then
+  BUILD_FUTURE_FLAG="--buildFuture"
+fi
+
+BUILD_DRAFTS_FLAG=""
+if [ "${HUGO_BUILD_DRAFTS}" = "true" ]; then
+  BUILD_DRAFTS_FLAG="--buildDrafts"
+fi
+
 HUGO_ENV="${HUGO_ENVIRONMENT}" "${HUGO_BIN}" \
   --cleanDestinationDir \
   --gc \
   --baseURL "${HUGO_BASEURL}" \
-  ${MINIFY_FLAG}
+  ${MINIFY_FLAG} \
+  ${BUILD_FUTURE_FLAG} \
+  ${BUILD_DRAFTS_FLAG}
 
 if command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
   "${PYTHON_BIN}" "${WEBSITE_DIR}/scripts/generate_lunr_index.py"

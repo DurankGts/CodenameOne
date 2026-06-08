@@ -213,7 +213,7 @@ public final class Util {
         }
     }
 
-    /// Closes the object (connection, stream etc.) without throwing any exception, even if the
+/// Closes the object (connection, stream etc.) without throwing any exception, even if the
     /// object is null
     ///
     /// #### Parameters
@@ -1797,6 +1797,71 @@ public final class Util {
     /// - `impl`: implementation instance
     public static void setImplementation(CodenameOneImplementation impl) {
         implInstance = impl;
+    }
+
+    // ----------------------------------------------------------------
+    // Narrow crypto bridge -- used by com.codename1.security to talk to the
+    // platform's native crypto provider without exposing the impl instance
+    // itself. Each method here is a one-to-one delegate to a method on
+    // CodenameOneImplementation; see that class for the parameter contract.
+
+    private static CodenameOneImplementation cryptoImpl() {
+        if (implInstance == null) {
+            throw new IllegalStateException("Codename One is not initialised");
+        }
+        return implInstance;
+    }
+
+    /// Fills `out` with cryptographically secure random bytes. Used by
+    /// [com.codename1.security.SecureRandom].
+    public static void secureRandomBytes(byte[] out) {
+        cryptoImpl().secureRandomBytes(out);
+    }
+
+    /// AES encryption. See
+    /// [com.codename1.impl.CodenameOneImplementation#aesEncrypt] for the
+    /// parameter contract. Used by [com.codename1.security.Cipher].
+    public static byte[] aesEncrypt(String transformation, byte[] key, byte[] iv,
+                                    byte[] aad, byte[] plaintext) {
+        return cryptoImpl().aesEncrypt(transformation, key, iv, aad, plaintext);
+    }
+
+    /// AES decryption -- counterpart to [#aesEncrypt].
+    public static byte[] aesDecrypt(String transformation, byte[] key, byte[] iv,
+                                    byte[] aad, byte[] ciphertext) {
+        return cryptoImpl().aesDecrypt(transformation, key, iv, aad, ciphertext);
+    }
+
+    /// RSA encryption.
+    public static byte[] rsaEncrypt(String transformation, byte[] publicKeyX509, byte[] plaintext) {
+        return cryptoImpl().rsaEncrypt(transformation, publicKeyX509, plaintext);
+    }
+
+    /// RSA decryption.
+    public static byte[] rsaDecrypt(String transformation, byte[] privateKeyPkcs8, byte[] ciphertext) {
+        return cryptoImpl().rsaDecrypt(transformation, privateKeyPkcs8, ciphertext);
+    }
+
+    /// Computes a signature.
+    public static byte[] cryptoSign(String algorithm, String keyAlgorithm,
+                                    byte[] privateKeyPkcs8, byte[] data) {
+        return cryptoImpl().cryptoSign(algorithm, keyAlgorithm, privateKeyPkcs8, data);
+    }
+
+    /// Verifies a signature.
+    public static boolean cryptoVerify(String algorithm, String keyAlgorithm,
+                                       byte[] publicKeyX509, byte[] data, byte[] signature) {
+        return cryptoImpl().cryptoVerify(algorithm, keyAlgorithm, publicKeyX509, data, signature);
+    }
+
+    /// Generates an RSA key pair. Returns `{publicKeyX509, privateKeyPkcs8}`.
+    public static byte[][] generateRsaKeyPair(int bits) {
+        return cryptoImpl().generateRsaKeyPair(bits);
+    }
+
+    /// Generates `bytes` of fresh symmetric key material.
+    public static byte[] generateSymmetricKey(int bytes) {
+        return cryptoImpl().generateSymmetricKey(bytes);
     }
 
     /// Merges arrays into one larger array

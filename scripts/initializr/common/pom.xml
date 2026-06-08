@@ -22,6 +22,12 @@
             <artifactId>codenameone-javase</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.9.3</version>
+            <scope>test</scope>
+        </dependency>
 
         <dependency>
           <artifactId>initializr-ZipSupport</artifactId>
@@ -306,6 +312,22 @@
     </profiles>
 
     <build>
+        <resources>
+            <!--
+              Codename One's classloader rejects nested directories under
+              src/main/resources at runtime ("resources cannot be nested in
+              directories" - see CN1 ClassPathLoader). The on-disk skill/
+              folder is for editing/version control only; it is repackaged
+              into skill.zip by the antrun execution below before it reaches
+              the JAR.
+            -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <excludes>
+                    <exclude>skill/**</exclude>
+                </excludes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -340,6 +362,19 @@
 
                 <executions>
                     <execution>
+                        <!-- Build-time SVG transcoder: any SVG dropped into
+                             src/main/css/ or src/main/svg/ is compiled into
+                             a GeneratedSVGImage subclass plus an SVGRegistry,
+                             so theme.css `url(*.svg)` references resolve at
+                             runtime to vector-rendered Image objects on every
+                             port. See docs/developer-guide/svg.md. -->
+                        <id>transcode-svg</id>
+                        <phase>generate-sources</phase>
+                        <goals>
+                            <goal>transcode-svg</goal>
+                        </goals>
+                    </execution>
+                    <execution>
                         <id>generate-gui-sources</id>
                         <phase>process-sources</phase>
                         <goals>
@@ -350,8 +385,14 @@
                         <id>cn1-process-classes</id>
                         <phase>process-classes</phase>
                         <goals>
-                            <goal>compliance-check</goal>
+                            <goal>bytecode-compliance</goal>
                             <goal>css</goal>
+                            <!-- Scans the project's compiled bytecode for
+                                 @Route declarations and generates the
+                                 dispatcher class consumed by the per-platform
+                                 application stub. No-op for projects with no
+                                 @Route. -->
+                            <goal>process-annotations</goal>
                             <!--<goal>compile-javase-sources</goal>-->
                         </goals>
                     </execution>
@@ -368,9 +409,71 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
+                <!--
+                  Surefire is intentionally skipped in the common module.
+                  Legacy AbstractTest classes run through `cn1:test` (wired
+                  in the javase module's "test" profile). New JUnit 5
+                  tests under src/test/java run from the javase module as
+                  well, which mounts these same sources via
+                  testSourceDirectory. Enabling Surefire here too would
+                  execute every JUnit test twice.
+                  -->
                 <configuration>
                     <skipTests>true</skipTests>
                 </configuration>
+            </plugin>
+
+            <!--
+              Bundle the iOS Modern native theme .res file into the initializr's
+              classpath so the deployed JS bundle can
+              `Resources.openLayered("/iOSModernTheme")` for the live preview.
+              The .res files are committed under Themes/ and kept in sync by
+              .github/workflows/native-themes-sync.yml.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-native-themes</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <copy todir="${project.build.outputDirectory}" verbose="true">
+                                    <fileset dir="${project.basedir}/../../../Themes">
+                                        <include name="iOSModernTheme.res"/>
+                                        <include name="AndroidMaterialTheme.res"/>
+                                    </fileset>
+                                </copy>
+                            </target>
+                        </configuration>
+                    </execution>
+                    <!--
+                      Build skill.zip from src/main/resources/skill/** so the
+                      Codename One authoring skill ships as a single flat
+                      resource. CN1's classloader does not allow nested
+                      directories under src/main/resources at runtime, so we
+                      package the nested markdown into a zip at build time and
+                      stream entries out in GeneratorModel.
+                    -->
+                    <execution>
+                        <id>package-claude-skill</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <zip destfile="${project.build.outputDirectory}/skill.zip">
+                                    <fileset dir="${project.basedir}/src/main/resources/skill"/>
+                                </zip>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
 
         </plugins>

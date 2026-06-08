@@ -1,8 +1,8 @@
-== Working with Mac OS X
+== Working with macOS
 
-=== Mac OS Desktop Build Options
+=== macOS Desktop Build Options
 
-You can configure Desktop Mac OS build settings, by opening Codename One Settings, and clicking the "Mac Desktop Settings" button:
+You can configure Desktop macOS build settings, by opening Codename One Settings, and clicking the "Mac Desktop Settings" button:
 
 .Mac Desktop settings
 image::img/mac-desktop-settings-button.png[Mac Desktop settings,scaledwidth=30%]
@@ -16,10 +16,10 @@ Here you can provide your certificate(s) as a `.p12` file, and select a bundle t
 
 ==== Bundle Types
 
-There are three bundle types which dictate what the build server produces for you when you build your project as a Desktop Mac OS App.
+Three bundle types dictate what the build server produces for you when you build your project as a Desktop macOS App.
 
 . **DMG** - Produces a `.DMG` disk image with your app. This is the preferred format for distributing your app outside of the Mac App Store. If you provide a Developer ID Application certificate (see "Understanding Certificates" below), the app will be signed so that users won't receive warnings about "Unidentified developer" when they install your app.
-. **Sandboxed DMG** - Same as **DMG** bundle type except that your app is set up to use the app sandbox. Generally this would be used to test an app that's being distributed via the App Store, since App Store apps *must* use the sandbox. If you select this bundle type, you're *required* to provide a Mac App Distribution Certificate, and you should additionally specify entitlements required for your app to function properly. For more information about the app sandbox, see https://developer.apple.com/app-sandboxing/[Apple's documentation on the subject].
+. **Sandboxed DMG** - Same as **DMG** bundle type except that your app is set up to use the app sandbox. This is typically used to test an app that's being distributed via the App Store, since App Store apps *must* use the sandbox. If you select this bundle type, you're *required* to provide a Mac App Distribution Certificate, and you should also specify entitlements required for your app to function correctly. For more information about the app sandbox, see https://developer.apple.com/app-sandboxing/[Apple's documentation on the subject].
 . **Mac App Store Upload (PKG)** - Produces a `.PKG` file that you can upload to the Mac App Store. This requires that you provide *both* a Mac App Distribution certificate, and a Mac App Installer certificate (see "Understanding Certificates" below). Both of these certificates should be embedded into a single `.p12` file (See "Exporting Certificates as p12" below).
 
 ==== Understanding Mac Certificates
@@ -30,13 +30,13 @@ For the purposes of Mac application distribution, there are 3 types of certifica
 
 . **Developer ID Application Certificate (Mac applications)**
 +
-This type of certificate is used to sign an app to be distributed *outside* of the Mac App Store as a DMG image. This corresponds to the "DMG" bundle type in Codename one settings. You can easily identity this kind of certificate because its identity will be of the form "Developer ID Application: YOUR COMPANY NAME (SOMECODE)". E.g. Developer ID Application: Acme Widgets Corp. (XYSD5YF).
+This type of certificate is used to sign an app to be distributed *outside* of the Mac App Store as a DMG image. This corresponds to the "DMG" bundle type in Codename one settings. You can identify this kind of certificate because its identity will be of the form "Developer ID Application: YOUR COMPANY NAME (SOMECODE)." For example, Developer ID Application: Acme Widgets Corp. (XYSD5YF).
 . **Mac App Distribution Certificate (Mac App Store)**
 +
-This type of certificate is used to sign the.app bundle for an app that's to be distributed in the Mac App Store. This certificate is required for both the "Sandboxed DMG", and "Mac App Store Upload (PKG)" bundle types. You can easily identify this kind of certificate because its identity will be of the form "3rd Party Mac Developer Application: YOUR COMPANY NAME (SOMECODE)". E.g. 3rd Party Mac Developer Application: Acme Widgets Corp. (XYSD5YF).
+This type of certificate is used to sign the.app bundle for an app that's to be distributed in the Mac App Store. This certificate is required for both the "Sandboxed DMG," and "Mac App Store Upload (PKG)" bundle types. You can identify this kind of certificate because its identity will be of the form "3rd Party Mac Developer Application: YOUR COMPANY NAME (SOMECODE)." For example, 3rd Party Mac Developer Application: Acme Widgets Corp. (XYSD5YF).
 . **Mac App Installer Certificate (Mac App Store)**
 +
-This type of certificate is used to sign the.pkg installer for an app that's being submitted to the Mac App Store. This certificate is required for the "Mac App Store Upload (PKG)" bundle type. You can easily identify this kind of certificate because its identity will be of the form "3rd Party Mac Developer Installer: YOUR COMPANY NAME (SOMECODE)". E.g. 3rd Party Mac Developer Installer: Acme Widgets Corp. (XYXD5YF).
+This type of certificate is used to sign the.pkg installer for an app that's being submitted to the Mac App Store. This certificate is required for the "Mac App Store Upload (PKG)" bundle type. You can identify this kind of certificate because its identity will be of the form "3rd Party Mac Developer Installer: YOUR COMPANY NAME (SOMECODE)." For example, 3rd Party Mac Developer Installer: Acme Widgets Corp. (XYXD5YF).
 
 ==== Obtaining Certificates
 
@@ -53,7 +53,7 @@ The screenshot above shows an account that already has the three kinds of certif
 . **Mac App Distribution** - Used for the Sandboxed DMG and Mac App Store Upload (PKG) bundle types.
 . **Mac App Installer** - Used for the Mac App Store Upload (PKG) bundle type.
 
-If your account doesn't yet have a certificate of the required type, you should begin by pressing the "+" button in the upper right. This will bring you to a page asking "What type of Certificate do you need?". There are two options on this page that you will be interested in:
+If your account doesn't yet have a certificate of the required type, you should begin by pressing the "+" button in the upper right. This will bring you to a page asking "What type of Certificate do you need?" Two options on this page will interest you:
 
 .Creating a new certificate
 image::img/mac-developer-guide-what-type-of-certificate.png[Creating a new certificate,scaledwidth=30%]
@@ -73,7 +73,7 @@ After generating the certificates, you should download them to your Mac, and imp
 
 NOTE: The following section requires access to a Mac, and assumes that you've already generated your 3 certificates
 
-Notice that Mac apps may require three different kinds of certificates, yet the settings page provides space for a single certificate (P12) file. This isn't a mistake. P12 files may contain more than one certificate, and you're expected to include all of the certificates that the build server may require inside a single P12. The build server will automatically extract the certificates it needs according to the bundle type.
+Notice that Mac apps may require three different kinds of certificates, yet the settings page provides space for a single certificate (P12) file. This isn't a mistake. P12 files may contain more than one certificate, and you're expected to include all the certificates that the build server may require inside a single P12. The build server will automatically extract the certificates it needs according to the bundle type.
 
 When building the "DMG" bundle type, the build server will look for a "Developer ID Application Certificate" inside the P12. If one is found, it will be used to sign the app bundle.
 
@@ -81,7 +81,7 @@ The "Sandboxed DMG" target will look for a "Mac App Distribution Certificate" ce
 
 The "Mac App Store Upload (PKG)" target will require both a "Mac App Distribution Certificate" and a "Mac App Installer Certificate" to be included in the P12.
 
-The easiest way to produce a P12 that includes all 3 kinds of certificates is to export them from the Keychain Access app (Requires a Mac). Select all 3 certificates at once (using CMD-click), then right click and select "Export 3 Items..."
+The easiest way to produce a P12 that includes all 3 kinds of certificates is to export them from the Keychain Access app (Requires a Mac). Select all 3 certificates at once (using CMD-click), then right-click and select "Export 3 Items..."
 
 image::img/mac-desktop-export-certificates-as-p12.png[Exporting certificates as P12,scaledwidth=10%]
 
@@ -90,20 +90,109 @@ You will then be prompted to select a location to save the `.p12` file, as well 
 
 ==== Entitlements
 
-When distributing apps in the Mac App Store, or when using the "Sandboxed DMG" bundle type, your app is run inside a sandboxed environment, meaning that it doesn't have access to the outside world. It's provided its own "sandboxed" container for file system access, and it doesn't get any network access. If your app requires access to the "outside world", you need to request entitlements for that access. If you select a bundle type that uses the sandbox, you will be shown a list of all of the available entitlements from which you can "check" the ones that you wish to include.
+When distributing apps in the Mac App Store, or when using the "Sandboxed DMG" bundle type, your app is run inside a sandboxed environment, meaning that it doesn't have access to the outside world. It's provided its own "sandboxed" container for file system access, and it doesn't get any network access. If your app requires access to the "outside world," you need to request entitlements for that access. If you select a bundle type that uses the sandbox, you will be shown a list of all the available entitlements from which you can "check" the ones that you wish to include.
 
 .App sandbox entitlements
 image::img/mac-desktop-entitlements.png[App sandbox entitlements,scaledwidth=30%]
 
 For more information about the app sandbox, and a full list of entitlements, see https://developer.apple.com/library/content/documentation/Miscellaneous/Reference/EntitlementKeyReference/Chapters/EnablingAppSandbox.html[Apple's documentation on the subject].
 
-TIP: You can specify entitlements using the build hint `desktop.mac.entitlement.XXXX` where XXX is the entitlement you wish to set. E.g. `desktop.mac.entitlement.com.apple.security.network.client=true`
+// vale-skip: proselint.Annotations: 'XXX' is a placeholder for the entitlement name inside a literal build-hint template, not a TODO marker.
+TIP: You can specify entitlements using the build hint `desktop.mac.entitlement.XXXX` where XXX is the entitlement you wish to set. For example, `desktop.mac.entitlement.com.apple.security.network.client=true`
 
 ==== Custom Info.plist Entries
 
 You can add custom entries to the https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Introduction/Introduction.html[Info.plist file] using the following build hints:
 
 desktop.mac.plist.KEYNAME::
-Injects the entry with key `KEYNAME` into the Info.plist file. E.g. `desktop.mac.plist.LSApplicationCategoryType=public.app-category.business`
+Injects the entry with key `KEYNAME` into the Info.plist file. For example, `desktop.mac.plist.LSApplicationCategoryType=public.app-category.business`
 
+
+=== Mac Native Build (AOT-compiled macOS App)
+
+The "macOS Desktop" section above covers the JavaSE bundled-JRE wrapper. *Mac Native* is a separate, AOT-compiled target: it routes through the same iOS pipeline (ParparVM bytecode-to-C, native UIKit) so the resulting macOS app shares its rendering code path, its memory profile, and its certificate story with your iPhone / iPad build. The output is a single signed `.app` bundle suitable for Mac App Store or Developer ID distribution.
+
+This target is a good fit when:
+
+* Your app already builds against the iOS slice and you want a Mac version that looks and behaves the same.
+* You need native-speed startup and rendering on Mac, not a wrapped JVM.
+* You want a single AppKit-grade `.app` bundle without bundling a JRE.
+
+Java source is shared with the iOS target; no separate Mac-specific code is required.
+
+==== Local Build
+
+To generate an Xcode project locally that you can open and run on the Mac:
+
+[source,shell]
+----
+mvn -B -Dcodename1.platform=ios -Dcodename1.buildTarget=mac-source package
+----
+
+The output is written to:
+
+----
+target/<finalName>-mac-source/<MainClass>.xcodeproj
+----
+
+Open the project in Xcode, select the Mac Catalyst destination, and press Run. The resulting `.app` is identical in shape to one produced by the cloud build server.
+
+==== Cloud Build
+
+To produce a release-ready signed Mac app on the Codename One build server:
+
+[source,shell]
+----
+mvn -B -Dcodename1.platform=ios -Dcodename1.buildTarget=mac-os-x-native package
+----
+
+Mac distribution requires *its own certificates and provisioning profile* — Apple issues separate _Mac App Distribution_ (3rd Party Mac Developer Application) and _Developer ID Application_ certificates that aren't interchangeable with the _iPhone Distribution_ certificate used for iOS App Store builds. Configure them via the parallel `codename1.mac.*` hints:
+
+[cols="1,3", options="header"]
+|===
+| Hint | Purpose
+| `codename1.mac.appid` | Mac bundle identifier (the App Store Connect record is distinct from the iOS one).
+| `codename1.mac.certificate` | Path to the `.p12` containing the Mac signing certificate. Bundle both _Mac App Distribution_ and _Developer ID Application_ into a single P12 when targeting both channels.
+| `codename1.mac.certificatePassword` | Password to unlock the P12.
+| `codename1.mac.provision` | Path to the Mac `.provisionprofile`.
+|===
+
+The Apple Developer Team ID itself can stay shared with the iOS slice (single Apple Developer account) — `macNative.teamId` falls back to `ios.release.teamId` when not set. The server returns a signed `.app` bundle.
+
+==== IDE Shortcuts
+
+The IntelliJ workspace template ships two Mac Native run configurations alongside the iOS ones:
+
+* *Mac Native Project* (Local Builds folder) -- equivalent to running `mvn package -Dcodename1.buildTarget=mac-source`. Use this to generate the Xcode project for hands-on debugging.
+* *Mac Native Build* (Build Server folder) -- equivalent to `mvn package -Dcodename1.buildTarget=mac-os-x-native`. Use this for cloud builds.
+
+==== Distribution
+
+The Mac Native build supports both Mac App Store and Developer ID distribution. The generated Xcode project includes two `ExportOptions-*-Mac.plist` files in `dist/`:
+
+* `ExportOptions-AppStore-Mac.plist` -- App Store distribution (sandboxed, hardened runtime off).
+* `ExportOptions-DeveloperID-Mac.plist` -- Developer ID distribution (hardened runtime on, sandbox off).
+
+After archiving in Xcode, run:
+
+[source,shell]
+----
+xcodebuild -exportArchive \
+  -archivePath build/<MainClass>.xcarchive \
+  -exportOptionsPlist dist/ExportOptions-AppStore-Mac.plist \
+  -exportPath build/export
+----
+
+==== Entitlements
+
+The Mac Native build emits a `<MainClass>.entitlements` plist (or `<MainClass>-AppStore.entitlements` + `<MainClass>-DeveloperID.entitlements` when both channels are configured). The defaults are sensible: App Sandbox on for the App Store channel, hardened runtime on for the Developer ID channel, network client access enabled, user-selected file access enabled. The signing-certificate identity defaults to _Apple Distribution_ for the App Store channel and _Developer ID Application_ for the Developer ID channel.
+
+==== Supported Distribution Channels
+
+[cols="1,3", options="header"]
+|===
+| Channel        | Notes
+| App Store      | Sandboxed, hardened runtime off. Signed with _Apple Distribution_; uploaded via App Store Connect.
+| Developer ID   | Hardened runtime on, sandbox off. Signed with _Developer ID Application_; notarized before distribution.
+|===
 

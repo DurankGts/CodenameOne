@@ -9,6 +9,15 @@ import bsh.UtilEvalError;
 public final class CN1LambdaSupport {
     private static final ThreadLocal<Interpreter> CURRENT_INTERPRETER = new ThreadLocal<Interpreter>();
     private static final ThreadLocal<NameSpace> CURRENT_NAMESPACE = new ThreadLocal<NameSpace>();
+    private static final ThreadLocal<LambdaErrorHandler> CURRENT_ERROR_HANDLER = new ThreadLocal<LambdaErrorHandler>();
+
+    /** Callback invoked when a lambda body raises an exception during
+     * {@link LambdaValue#invoke(Object[])}. Lets a host (e.g. the
+     * playground UI) surface runtime failures that would otherwise be
+     * lost to the EDT's silent exception handling. */
+    public interface LambdaErrorHandler {
+        void onLambdaError(Throwable error, String bodySource);
+    }
 
     private CN1LambdaSupport() {
     }
@@ -33,6 +42,19 @@ public final class CN1LambdaSupport {
         CURRENT_NAMESPACE.remove();
     }
 
+    /** Register a {@link LambdaErrorHandler} that will be captured by any
+     * {@link LambdaValue} created on this thread while the handler is
+     * active. The captured handler stays with the lambda for its
+     * lifetime so errors raised on later EDT firings can still surface
+     * back to the host. */
+    public static void pushErrorHandler(LambdaErrorHandler handler) {
+        CURRENT_ERROR_HANDLER.set(handler);
+    }
+
+    public static void clearErrorHandler() {
+        CURRENT_ERROR_HANDLER.remove();
+    }
+
     public static LambdaValue lambda(String[] parameterNames, String bodySource) {
         Interpreter interpreter = CURRENT_INTERPRETER.get();
         if (interpreter == null) {
@@ -40,7 +62,8 @@ public final class CN1LambdaSupport {
         }
         NameSpace activeNs = CURRENT_NAMESPACE.get();
         NameSpace parentNs = activeNs != null ? activeNs : interpreter.getNameSpace();
-        return new LambdaValue(interpreter, parentNs, sanitizeParams(parameterNames), bodySource == null ? "" : bodySource);
+        return new LambdaValue(interpreter, parentNs, sanitizeParams(parameterNames),
+                bodySource == null ? "" : bodySource, CURRENT_ERROR_HANDLER.get());
     }
 
     private static String[] sanitizeParams(String[] parameterNames) {
@@ -112,17 +135,92 @@ public final class CN1LambdaSupport {
         return null;
     }
 
-    public static final class LambdaValue {
+    /** A LambdaValue implements the most common single-method-interface (SAM)
+     * types directly so that simple lambda assignments — {@code Runnable r = () -> ...},
+     * {@code Function<T,R> f = ...}, {@code Supplier<T> s = ...} — work
+     * without needing a per-target listener bridge. We can't use
+     * java.lang.reflect.Proxy (forbidden in CN1) so each interface we want to
+     * support has to be declared statically here. */
+    // We can only implement SAMs whose default methods don't conflict.
+    // Function/BiFunction/UnaryOperator/BinaryOperator share an `andThen`
+    // (incompatible return types). Predicate/BiPredicate share `negate()`
+    // (also incompatible). Pick the one-arg variant in each pair since
+    // it's far more common in practice.
+    public static final class LambdaValue implements
+            Runnable,
+            java.util.function.Supplier,
+            java.util.function.Consumer,
+            java.util.function.BiConsumer,
+            java.util.function.Function,
+            java.util.function.Predicate,
+            java.util.Comparator {
         private final Interpreter interpreter;
         private final NameSpace parentNameSpace;
         private final String[] parameterNames;
         private final String bodySource;
+        private final LambdaErrorHandler errorHandler;
 
-        LambdaValue(Interpreter interpreter, NameSpace parentNameSpace, String[] parameterNames, String bodySource) {
+        LambdaValue(Interpreter interpreter, NameSpace parentNameSpace, String[] parameterNames,
+                String bodySource, LambdaErrorHandler errorHandler) {
             this.interpreter = interpreter;
             this.parentNameSpace = parentNameSpace;
             this.parameterNames = parameterNames;
             this.bodySource = bodySource;
+            this.errorHandler = errorHandler;
+        }
+
+        /** Runnable adapter — zero-arg lambda. */
+        public void run() {
+            invokeChecked(new Object[0]);
+        }
+
+        /** Supplier#get — zero-arg lambda returning a value. */
+        public Object get() {
+            return invokeChecked(new Object[0]);
+        }
+
+        /** Consumer#accept and BiConsumer#accept — args ignored as void. */
+        public void accept(Object a) {
+            invokeChecked(new Object[]{a});
+        }
+
+        public void accept(Object a, Object b) {
+            invokeChecked(new Object[]{a, b});
+        }
+
+        /** Function#apply — one-arg dispatch returning a value. */
+        public Object apply(Object a) {
+            return invokeChecked(new Object[]{a});
+        }
+
+        /** Two-arg invocation exposed for {@code reduce(identity, op)}-style
+         * call sites. Not part of any implemented SAM (adding
+         * {@code BinaryOperator} would collide with
+         * {@code Function#andThen}). Callers that need a
+         * {@code java.util.function.BinaryOperator} should wrap via
+         * {@link #asBinaryOperator(LambdaValue)}. */
+        public Object applyBinary(Object a, Object b) {
+            return invokeChecked(new Object[]{a, b});
+        }
+
+        /** Predicate#test — boolean-returning one-arg. */
+        public boolean test(Object a) {
+            Object r = invokeChecked(new Object[]{a});
+            return r instanceof Boolean && (Boolean) r;
+        }
+
+        /** Comparator#compare — int-returning two-arg lambda. */
+        public int compare(Object a, Object b) {
+            Object r = invokeChecked(new Object[]{a, b});
+            return r instanceof Number ? ((Number) r).intValue() : 0;
+        }
+
+        private Object invokeChecked(Object[] args) {
+            try {
+                return invoke(args);
+            } catch (EvalError ex) {
+                throw new RuntimeException(ex.getMessage(), ex);
+            }
         }
 
         public Object invoke(Object[] args) throws EvalError {
@@ -134,7 +232,9 @@ public final class CN1LambdaSupport {
                     lambdaNs.setVariable(parameterNames[i], safeArgs[i], false);
                 }
             } catch (UtilEvalError ex) {
-                throw ex.toEvalError(null, null);
+                EvalError converted = ex.toEvalError(null, null);
+                reportError(converted);
+                throw converted;
             }
             Interpreter prevInterpreter = CURRENT_INTERPRETER.get();
             NameSpace prevNamespace = CURRENT_NAMESPACE.get();
@@ -144,6 +244,12 @@ public final class CN1LambdaSupport {
                 synchronized (interpreter) {
                     return Primitive.unwrap(interpreter.eval(bodySource, lambdaNs));
                 }
+            } catch (EvalError ex) {
+                reportError(ex);
+                throw ex;
+            } catch (RuntimeException ex) {
+                reportError(ex);
+                throw ex;
             } finally {
                 if (prevInterpreter != null) {
                     CURRENT_INTERPRETER.set(prevInterpreter);
@@ -157,5 +263,29 @@ public final class CN1LambdaSupport {
                 }
             }
         }
+
+        private void reportError(Throwable error) {
+            if (errorHandler == null) {
+                return;
+            }
+            try {
+                errorHandler.onLambdaError(error, bodySource);
+            } catch (Throwable ignored) {
+                // Reporter failures must not displace the real lambda error.
+            }
+        }
+    }
+
+    /** Adapt a {@link LambdaValue} to a {@link java.util.function.BinaryOperator}
+     * for call sites (e.g. {@code stream().reduce}) whose target SAM is
+     * {@code BinaryOperator}. We can't make {@code LambdaValue} implement
+     * {@code BinaryOperator} directly because its default
+     * {@code andThen} collides with {@code Function#andThen}. */
+    public static java.util.function.BinaryOperator<Object> asBinaryOperator(final LambdaValue lambda) {
+        return new java.util.function.BinaryOperator<Object>() {
+            public Object apply(Object a, Object b) {
+                return lambda.applyBinary(a, b);
+            }
+        };
     }
 }

@@ -220,11 +220,24 @@ public class StubGenerator {
             log.debug(javaseFile+" already exists. Skipping");
         }
 
-        if(overwrite || !csFile.exists()) {
-            log.info("Writing "+csFile);
-            generateCSFile(csFile, "FrameworkElement");
+        // Only emit the UWP / Windows C# stub if the project actually has a win/
+        // module. Java 17 generated projects no longer ship that module (the
+        // Windows native port is legacy), so omitting the stub avoids leaving
+        // dangling .cs files outside any compiled source set.
+        File winModuleRoot = csFile.getParentFile();
+        while (winModuleRoot != null && !"win".equals(winModuleRoot.getName())) {
+            winModuleRoot = winModuleRoot.getParentFile();
+        }
+        boolean winModulePresent = winModuleRoot != null && winModuleRoot.isDirectory();
+        if (winModulePresent) {
+            if(overwrite || !csFile.exists()) {
+                log.info("Writing "+csFile);
+                generateCSFile(csFile, "FrameworkElement");
+            } else {
+                log.debug(csFile+" already exists. Skipping");
+            }
         } else {
-            log.debug(csFile+" already exists. Skipping");
+            log.debug("No win/ module under destination — skipping C# stub for "+nativeInterface.getName());
         }
         if(overwrite || !(iosHFile.exists() || iosMFile.exists())) {
             log.info("Writing "+iosHFile);
@@ -684,7 +697,22 @@ public class StubGenerator {
             return true;
         }
         if(cls.isArray()) {
-            return cls.getComponentType().isPrimitive();
+            // Primitive arrays (byte[], int[], long[], double[], float[],
+            // boolean[], char[], short[]) plus String[] are valid parameter
+            // and return types.
+            //
+            // CAVEAT: the iOS Objective-C marshaller at
+            // javaTypeToObjectiveCType() currently maps every array to
+            // NSData* -- i.e. iOS callers receive byte-buffer semantics
+            // regardless of declared component type. For int[] / long[] /
+            // double[] / float[] this means the native side has to read the
+            // raw bytes (still useful for fixed-format payloads). For
+            // String[] this means the native side has to deserialize the
+            // payload itself. Per-component-type ObjC marshalling
+            // (NSArray<NSNumber*>* / NSArray<NSString*>*) is a separate
+            // follow-up; see the IMPROVEMENT_PLAN.
+            Class component = cls.getComponentType();
+            return component.isPrimitive() || component == String.class;
         }
         if(cls == String.class) {
             return true;

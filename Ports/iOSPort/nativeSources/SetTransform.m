@@ -24,6 +24,9 @@
 #ifdef USE_ES2
 #import <GLKit/GLKit.h>
 #import "CodenameOne_GLViewController.h"
+#ifdef CN1_USE_METAL
+#import "CN1Metalcompat.h"
+#endif
 
 static GLKMatrix4 currentTransform;
 static BOOL currentTransformInitialized = NO;
@@ -31,6 +34,12 @@ static BOOL currentTransformInitialized = NO;
 
 -(id)initWithArgs:(GLKMatrix4)matrix originX:(int)xx originY:(int)yy
 {
+#ifdef CN1_USE_METAL
+    // The (xx,yy) origin path is dead (gated by `NO`) and only kept for
+    // GL-path parity. Skip the GLKMatrix4* helper calls so the Mac Catalyst
+    // slice can compile without GLKit math symbols.
+    m = matrix;
+#else
     if ( NO && (xx != 0 || yy != 0) ){
         m = GLKMatrix4MakeTranslation(xx, yy, 0);
         m = GLKMatrix4Multiply(m, matrix);
@@ -38,25 +47,33 @@ static BOOL currentTransformInitialized = NO;
     } else {
         m = matrix;
     }
-    
-    
-    
+#endif
+
+
+
     //m = GLKMatrix4Translate(matrix, xx, yy, 0);
     currentTransform = m;
     currentTransformInitialized = YES;
-    return self; 
+    return self;
 }
 
 -(void)execute
 {
+#ifdef CN1_USE_METAL
+    CN1MetalSetTransform(m);
+#else
     glSetTransformES2(m);
-                      
+#endif
 }
 
 +(GLKMatrix4)currentTransform
 {
     if ( !currentTransformInitialized ){
+#ifdef CN1_USE_METAL
+        currentTransform = (GLKMatrix4){ { 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 } };
+#else
         currentTransform = GLKMatrix4Identity;
+#endif
     }
     return currentTransform;
 }

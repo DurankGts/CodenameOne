@@ -1,5 +1,5 @@
 [appendix]
-== Maven Goals
+== Maven goals
 
 include::appendix_goal_build.adoc[]
 
@@ -22,6 +22,12 @@ include::appendix_goal_generate_desktop_app_wrapper.adoc[]
 include::appendix_goal_generate_gui_sources.adoc[]
 
 include::appendix_goal_generate_native_interfaces.adoc[]
+
+include::appendix_goal_generate_openapi.adoc[]
+
+include::appendix_goal_generate_grpc.adoc[]
+
+include::appendix_goal_generate_graphql.adoc[]
 
 include::appendix_goal_guibuilder.adoc[]
 

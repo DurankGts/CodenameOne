@@ -4,6 +4,7 @@ import com.codename1.junit.FormTest;
 import com.codename1.junit.UITestBase;
 import com.codename1.ui.events.ActionEvent;
 import com.codename1.ui.events.ActionListener;
+import com.codename1.util.Simd;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -369,6 +370,93 @@ class ImageTest extends UITestBase {
         assertNotNull(masked);
         assertEquals(50, masked.getWidth());
         assertEquals(50, masked.getHeight());
+    }
+
+    @FormTest
+    void testImageSimdToggleDefaultsToPlatformSupport() {
+        boolean supported = Display.isInitialized() && Simd.get() != null && Simd.get().isSupported();
+        Image.resetSimdOptimizationsEnabled();
+        assertEquals(supported, Image.isSimdOptimizationsEnabled());
+    }
+
+    @FormTest
+    void testImageSimdToggleOverrideAndReset() {
+        Image.setSimdOptimizationsEnabled(false);
+        assertFalse(Image.isSimdOptimizationsEnabled());
+        Image.setSimdOptimizationsEnabled(true);
+        assertTrue(Image.isSimdOptimizationsEnabled());
+        Image.resetSimdOptimizationsEnabled();
+        boolean supported = Display.isInitialized() && Simd.get() != null && Simd.get().isSupported();
+        assertEquals(supported, Image.isSimdOptimizationsEnabled());
+    }
+
+    /// Regression for the alloca-overflow on iOS reported on StackOverflow:
+    /// `createMask()` on a 410x410 mutable round-rect image was lowering to
+    /// `__builtin_alloca` of ~656 KB which blew the per-thread stack. Both
+    /// `createMask()` and `applyMask()` must succeed at image-scale buffers and
+    /// the SIMD and scalar paths must agree.
+    @FormTest
+    void testCreateAndApplyMaskOnLargeRoundedImage() {
+        int width = 410;
+        int height = 410;
+        Image roundMask = Image.createImage(width, height, 0xff000000);
+        Graphics g = roundMask.getGraphics();
+        g.setColor(0xffffff);
+        g.fillRoundRect(0, 0, width, height, 60, 60);
+
+        try {
+            Image.setSimdOptimizationsEnabled(false);
+            Object scalarMask = roundMask.createMask();
+            Image scalarApplied = roundMask.applyMask(scalarMask);
+
+            Image.setSimdOptimizationsEnabled(true);
+            Object simdMask = roundMask.createMask();
+            Image simdApplied = roundMask.applyMask(simdMask);
+
+            assertNotNull(scalarMask);
+            assertNotNull(simdMask);
+            assertArrayEquals(
+                    ((IndexedImage) scalarMask).getImageDataByte(),
+                    ((IndexedImage) simdMask).getImageDataByte(),
+                    "SIMD and scalar createMask must agree at image scale");
+            assertArrayEquals(scalarApplied.getRGB(), simdApplied.getRGB(),
+                    "SIMD and scalar applyMask must agree at image scale");
+            assertEquals(width, simdApplied.getWidth());
+            assertEquals(height, simdApplied.getHeight());
+        } finally {
+            Image.resetSimdOptimizationsEnabled();
+        }
+    }
+
+    @FormTest
+    void testImageSimdAndScalarPathsMatch() {
+        int[] rgb = new int[]{
+                0x00FF0000, 0xFFFF0000, 0x8000FF00, 0xFF0000FF,
+                0xFFFFFFFF, 0x7F123456, 0x00000000, 0xFFABCDEF,
+                0x800000FF, 0xFF00FFFF, 0x40010203, 0xFFFFFFFF,
+                0x11223344, 0xFF445566, 0xFF0000FF, 0x00FFFFFF
+        };
+        Image source = Image.createImage(rgb, 4, 4);
+        try {
+            Image.setSimdOptimizationsEnabled(false);
+            Object scalarMask = source.createMask();
+            Image scalarApplied = source.applyMask(scalarMask);
+            Image scalarAlpha = source.modifyAlpha((byte) 0x66);
+            Image scalarAlphaRemoveColor = source.modifyAlpha((byte) 0x66, 0xFF0000FF);
+
+            Image.setSimdOptimizationsEnabled(true);
+            Object simdMask = source.createMask();
+            Image simdApplied = source.applyMask(simdMask);
+            Image simdAlpha = source.modifyAlpha((byte) 0x66);
+            Image simdAlphaRemoveColor = source.modifyAlpha((byte) 0x66, 0xFF0000FF);
+
+            assertArrayEquals(((IndexedImage) scalarMask).getImageDataByte(), ((IndexedImage) simdMask).getImageDataByte());
+            assertArrayEquals(scalarApplied.getRGB(), simdApplied.getRGB());
+            assertArrayEquals(scalarAlpha.getRGB(), simdAlpha.getRGB());
+            assertArrayEquals(scalarAlphaRemoveColor.getRGB(), simdAlphaRemoveColor.getRGB());
+        } finally {
+            Image.resetSimdOptimizationsEnabled();
+        }
     }
 
     @FormTest

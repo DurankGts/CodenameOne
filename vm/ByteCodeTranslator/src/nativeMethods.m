@@ -40,9 +40,13 @@
 #import <Foundation/Foundation.h>
 #endif
 
+#ifdef _WIN32
+#include "cn1_win_compat.h"
+#else
 #include <pthread.h>
 #include <unistd.h>
 #include <sys/time.h>
+#endif
 #include "java_util_Date.h"
 #include "java_text_DateFormat.h"
 #if defined(__APPLE__) && defined(__OBJC__)
@@ -90,6 +94,216 @@ decode(uint32_t* state, uint32_t* codep, uint32_t byte) {
 
   *state = utf8d[256 + *state*16 + type];
   return *state;
+}
+
+// Surrogate-pair / supplementary-codepoint boundaries used when emitting
+// UTF-16 char arrays for the Java String layout.
+#define CN1_REPLACEMENT_CHAR 0xFFFD
+#define CN1_MIN_HIGH_SURROGATE 0xD800
+#define CN1_MIN_LOW_SURROGATE  0xDC00
+#define CN1_MIN_SUPPLEMENTARY_CODEPOINT 0x10000
+
+// The NEON ASCII fast-path only kicks in once the source is long enough that
+// the 16-byte vector cost amortises; shorter inputs stay on the scalar DFA.
+#define CN1_UTF8_NEON_MIN_LEN 64
+
+typedef enum {
+    CN1_ENC_UTF8 = 0,
+    CN1_ENC_US_ASCII,
+    CN1_ENC_UTF16,
+    CN1_ENC_ISO_8859_1,
+    CN1_ENC_ISO_8859_2,
+    CN1_ENC_UNKNOWN
+} cn1_encoding_t;
+
+extern JAVA_BOOLEAN compareStringToCharArray(const char* str, JAVA_ARRAY_CHAR* chrs, int length);
+
+static cn1_encoding_t cn1_resolve_encoding_from_chars(JAVA_ARRAY_CHAR* chars, int len) {
+    if (chars == NULL || len == 0) {
+        return CN1_ENC_UTF8;
+    }
+    if (compareStringToCharArray("UTF-8", chars, len) ||
+        compareStringToCharArray("UTF8",  chars, len)) {
+        return CN1_ENC_UTF8;
+    }
+    if (compareStringToCharArray("US-ASCII", chars, len) ||
+        compareStringToCharArray("ASCII",    chars, len)) {
+        return CN1_ENC_US_ASCII;
+    }
+    if (compareStringToCharArray("UTF-16", chars, len) ||
+        compareStringToCharArray("UTF16",  chars, len)) {
+        return CN1_ENC_UTF16;
+    }
+    if (compareStringToCharArray("ISO-8859-1", chars, len) ||
+        compareStringToCharArray("ISO8859-1",  chars, len) ||
+        compareStringToCharArray("LATIN1",     chars, len)) {
+        return CN1_ENC_ISO_8859_1;
+    }
+    if (compareStringToCharArray("ISO-8859-2", chars, len) ||
+        compareStringToCharArray("ISO8859-2",  chars, len) ||
+        compareStringToCharArray("LATIN2",     chars, len)) {
+        return CN1_ENC_ISO_8859_2;
+    }
+    return CN1_ENC_UNKNOWN;
+}
+
+#if defined(__APPLE__) && defined(__OBJC__)
+static NSStringEncoding cn1_nsencoding_for(cn1_encoding_t enc) {
+    switch (enc) {
+        case CN1_ENC_UTF8:       return NSUTF8StringEncoding;
+        case CN1_ENC_US_ASCII:   return NSASCIIStringEncoding;
+        case CN1_ENC_UTF16:      return NSUTF16StringEncoding;
+        case CN1_ENC_ISO_8859_1: return NSISOLatin1StringEncoding;
+        case CN1_ENC_ISO_8859_2: return NSISOLatin2StringEncoding;
+        default:                 return NSUTF8StringEncoding;
+    }
+}
+#endif
+
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+
+// Returns the count of leading bytes in src that have the high bit clear.
+// Scans 16 bytes per iteration with NEON, falls back to scalar for the tail.
+static size_t cn1_utf8_ascii_prefix_neon(const uint8_t* src, size_t len) {
+    size_t i = 0;
+    while (i + 16 <= len) {
+        uint8x16_t v = vld1q_u8(src + i);
+        if (vmaxvq_u8(v) >= 0x80) {
+            break;
+        }
+        i += 16;
+    }
+    while (i < len && (src[i] & 0x80) == 0) {
+        i++;
+    }
+    return i;
+}
+
+// Widens `len` ASCII bytes into JAVA_ARRAY_CHAR (uint16_t) slots using NEON
+// u8 -> u16 promotion. Caller guarantees every byte is < 0x80.
+static void cn1_utf8_widen_ascii_neon(const uint8_t* src, JAVA_ARRAY_CHAR* dst, size_t len) {
+    size_t i = 0;
+    while (i + 16 <= len) {
+        uint8x16_t v = vld1q_u8(src + i);
+        uint16x8_t lo = vmovl_u8(vget_low_u8(v));
+        uint16x8_t hi = vmovl_u8(vget_high_u8(v));
+        vst1q_u16((uint16_t*)(dst + i), lo);
+        vst1q_u16((uint16_t*)(dst + i + 8), hi);
+        i += 16;
+    }
+    while (i < len) {
+        dst[i] = (JAVA_ARRAY_CHAR)src[i];
+        i++;
+    }
+}
+#endif
+
+// JDK-compatible UTF-16 -> UTF-8 encode. Reads JAVA_ARRAY_CHAR units, joins
+// well-formed surrogate pairs, and emits the canonical 1/2/3/4-byte UTF-8
+// sequence. Unpaired surrogates are encoded as U+FFFD (matching the JDK
+// encoder's REPLACE behaviour). When `out` is NULL only the output length is
+// computed -- callers use this as the size pass before allocating.
+static size_t cn1_utf8_encode_chars(const JAVA_ARRAY_CHAR* src, size_t len, JAVA_ARRAY_BYTE* out) {
+    size_t outLen = 0;
+    size_t i = 0;
+    while (i < len) {
+        uint32_t cp = (uint32_t)src[i++];
+        if (cp >= 0xD800 && cp <= 0xDBFF) {
+            // High surrogate -- combine with the following low surrogate.
+            if (i < len) {
+                uint32_t low = (uint32_t)src[i];
+                if (low >= 0xDC00 && low <= 0xDFFF) {
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                    i++;
+                } else {
+                    cp = CN1_REPLACEMENT_CHAR;
+                }
+            } else {
+                cp = CN1_REPLACEMENT_CHAR;
+            }
+        } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+            // Lone low surrogate.
+            cp = CN1_REPLACEMENT_CHAR;
+        }
+        if (cp < 0x80) {
+            if (out) out[outLen] = (JAVA_ARRAY_BYTE)cp;
+            outLen += 1;
+        } else if (cp < 0x800) {
+            if (out) {
+                out[outLen]     = (JAVA_ARRAY_BYTE)(0xC0 | (cp >> 6));
+                out[outLen + 1] = (JAVA_ARRAY_BYTE)(0x80 | (cp & 0x3F));
+            }
+            outLen += 2;
+        } else if (cp < 0x10000) {
+            if (out) {
+                out[outLen]     = (JAVA_ARRAY_BYTE)(0xE0 | (cp >> 12));
+                out[outLen + 1] = (JAVA_ARRAY_BYTE)(0x80 | ((cp >> 6) & 0x3F));
+                out[outLen + 2] = (JAVA_ARRAY_BYTE)(0x80 | (cp & 0x3F));
+            }
+            outLen += 3;
+        } else {
+            if (out) {
+                out[outLen]     = (JAVA_ARRAY_BYTE)(0xF0 | (cp >> 18));
+                out[outLen + 1] = (JAVA_ARRAY_BYTE)(0x80 | ((cp >> 12) & 0x3F));
+                out[outLen + 2] = (JAVA_ARRAY_BYTE)(0x80 | ((cp >> 6) & 0x3F));
+                out[outLen + 3] = (JAVA_ARRAY_BYTE)(0x80 | (cp & 0x3F));
+            }
+            outLen += 4;
+        }
+    }
+    return outLen;
+}
+
+// JDK-compatible UTF-8 -> UTF-16 decode using the Hoehrmann DFA.
+// On malformed input emits a single U+FFFD per maximal-subpart violation and
+// resumes decoding (matches CodingErrorAction.REPLACE in StandardCharsets).
+// When `out` is NULL only the output length is computed -- the caller uses
+// this for the size pass before allocating the destination char array.
+static size_t cn1_utf8_decode_replace(const uint8_t* src, size_t len, JAVA_ARRAY_CHAR* out) {
+    size_t outLen = 0;
+    uint32_t state = UTF8_ACCEPT;
+    uint32_t codepoint = 0;
+    size_t i = 0;
+    while (i < len) {
+        uint32_t prev = state;
+        decode(&state, &codepoint, src[i]);
+        if (state == UTF8_ACCEPT) {
+            if (codepoint >= CN1_MIN_SUPPLEMENTARY_CODEPOINT) {
+                if (out) {
+                    out[outLen]     = (JAVA_ARRAY_CHAR)(CN1_MIN_HIGH_SURROGATE +
+                            (((codepoint - CN1_MIN_SUPPLEMENTARY_CODEPOINT) >> 10) & 0x3FF));
+                    out[outLen + 1] = (JAVA_ARRAY_CHAR)(CN1_MIN_LOW_SURROGATE +
+                            ((codepoint - CN1_MIN_SUPPLEMENTARY_CODEPOINT) & 0x3FF));
+                }
+                outLen += 2;
+            } else {
+                if (out) out[outLen] = (JAVA_ARRAY_CHAR)codepoint;
+                outLen++;
+            }
+            i++;
+        } else if (state == UTF8_REJECT) {
+            if (out) out[outLen] = (JAVA_ARRAY_CHAR)CN1_REPLACEMENT_CHAR;
+            outLen++;
+            state = UTF8_ACCEPT;
+            codepoint = 0;
+            // If the rejecting byte was itself an invalid leading byte
+            // (prev == ACCEPT) consume it; otherwise re-feed so the byte
+            // that broke an incomplete sequence still starts a new char.
+            if (prev == UTF8_ACCEPT) {
+                i++;
+            }
+        } else {
+            // Continuation byte that did not yet complete a codepoint.
+            i++;
+        }
+    }
+    if (state != UTF8_ACCEPT) {
+        // Truncated trailing sequence at end of input.
+        if (out) out[outLen] = (JAVA_ARRAY_CHAR)CN1_REPLACEMENT_CHAR;
+        outLen++;
+    }
+    return outLen;
 }
 
 
@@ -244,126 +458,105 @@ JAVA_OBJECT java_lang_reflect_Array_newInstanceImpl___java_lang_Class_int_R_java
 
 JAVA_OBJECT java_lang_String_bytesToChars___byte_1ARRAY_int_int_java_lang_String_R_char_1ARRAY(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT b, JAVA_INT off, JAVA_INT len, JAVA_OBJECT encoding) {
     enteringNativeAllocations();
-    JAVA_ARRAY_BYTE* sourceData = (JAVA_ARRAY_BYTE*)((JAVA_ARRAY)b)->data;
-    sourceData += off;
-#if defined(__APPLE__) && defined(__OBJC__)
-    NSStringEncoding enc;
-    struct obj__java_lang_String* encString = (struct obj__java_lang_String*)encoding;
-    JAVA_ARRAY_CHAR* encArr = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)encString->java_lang_String_value)->data;
-    int arrLength = encString->java_lang_String_count;
-    if(encoding == JAVA_NULL || compareStringToCharArray("UTF-8", encArr, arrLength)) {
-        enc = NSUTF8StringEncoding;
-    } else {
-        if(compareStringToCharArray("US-ASCII", encArr, arrLength)) {
-            JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_CHAR(threadStateData, len);
-            JAVA_ARRAY_CHAR* dest = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)destArr)->data;
-            for(int iter = 0 ; iter < len ; iter++) {
-                dest[iter] = sourceData[iter];
-            }
-            finishedNativeAllocations();
-            return destArr;
-        } else {
-            if(compareStringToCharArray("UTF-16", encArr, arrLength)) {
-                enc = NSUTF16StringEncoding;
-            } else {
-                if(compareStringToCharArray("ISO-8859-1", encArr, arrLength)) {
-                    enc = NSISOLatin1StringEncoding;
-                } else {
-                    if(compareStringToCharArray("ISO-8859-2", encArr, arrLength)) {
-                        enc = NSISOLatin1StringEncoding;
-                    } else {
-                        // need to throw an exception...
-                        enc = NSUTF8StringEncoding;
-                    }
-                }
-            }
-        }
+    JAVA_ARRAY_BYTE* sourceData = (JAVA_ARRAY_BYTE*)((JAVA_ARRAY)b)->data + off;
+
+    JAVA_ARRAY_CHAR* encChars = NULL;
+    int encLen = 0;
+    if (encoding != JAVA_NULL) {
+        struct obj__java_lang_String* encString = (struct obj__java_lang_String*)encoding;
+        JAVA_ARRAY_CHAR* base = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)encString->java_lang_String_value)->data;
+        encChars = base + encString->java_lang_String_offset;
+        encLen = encString->java_lang_String_count;
     }
-    
-    // first try to optimize encoding in case of US-ASCII characters
-    if(enc == NSUTF8StringEncoding) {
-#ifdef USE_DFA_UTF8_DECODER
-        size_t count;
-        uint32_t codepoint;
-        uint32_t state = 0;
-        JAVA_ARRAY_BYTE* s = sourceData;
-        JAVA_ARRAY_BYTE* end = s + len;
-        for (count=0; s < end; s = s + 1)
-            if (!decode(&state, &codepoint, (uint8_t)*s)) {
-                if (codepoint > 65535) {
-                    count +=2;
-                } else {
-                    count+=1;
-                }
-            }
-        
-        if (state != UTF8_ACCEPT) {
-            // Need to throw an exception here.
-            JAVA_OBJECT ex = __NEW_java_lang_RuntimeException(CN1_THREAD_STATE_PASS_SINGLE_ARG);
-            java_lang_RuntimeException___INIT_____java_lang_String(CN1_THREAD_STATE_PASS_ARG ex, newStringFromCString(CN1_THREAD_STATE_PASS_ARG "Decoding Error"));
-            finishedNativeAllocations();
-            throwException(threadStateData, ex);
-            return NULL;
-        }
-        JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_CHAR(threadStateData, count);
+    cn1_encoding_t enc = cn1_resolve_encoding_from_chars(encChars, encLen);
+
+    // US-ASCII: bytes < 0x80 map to char, anything else becomes U+FFFD --
+    // matches JDK CharsetDecoder.REPLACE on StandardCharsets.US_ASCII.
+    if (enc == CN1_ENC_US_ASCII) {
+        JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_CHAR(threadStateData, len);
         JAVA_ARRAY_CHAR* dest = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)destArr)->data;
-        state = UTF8_ACCEPT;
-        codepoint = 0;
-        s = sourceData;
-        //MIN_SUPPLEMENTARY_CODE_POINT + ((highSurrogate & 1023) << 10) + (lowSurrogate & 1023);
-        for (; s < end; s = s+1)
-            if (!decode(&state, &codepoint, (uint8_t)*s)) {
-                
-                if (codepoint > 65535) {
-                    //(char) (MIN_HIGH_SURROGATE + (((codePoint - MIN_SUPPLEMENTARY_CODE_POINT) >> 10) & 1023));
-                    *dest = 55296 + (((codepoint - 0x10000) >> 10) & 1023);
-                    dest = dest + 1;
-                    //(MIN_LOW_SURROGATE + ((codePoint - MIN_SUPPLEMENTARY_CODE_POINT) & 1023))
-                    *dest = 56320 + ((codepoint - 0x10000) & 1023);
-                    dest = dest+1;
-                    
-                } else {
-                    *dest = (JAVA_CHAR)codepoint;
-                    dest= dest + 1;
-                }
-            }
-                
+        for (int iter = 0; iter < len; iter++) {
+            uint8_t v = (uint8_t)sourceData[iter];
+            dest[iter] = (v < 0x80) ? (JAVA_ARRAY_CHAR)v : (JAVA_ARRAY_CHAR)CN1_REPLACEMENT_CHAR;
+        }
         finishedNativeAllocations();
         return destArr;
-#else
-        JAVA_BOOLEAN ascii = JAVA_TRUE;
-        for(int iter = 0 ; iter < len ; iter++) {
-            if(sourceData[iter] < 0) {
-                ascii = JAVA_FALSE;
-                break;
-            }
+    }
+
+    // ISO-8859-1: every byte maps 1:1 to char.
+    if (enc == CN1_ENC_ISO_8859_1) {
+        JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_CHAR(threadStateData, len);
+        JAVA_ARRAY_CHAR* dest = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)destArr)->data;
+        for (int iter = 0; iter < len; iter++) {
+            dest[iter] = (JAVA_ARRAY_CHAR)(uint8_t)sourceData[iter];
         }
-        if(ascii) {
-            JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_CHAR(threadStateData, len);
+        finishedNativeAllocations();
+        return destArr;
+    }
+
+    if (enc == CN1_ENC_UTF8) {
+        const uint8_t* src = (const uint8_t*)sourceData;
+        size_t srcLen = (size_t)len;
+        size_t asciiPrefix = 0;
+
+#if defined(__ARM_NEON)
+        if (srcLen >= CN1_UTF8_NEON_MIN_LEN) {
+            asciiPrefix = cn1_utf8_ascii_prefix_neon(src, srcLen);
+        }
+#endif
+
+        if (asciiPrefix == srcLen) {
+            // Whole input is ASCII -- single allocation + vector widen.
+            JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_CHAR(threadStateData, (JAVA_INT)srcLen);
             JAVA_ARRAY_CHAR* dest = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)destArr)->data;
-            for(int iter = 0 ; iter < len ; iter++) {
-                dest[iter] = sourceData[iter];
+#if defined(__ARM_NEON)
+            cn1_utf8_widen_ascii_neon(src, dest, srcLen);
+#else
+            for (size_t k = 0; k < srcLen; k++) {
+                dest[k] = (JAVA_ARRAY_CHAR)src[k];
             }
+#endif
             finishedNativeAllocations();
             return destArr;
         }
+
+        // Mixed: count the tail with the DFA, allocate exactly, then decode.
+        size_t tailLen = cn1_utf8_decode_replace(src + asciiPrefix, srcLen - asciiPrefix, NULL);
+        size_t total = asciiPrefix + tailLen;
+        JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_CHAR(threadStateData, (JAVA_INT)total);
+        JAVA_ARRAY_CHAR* dest = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)destArr)->data;
+        if (asciiPrefix > 0) {
+#if defined(__ARM_NEON)
+            cn1_utf8_widen_ascii_neon(src, dest, asciiPrefix);
+#else
+            for (size_t k = 0; k < asciiPrefix; k++) {
+                dest[k] = (JAVA_ARRAY_CHAR)src[k];
+            }
 #endif
+        }
+        cn1_utf8_decode_replace(src + asciiPrefix, srcLen - asciiPrefix, dest + asciiPrefix);
+        finishedNativeAllocations();
+        return destArr;
     }
 
-
-    // this allows emojii to work with the Strings properly
+#if defined(__APPLE__) && defined(__OBJC__)
+    // UTF-16, ISO-8859-2 and unknown encodings go through NSString. When the
+    // native decoder rejects the input we no longer silently re-decode as
+    // Latin-1 (that masked encoding errors); instead we map bytes < 0x80
+    // straight through and replace high-bit bytes with U+FFFD.
+    NSStringEncoding nsEnc = cn1_nsencoding_for(enc);
     NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
-    NSString* nsStr = [[NSString alloc] initWithBytes:sourceData length:len encoding:enc];
+    NSString* nsStr = [[NSString alloc] initWithBytes:sourceData length:len encoding:nsEnc];
     if (nsStr == nil) {
-        nsStr = [[NSString alloc] initWithBytes:sourceData length:len encoding:NSISOLatin1StringEncoding];
-        if (nsStr == nil) {
-            JAVA_OBJECT ex = __NEW_java_lang_RuntimeException(CN1_THREAD_STATE_PASS_SINGLE_ARG);
-            java_lang_RuntimeException___INIT_____java_lang_String(CN1_THREAD_STATE_PASS_ARG ex, newStringFromCString(CN1_THREAD_STATE_PASS_ARG "Encoding Error"));
-            finishedNativeAllocations();
-            throwException(threadStateData, ex);
-            
-            return NULL;
+        [pool release];
+        JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_CHAR(threadStateData, len);
+        JAVA_ARRAY_CHAR* dest = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)destArr)->data;
+        for (int iter = 0; iter < len; iter++) {
+            uint8_t v = (uint8_t)sourceData[iter];
+            dest[iter] = (v < 0x80) ? (JAVA_ARRAY_CHAR)v : (JAVA_ARRAY_CHAR)CN1_REPLACEMENT_CHAR;
         }
+        finishedNativeAllocations();
+        return destArr;
     }
 
     JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_CHAR(threadStateData, [nsStr length]);
@@ -388,47 +581,14 @@ JAVA_OBJECT java_lang_String_bytesToChars___byte_1ARRAY_int_int_java_lang_String
     finishedNativeAllocations();
     return destArr;
 #else
-    // DFA Decoder for POSIX/Test
-    // TODO: Handle proper encoding check if not UTF-8/ASCII
-    size_t count;
-    uint32_t codepoint;
-    uint32_t state = 0;
-    JAVA_ARRAY_BYTE* s = sourceData;
-    JAVA_ARRAY_BYTE* end = s + len;
-    for (count=0; s < end; s = s + 1)
-        if (!decode(&state, &codepoint, (uint8_t)*s)) {
-            if (codepoint > 65535) {
-                count +=2;
-            } else {
-                count+=1;
-            }
-        }
-
-    if (state != UTF8_ACCEPT) {
-        JAVA_OBJECT ex = __NEW_java_lang_RuntimeException(CN1_THREAD_STATE_PASS_SINGLE_ARG);
-        java_lang_RuntimeException___INIT_____java_lang_String(CN1_THREAD_STATE_PASS_ARG ex, newStringFromCString(CN1_THREAD_STATE_PASS_ARG "Decoding Error"));
-        finishedNativeAllocations();
-        throwException(threadStateData, ex);
-        return NULL;
-    }
-    JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_CHAR(threadStateData, count);
+    // POSIX/test build: everything that is not UTF-8 / ASCII / Latin-1 falls
+    // through here. Widen bytes 1:1 (Latin-1-ish) so test coverage stays
+    // exercised without pulling in Apple's full encoding catalogue.
+    JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_CHAR(threadStateData, len);
     JAVA_ARRAY_CHAR* dest = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)destArr)->data;
-    state = UTF8_ACCEPT;
-    codepoint = 0;
-    s = sourceData;
-    for (; s < end; s = s+1)
-        if (!decode(&state, &codepoint, (uint8_t)*s)) {
-            if (codepoint > 65535) {
-                *dest = 55296 + (((codepoint - 0x10000) >> 10) & 1023);
-                dest = dest + 1;
-                *dest = 56320 + ((codepoint - 0x10000) & 1023);
-                dest = dest+1;
-            } else {
-                *dest = (JAVA_CHAR)codepoint;
-                dest= dest + 1;
-            }
-        }
-
+    for (int iter = 0; iter < len; iter++) {
+        dest[iter] = (JAVA_ARRAY_CHAR)(uint8_t)sourceData[iter];
+    }
     finishedNativeAllocations();
     return destArr;
 #endif
@@ -450,61 +610,72 @@ JAVA_BOOLEAN isAsciiArray(JAVA_ARRAY sourceArr) {
 
 JAVA_OBJECT java_lang_String_charsToBytes___char_1ARRAY_char_1ARRAY_R_byte_1ARRAY(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT arr, JAVA_OBJECT encoding) {
     JAVA_ARRAY sourceArr = (JAVA_ARRAY)arr;
-#if defined(__APPLE__) && defined(__OBJC__)
-    if(isAsciiArray(sourceArr)) {
-        JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_BYTE(threadStateData, sourceArr->length);
-        JAVA_ARRAY_CHAR* arr = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)sourceArr)->data;
+    JAVA_ARRAY_CHAR* src = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)sourceArr)->data;
+    int srcLen = sourceArr->length;
+
+    JAVA_ARRAY_CHAR* encChars = NULL;
+    int encLen = 0;
+    if (encoding != JAVA_NULL) {
+        encChars = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)encoding)->data;
+        encLen = ((JAVA_ARRAY)encoding)->length;
+    }
+    cn1_encoding_t enc = cn1_resolve_encoding_from_chars(encChars, encLen);
+
+    // ASCII fast path: every char < 0x80 maps to itself as a single byte. Both
+    // UTF-8 and ISO-8859-1 agree on this byte sequence, so we can take this
+    // shortcut without checking the requested encoding.
+    if (isAsciiArray(sourceArr)) {
+        JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_BYTE(threadStateData, srcLen);
         JAVA_ARRAY_BYTE* dest = (JAVA_ARRAY_BYTE*)((JAVA_ARRAY)destArr)->data;
-        for(int iter = 0 ; iter < sourceArr->length ; iter++) {
-            dest[iter] = (JAVA_ARRAY_BYTE)arr[iter];
+        for (int iter = 0; iter < srcLen; iter++) {
+            dest[iter] = (JAVA_ARRAY_BYTE)src[iter];
         }
         return destArr;
     }
-    NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
-    NSString* nsStr = [[NSString alloc] initWithCharacters:sourceArr->data length:sourceArr->length];
-    NSStringEncoding enc;
-    JAVA_ARRAY_CHAR* encArr = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)encoding)->data;
-    int arrLength = ((JAVA_ARRAY)encoding)->length;
-    if(encoding == JAVA_NULL || compareStringToCharArray("UTF-8", encArr, arrLength)) {
-        enc = NSUTF8StringEncoding;
-    } else {
-        if(compareStringToCharArray("US-ASCII", encArr, arrLength)) {
-            enc = NSASCIIStringEncoding;
-        } else {
-            if(compareStringToCharArray("UTF-16", encArr, arrLength)) {
-                enc = NSUTF16StringEncoding;
-            } else {
-                if(compareStringToCharArray("ISO-8859-1", encArr, arrLength)) {
-                    enc = NSISOLatin1StringEncoding;
-                } else {
-                    if(compareStringToCharArray("ISO-8859-2", encArr, arrLength)) {
-                        enc = NSISOLatin1StringEncoding;
-                    } else {
-                        // need to throw an exception...
-                        enc = NSUTF8StringEncoding;
-                    }
-                }
-            }
-        }
+
+    if (enc == CN1_ENC_UTF8 || enc == CN1_ENC_UNKNOWN) {
+        size_t outLen = cn1_utf8_encode_chars(src, (size_t)srcLen, NULL);
+        JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_BYTE(threadStateData, (JAVA_INT)outLen);
+        JAVA_ARRAY_BYTE* dest = (JAVA_ARRAY_BYTE*)((JAVA_ARRAY)destArr)->data;
+        cn1_utf8_encode_chars(src, (size_t)srcLen, dest);
+        return destArr;
     }
-    
-    NSData* data = [nsStr dataUsingEncoding:enc];
+
+    if (enc == CN1_ENC_US_ASCII || enc == CN1_ENC_ISO_8859_1) {
+        // 1:1 truncation; chars outside the encoding's range become '?',
+        // matching the JDK encoder's REPLACE default.
+        JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_BYTE(threadStateData, srcLen);
+        JAVA_ARRAY_BYTE* dest = (JAVA_ARRAY_BYTE*)((JAVA_ARRAY)destArr)->data;
+        unsigned int max = (enc == CN1_ENC_US_ASCII) ? 0x80u : 0x100u;
+        for (int iter = 0; iter < srcLen; iter++) {
+            unsigned int c = (unsigned int)src[iter];
+            dest[iter] = (c < max) ? (JAVA_ARRAY_BYTE)c : (JAVA_ARRAY_BYTE)'?';
+        }
+        return destArr;
+    }
+
+#if defined(__APPLE__) && defined(__OBJC__)
+    // UTF-16, ISO-8859-2 etc. -- defer to NSString for the unusual encodings.
+    NSStringEncoding nsEnc = cn1_nsencoding_for(enc);
+    NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+    NSString* nsStr = [[NSString alloc] initWithCharacters:sourceArr->data length:srcLen];
+    NSData* data = [nsStr dataUsingEncoding:nsEnc allowLossyConversion:YES];
+    if (data == nil) {
+        data = [nsStr dataUsingEncoding:NSUTF8StringEncoding allowLossyConversion:YES];
+    }
     JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_BYTE(threadStateData, [data length]);
     JAVA_ARRAY_BYTE* dest = (JAVA_ARRAY_BYTE*)((JAVA_ARRAY)destArr)->data;
     [data getBytes:dest length:[data length]];
-    
     [nsStr release];
     [pool release];
     return destArr;
 #else
-    // Stub: Assume ASCII/UTF8 simple copy for Linux testing
-    // TODO: Implement proper encoding logic
-    JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_BYTE(threadStateData, sourceArr->length);
-    JAVA_ARRAY_CHAR* src = (JAVA_ARRAY_CHAR*)((JAVA_ARRAY)sourceArr)->data;
+    // POSIX/test build: encode the remaining rare cases as UTF-8 so the
+    // fallback at least round-trips a Unicode payload cleanly.
+    size_t outLen = cn1_utf8_encode_chars(src, (size_t)srcLen, NULL);
+    JAVA_OBJECT destArr = __NEW_ARRAY_JAVA_BYTE(threadStateData, (JAVA_INT)outLen);
     JAVA_ARRAY_BYTE* dest = (JAVA_ARRAY_BYTE*)((JAVA_ARRAY)destArr)->data;
-    for(int iter = 0 ; iter < sourceArr->length ; iter++) {
-        dest[iter] = (JAVA_ARRAY_BYTE)src[iter];
-    }
+    cn1_utf8_encode_chars(src, (size_t)srcLen, dest);
     return destArr;
 #endif
 }
@@ -547,18 +718,48 @@ JAVA_OBJECT java_lang_Throwable_getStack___R_java_lang_String(CODENAME_ONE_THREA
     }
     java_lang_StringBuilder_append___java_lang_String_R_java_lang_StringBuilder(threadStateData, bld, newline);
 
-    for(int iter = threadStateData->callStackOffset - 1 ; iter >= 0 ; iter--) {
-        java_lang_StringBuilder_append___java_lang_String_R_java_lang_StringBuilder(threadStateData, bld, indent);
-
+    int cn1StackOff = threadStateData->callStackOffset;
+    if(cn1StackOff < 0 || cn1StackOff > CN1_MAX_STACK_CALL_DEPTH) {
+        fprintf(stderr, "CN1_STACKGUARD bad callStackOffset=%d max=%d\n", cn1StackOff, CN1_MAX_STACK_CALL_DEPTH);
+        fflush(stderr);
+        cn1StackOff = (cn1StackOff < 0) ? 0 : CN1_MAX_STACK_CALL_DEPTH;
+    }
+    for(int iter = cn1StackOff - 1 ; iter >= 0 ; iter--) {
         int classId = threadStateData->callStackClass[iter];
         int methodId = threadStateData->callStackMethod[iter];
         int line = threadStateData->callStackLine[iter];
-        
-        java_lang_StringBuilder_append___java_lang_String_R_java_lang_StringBuilder(threadStateData, bld, STRING_FROM_CONSTANT_POOL_OFFSET(classId));
+
+        /* Defensive: a corrupt/out-of-range frame id must never crash stack-trace
+         * printing (which itself runs while reporting another failure). Skip it. */
+        if(classId < 0 || classId >= CN1_CONSTANT_POOL_SIZE ||
+           methodId < 0 || methodId >= CN1_CONSTANT_POOL_SIZE) {
+            fprintf(stderr, "CN1_STACKGUARD bad frame iter=%d off=%d classId=%d methodId=%d line=%d poolSize=%d\n",
+                iter, cn1StackOff, classId, methodId, line, (int)CN1_CONSTANT_POOL_SIZE);
+            fflush(stderr);
+            continue;
+        }
+
+        /* A resolved constant-pool entry can be transiently NULL (observed on the
+         * native Windows clean target). Appending a NULL String dereferences it
+         * (count at offset 0x3C) and crashes the very stack-trace printer that is
+         * reporting another failure -- so guard every append against NULL. */
+        JAVA_OBJECT clsStr = STRING_FROM_CONSTANT_POOL_OFFSET(classId);
+        JAVA_OBJECT mtdStr = STRING_FROM_CONSTANT_POOL_OFFSET(methodId);
+        if(clsStr == JAVA_NULL || mtdStr == JAVA_NULL) {
+            fprintf(stderr, "CN1_STACKGUARD null pool string iter=%d off=%d classId=%d(%s) methodId=%d(%s) line=%d\n",
+                iter, cn1StackOff, classId, clsStr == JAVA_NULL ? "null" : "ok",
+                methodId, mtdStr == JAVA_NULL ? "null" : "ok", line);
+            fflush(stderr);
+            continue;
+        }
+
+        java_lang_StringBuilder_append___java_lang_String_R_java_lang_StringBuilder(threadStateData, bld, indent);
+
+        java_lang_StringBuilder_append___java_lang_String_R_java_lang_StringBuilder(threadStateData, bld, clsStr);
 
         java_lang_StringBuilder_append___java_lang_String_R_java_lang_StringBuilder(threadStateData, bld, dot);
 
-        java_lang_StringBuilder_append___java_lang_String_R_java_lang_StringBuilder(threadStateData, bld, STRING_FROM_CONSTANT_POOL_OFFSET(methodId));
+        java_lang_StringBuilder_append___java_lang_String_R_java_lang_StringBuilder(threadStateData, bld, mtdStr);
 
         java_lang_StringBuilder_append___java_lang_String_R_java_lang_StringBuilder(threadStateData, bld, colon);
 
@@ -616,6 +817,22 @@ JAVA_LONG java_lang_System_currentTimeMillis___R_long(CODENAME_ONE_THREAD_STATE)
     gettimeofday(&time, NULL);
     JAVA_LONG l = (((JAVA_LONG)time.tv_sec) * 1000) + (time.tv_usec / 1000);
     return l;
+}
+
+JAVA_LONG java_lang_System_nanoTime___R_long(CODENAME_ONE_THREAD_STATE) {
+    __STATIC_INITIALIZER_java_lang_System(threadStateData);
+#ifdef _WIN32
+    /* clock_gettime / CLOCK_MONOTONIC are absent from the MSVC / clang-cl
+       target, so fall back to the microsecond wall clock that already backs
+       currentTimeMillis on Windows (gettimeofday is supplied by cn1_win_compat). */
+    struct timeval time;
+    gettimeofday(&time, NULL);
+    return (((JAVA_LONG)time.tv_sec) * 1000000000LL) + (((JAVA_LONG)time.tv_usec) * 1000LL);
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (((JAVA_LONG)ts.tv_sec) * 1000000000LL) + (JAVA_LONG)ts.tv_nsec;
+#endif
 }
 
 JAVA_DOUBLE java_lang_Double_longBitsToDouble___long_R_double(CODENAME_ONE_THREAD_STATE, JAVA_LONG n1)
@@ -1116,7 +1333,14 @@ struct ThreadLocalData* getThreadLocalData() {
         
         i->callStackMethod = malloc(CN1_MAX_STACK_CALL_DEPTH * sizeof(int));
         memset(i->callStackMethod, 0, CN1_MAX_STACK_CALL_DEPTH * sizeof(int));
-        
+
+#ifdef CN1_ON_DEVICE_DEBUG
+        i->callStackLocalsAddresses = malloc(CN1_MAX_STACK_CALL_DEPTH * sizeof(void**));
+        memset(i->callStackLocalsAddresses, 0, CN1_MAX_STACK_CALL_DEPTH * sizeof(void**));
+        i->callStackFrameInfo = malloc(CN1_MAX_STACK_CALL_DEPTH * sizeof(struct cn1_frame_info*));
+        memset(i->callStackFrameInfo, 0, CN1_MAX_STACK_CALL_DEPTH * sizeof(struct cn1_frame_info*));
+#endif
+
         i->callStackOffset = 0;
         
         i->pendingHeapAllocations = malloc(PER_THREAD_ALLOCATION_COUNT * sizeof(void *));
@@ -1371,6 +1595,10 @@ JAVA_VOID java_lang_Thread_releaseThreadNativeResources___long(CODENAME_ONE_THRE
     free(head->callStackClass);
     free(head->callStackLine);
     free(head->callStackMethod);
+#ifdef CN1_ON_DEVICE_DEBUG
+    free(head->callStackLocalsAddresses);
+    free(head->callStackFrameInfo);
+#endif
     free(head->pendingHeapAllocations);
     free(head);
     nThreadsToKill--;
@@ -1429,7 +1657,11 @@ void* threadRunner(void *x)
     d->currentThreadObject = t;
     
    // printf("launching thread %d",(int)d->threadId);
-    java_lang_Thread_runImpl___long(d, t, (long)d); // pass the actual structure as threadid
+    // Pass the struct pointer as the thread id. Cast through intptr_t, not long:
+    // on Windows (LLP64) `long` is 32-bit while pointers are 64-bit, so `(long)d`
+    // truncates + sign-extends the pointer, and freeing it later in
+    // releaseThreadNativeResources corrupts memory / crashes.
+    java_lang_Thread_runImpl___long(d, t, (JAVA_LONG)(intptr_t)d); // pass the actual structure as threadid
    // printf("terminate thread %d",(int)d->threadId);
     
     // we remove the thread here since this is the only place we can do this
@@ -1867,8 +2099,53 @@ JAVA_OBJECT java_text_DateFormat_format___java_util_Date_java_lang_StringBuffer_
 
     return str;
 #else
-    // TODO: Implement stub
-    return JAVA_NULL; // Stub
+    /* Clean target (Windows / Linux native): format via the C library so that
+     * Date.toString() (which routes here through DateFormat) returns a real
+     * string rather than NULL. A NULL here propagates into callers such as
+     * DateSpinner3D, which do formatDateLongStyle(new Date()).substring(0,1)
+     * and crash on the null receiver. Styles: FULL=0, LONG=1, MEDIUM=2,
+     * SHORT=3; a negative style means that component is omitted (NONE). */
+    struct obj__java_text_DateFormat* df = (struct obj__java_text_DateFormat*)__cn1ThisObject;
+    struct obj__java_util_Date* dateObj = (struct obj__java_util_Date*)__cn1Arg1;
+    if (dateObj == JAVA_NULL) {
+        return JAVA_NULL;
+    }
+    time_t secs = (time_t)(dateObj->java_util_Date_date / 1000);
+    struct tm tmv;
+#ifdef _WIN32
+    if (localtime_s(&tmv, &secs) != 0) { memset(&tmv, 0, sizeof(tmv)); }
+#else
+    localtime_r(&secs, &tmv);
+#endif
+    int dateStyle = df->java_text_DateFormat_dateStyle;
+    int timeStyle = df->java_text_DateFormat_timeStyle;
+    char datePart[128]; datePart[0] = '\0';
+    char timePart[128]; timePart[0] = '\0';
+    char out[300];
+    if (dateStyle >= 0) {
+        const char* dfmt;
+        switch (dateStyle) {
+            case 1:  dfmt = "%B %d, %Y"; break;     /* LONG */
+            case 2:  dfmt = "%b %d, %Y"; break;     /* MEDIUM */
+            case 3:  dfmt = "%m/%d/%y"; break;      /* SHORT */
+            default: dfmt = "%A, %B %d, %Y"; break; /* FULL */
+        }
+        strftime(datePart, sizeof(datePart), dfmt, &tmv);
+    }
+    if (timeStyle >= 0) {
+        const char* tfmt = (timeStyle == 3) ? "%I:%M %p" : "%I:%M:%S %p";
+        strftime(timePart, sizeof(timePart), tfmt, &tmv);
+    }
+    if (datePart[0] != '\0' && timePart[0] != '\0') {
+        snprintf(out, sizeof(out), "%s %s", datePart, timePart);
+    } else if (datePart[0] != '\0') {
+        snprintf(out, sizeof(out), "%s", datePart);
+    } else if (timePart[0] != '\0') {
+        snprintf(out, sizeof(out), "%s", timePart);
+    } else {
+        snprintf(out, sizeof(out), "%lld", (long long)(dateObj->java_util_Date_date));
+    }
+    return newStringFromCString(threadStateData, out);
 #endif
 }
 

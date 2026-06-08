@@ -36,7 +36,6 @@ import com.codename1.ui.geom.Shape;
 /// using either a paint callback or a mutable image. There is no supported  way to create this
 /// object directly.
 public final class Graphics {
-
     /// Rendering hint to indicate that the context should prefer to render
     /// primitives in a quick way, at the cost of quality, if there is an
     /// expensive operation.
@@ -60,6 +59,14 @@ public final class Graphics {
     private int xTranslate;
     private int yTranslate;
     private Transform translation;
+    /// Last non-identity argument to setTransform(). When the impl has
+    /// `isTranslationSupported() == false` (every active port today: iOS,
+    /// Android, JavaSE, JavaScript), the matrix actually pushed to
+    /// impl.setTransform is `T(xTranslate) * userTransform * T(-xTranslate)`,
+    /// so the user-visible transform applies to local coordinates regardless
+    /// of any prior g.translate(). getTransform() returns this original
+    /// (un-conjugated) matrix.
+    private Transform userTransform;
     private GeneralPath tmpClipShape;
     /// A buffer shape to use when we need to transform a shape
     private int color;
@@ -138,6 +145,16 @@ public final class Graphics {
         } else {
             xTranslate += x;
             yTranslate += y;
+            // The conjugation in setTransform() depends on the current
+            // xTranslate/yTranslate. If the user accumulated more
+            // translation after setting a non-identity transform,
+            // re-conjugate so the impl-side matrix stays in sync.
+            if (userTransform != null) {
+                Transform composed = Transform.makeTranslation(xTranslate, yTranslate);
+                composed.concatenate(userTransform);
+                composed.translate(-xTranslate, -yTranslate);
+                impl.setTransform(nativeGraphics, composed);
+            }
         }
     }
 
@@ -384,6 +401,52 @@ public final class Graphics {
         return impl.getClipHeight(nativeGraphics);
     }
 
+    /// Returns true if the given rectangle (in the current Graphics coordinate
+    /// space, with the active translation applied) intersects the current clip
+    /// rectangle, i.e. anything drawn into it would be at least partially
+    /// visible.
+    ///
+    /// Use this to skip work for off-screen draws - typical case is a zoomed
+    /// canvas where most images fall outside the visible window and should
+    /// not be decoded or scaled.
+    ///
+    /// ```java
+    /// if (g.isVisible(x, y, w, h)) {
+    ///     g.drawImage(image, x, y, w, h);
+    /// }
+    /// ```
+    ///
+    /// Note: shape-clipped graphics ([#setClip(Shape)]) and arbitrary
+    /// affine transforms fall back to the bounding rectangle of the clip;
+    /// this matches the precision actually used by the platform draw calls.
+    ///
+    /// #### Parameters
+    ///
+    /// - `x`: left edge of the rectangle
+    ///
+    /// - `y`: top edge of the rectangle
+    ///
+    /// - `w`: width of the rectangle
+    ///
+    /// - `h`: height of the rectangle
+    ///
+    /// #### Returns
+    ///
+    /// true if the rectangle intersects the current clip
+    public boolean isVisible(int x, int y, int w, int h) {
+        if (w <= 0 || h <= 0) {
+            return false;
+        }
+        int cx = getClipX();
+        int cy = getClipY();
+        int cw = getClipWidth();
+        int ch = getClipHeight();
+        if (cw <= 0 || ch <= 0) {
+            return false;
+        }
+        return x < cx + cw && y < cy + ch && x + w > cx && y + h > cy;
+    }
+
     /// Clips the given rectangle by intersecting with the current clipping region, this
     /// method can thus only shrink the clipping region and never increase it.
     ///
@@ -627,50 +690,26 @@ public final class Graphics {
     /// degrees. Usage:
     ///
     /// ```java
-    /// Painter p = new Painter(cmp) {
+    /// Form hi = new Form("fillArc / drawArc", new BorderLayout());
+    /// Container cmp = new Container();
+    /// cmp.setPreferredSize(new Dimension(300, 300));
+    /// Painter p = new Painter() {
     ///     public void paint(Graphics g, Rectangle rect) {
     ///         boolean antiAliased = g.isAntiAliased();
     ///         g.setAntiAliased(true);
-    ///         int r = Math.min(rect.getWidth(), rect.getHeight())/2;
-    ///         int x = rect.getX() + rect.getWidth()/2 - r;
-    ///         int y = rect.getY() + rect.getHeight()/2 - r;
-    ///         switch (style) {
-    ///             case CircleButtonStrokedDark:
-    ///             case CircleButtonStrokedLight: {
-    ///                 if (cmp.getStyle().getBgTransparency() != 0) {
-    ///                     int alpha = cmp.getStyle().getBgTransparency();
-    ///                     if (alpha <0) {
-    ///                         alpha = 0xff;
-    ///                     }
-    ///                     g.setColor(cmp.getStyle().getBgColor());
-    ///                     g.setAlpha(alpha);
-    ///                     g.fillArc(x, y, 2*r-1, 2*r-1, 0, 360);
-    ///                     g.setAlpha(0xff);
-    ///                 }
-    ///                 g.setColor(cmp.getStyle().getFgColor());
-    ///                 g.drawArc(x, y, 2*r-1, 2*r-1, 0, 360);
-    ///                 break;
-    ///             }
-    ///             case CircleButtonFilledDark:
-    ///             case CircleButtonFilledLight:
-    ///             case CircleButtonTransparentDark:
-    ///             case CircleButtonTransparentLight: {
-    ///                 int alpha = cmp.getStyle().getBgTransparency();
-    ///                 if (alpha < 0) {
-    ///                     alpha = 0xff;
-    ///                 }
-    ///                 g.setAlpha(alpha);
-    ///                 g.setColor(cmp.getStyle().getBgColor());
-    ///                 g.fillArc(x, y, 2*r, 2*r, 0, 360);
-    ///                 g.setAlpha(0xff);
-    ///                 break;
-    ///             }
-    ///         }
-    ///
+    ///         int r = Math.min(rect.getWidth(), rect.getHeight()) / 2;
+    ///         int x = rect.getX() + rect.getWidth() / 2 - r;
+    ///         int y = rect.getY() + rect.getHeight() / 2 - r;
+    ///         g.setColor(0x4488ff);
+    ///         g.fillArc(x, y, 2 * r, 2 * r, 0, 360);
+    ///         g.setColor(0xffffff);
+    ///         g.drawArc(x, y, 2 * r - 1, 2 * r - 1, 0, 360);
     ///         g.setAntiAliased(antiAliased);
     ///     }
     /// };
     /// cmp.getAllStyles().setBgPainter(p);
+    /// hi.add(BorderLayout.CENTER, cmp);
+    /// hi.show();
     /// ```
     ///
     /// #### Parameters
@@ -1130,6 +1169,9 @@ public final class Graphics {
     ///
     /// - #setTransform
     public Transform getTransform() {
+        if (userTransform != null) {
+            return userTransform.copy();
+        }
         return impl.getTransform(nativeGraphics);
 
     }
@@ -1161,7 +1203,27 @@ public final class Graphics {
     ///
     /// - #setTransform(com.codename1.ui.geom.Matrix, int, int)
     public void setTransform(Transform transform) {
-        impl.setTransform(nativeGraphics, transform);
+        // On platforms where impl.isTranslationSupported() is false, this
+        // Graphics object accumulates xTranslate/yTranslate locally and bakes
+        // them into vertex coordinates passed to impl fill primitives. The
+        // user's setTransform matrix is then applied by the underlying
+        // platform on top of those already-translated vertices, which
+        // double-counts the cell origin for any non-translation matrix
+        // (rotate, scale, shear) -- the gradient ends up off-cell or
+        // off-screen. Conjugate the user's matrix with T(xTranslate,
+        // yTranslate) so its effect is independent of any prior g.translate
+        // call, matching Android Skia / JavaSE Graphics2D semantics.
+        if (transform != null && !transform.isIdentity()
+                && (xTranslate != 0 || yTranslate != 0)) {
+            userTransform = transform.copy();
+            Transform composed = Transform.makeTranslation(xTranslate, yTranslate);
+            composed.concatenate(transform);
+            composed.translate(-xTranslate, -yTranslate);
+            impl.setTransform(nativeGraphics, composed);
+        } else {
+            userTransform = null;
+            impl.setTransform(nativeGraphics, transform);
+        }
     }
 
     /// Loads the provided transform with the current transform applied to this graphics context.
@@ -1170,6 +1232,10 @@ public final class Graphics {
     ///
     /// - `t`: An "out" parameter to be filled with the current transform.
     public void getTransform(Transform t) {
+        if (userTransform != null) {
+            t.setTransform(userTransform);
+            return;
+        }
         impl.getTransform(nativeGraphics, t);
     }
 
@@ -1339,6 +1405,39 @@ public final class Graphics {
             return;
         }
         impl.fillLinearGradient(nativeGraphics, startColor, endColor, x + xTranslate, y + yTranslate, width, height, horizontal);
+    }
+
+    /// Fills the rectangle (x, y, width, height) with the given multi-stop
+    /// gradient. The Gradient may be a `LinearGradient`, `RadialGradient`, or
+    /// `ConicGradient` - the port picks the right native shader path
+    /// (Java2D `LinearGradientPaint`/`RadialGradientPaint` on JavaSE; Android
+    /// `LinearGradient`/`RadialGradient`/`SweepGradient` shaders; software
+    /// rasterizer fallback elsewhere). Pass null or width/height <= 0 for a no-op.
+    public void fillGradient(Gradient gradient, int x, int y, int width, int height) {
+        if (gradient == null || width <= 0 || height <= 0) {
+            return;
+        }
+        impl.fillGradient(nativeGraphics, gradient, x + xTranslate, y + yTranslate, width, height);
+    }
+
+    /// Returns a copy of the given image with a Gaussian blur of the given radius
+    /// applied. Equivalent to the CSS filter:blur() effect on an image.
+    public Image gaussianBlur(Image source, float radius) {
+        if (source == null || radius <= 0f) {
+            return source;
+        }
+        return impl.gaussianBlurImage(source, radius);
+    }
+
+    /// Applies a Gaussian blur to the contents already painted into the
+    /// rectangular region. Used to realize CSS backdrop-filter:blur().
+    /// Returns true if the port supports an in-place blur; otherwise the
+    /// caller should fall back to snapshot + gaussianBlur().
+    public boolean blurRegion(int x, int y, int width, int height, float radius) {
+        if (width <= 0 || height <= 0 || radius <= 0f) {
+            return true;
+        }
+        return impl.blurRegion(nativeGraphics, x + xTranslate, y + yTranslate, width, height, radius);
     }
 
     /// Fills a rectangle with an optionally translucent fill color
@@ -1577,6 +1676,7 @@ public final class Graphics {
         impl.resetAffine(nativeGraphics);
         scaleX = 1;
         scaleY = 1;
+        userTransform = null;
     }
 
     /// Scales the coordinate system using the affine transform
@@ -1590,6 +1690,67 @@ public final class Graphics {
         impl.scale(nativeGraphics, x, y);
         scaleX = x;
         scaleY = y;
+    }
+
+    /// Translates the coordinate system using the affine transform matrix
+    /// (as opposed to `#translate(int, int)` which uses a per-Graphics
+    /// integer accumulator). On every port today
+    /// `isTranslationSupported() == false`, which means `g.translate(int, int)`
+    /// is added to draw coordinates **before** the impl matrix is applied;
+    /// a subsequent `g.scale()` or `g.rotate()` therefore multiplies the
+    /// integer translate too. That's surprising when porting code that came
+    /// from Java2D / AWT where translate composes into the matrix the same
+    /// way as scale and rotate.
+    ///
+    /// `translateMatrix` composes the translation directly onto the impl
+    /// matrix, exactly like `#scale(float, float)` and `#rotate(float)` do.
+    /// The result is uniform "post-multiply translate onto the current
+    /// transform" semantics across iOS / JavaSE / Android / JavaScript --
+    /// the same code produces the same on-screen position regardless of
+    /// which port you target or whether you're drawing into a Form's
+    /// Graphics or a mutable Image's Graphics.
+    ///
+    /// On ports where `#isTranslateMatrixSupported()` returns false (e.g.
+    /// the legacy JavaScript port) the call falls back to the integer
+    /// `#translate(int, int)` so apps don't silently render at the wrong
+    /// position -- the visual result on those ports matches whatever
+    /// `translate(int, int)` does there.
+    ///
+    /// #### Parameters
+    ///
+    /// - `x`: x-axis translation
+    ///
+    /// - `y`: y-axis translation
+    ///
+    /// #### See also
+    ///
+    /// - `#isTranslateMatrixSupported()`
+    /// - `#translate(int, int)`
+    /// - `#scale(float, float)`
+    /// - `#rotateRadians(float, int, int)`
+    public void translateMatrix(float x, float y) {
+        if (impl.isTranslateMatrixSupported()) {
+            impl.translateMatrix(nativeGraphics, x, y);
+        } else {
+            translate((int) x, (int) y);
+        }
+    }
+
+    /// Checks whether `#translateMatrix(float, float)` composes through the
+    /// impl matrix on this port (the matrix-correct mode) versus falling
+    /// back to the integer `#translate(int, int)` accumulator. Use this to
+    /// gate code that needs matrix-correct translation semantics.
+    ///
+    /// #### Returns
+    ///
+    /// true if `translateMatrix` reaches the impl matrix; false on ports
+    /// where it falls back to the integer accumulator.
+    ///
+    /// #### See also
+    ///
+    /// - `#translateMatrix(float, float)`
+    public boolean isTranslateMatrixSupported() {
+        return impl.isTranslateMatrixSupported();
     }
 
     /// Rotates the coordinate system around a radian angle using the affine transform

@@ -41,16 +41,20 @@ public class PickerCoverageTest extends UITestBase {
     }
 
     private void runAnimations(Form f) {
+        // Driving an AnimationManager animation in test mode needs each EDT
+        // tick to actually execute an edtLoopImpl pass (that is what runs
+        // repaintAnimations -> AnimationManager.updateAnimations). flushEdt
+        // alone is a no-op when there is no pending input/serial work, so
+        // we queue a no-op serial call before each flush to force one pass.
         long start = System.currentTimeMillis();
-        while (System.currentTimeMillis() - start < 400) {
-            if (f != null) {
-                f.animate();
-                f.layoutContainer();
-            }
+        while (System.currentTimeMillis() - start < 600) {
+            CN.callSerially(new Runnable() {
+                @Override
+                public void run() {
+                    // no-op: only here to force one edtLoopImpl pass
+                }
+            });
             DisplayTest.flushEdt();
-            if (f != null) {
-                f.revalidate();
-            }
             try {
                 Thread.sleep(10);
             } catch (InterruptedException e) {}
@@ -69,6 +73,31 @@ public class PickerCoverageTest extends UITestBase {
             if (f != null) {
                 f.revalidate();
             }
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {}
+        }
+    }
+
+    private void runUntilFocusedOrEditing(Form f, Component target) {
+        // #5092 routes lightweight picker next/prev focus transfer through
+        // disposeToTheBottom(Runnable), so the focus assertion has to wait
+        // for the dispose animation to finish and its completion callback
+        // to run. Driving the animation in test mode requires pumping a
+        // serial call before each flushEdt() so the EDT actually runs an
+        // edtLoopImpl iteration (which is what calls repaintAnimations ->
+        // AnimationManager.updateAnimations); flushEdt by itself is a no-op
+        // when there is no pending work in the input/serial queues.
+        long start = System.currentTimeMillis();
+        while (System.currentTimeMillis() - start < 3000) {
+            if (target.hasFocus() || target.isEditing()) return;
+            CN.callSerially(new Runnable() {
+                @Override
+                public void run() {
+                    // no-op: only here to force one edtLoopImpl pass
+                }
+            });
+            DisplayTest.flushEdt();
             try {
                 Thread.sleep(10);
             } catch (InterruptedException e) {}
@@ -146,6 +175,11 @@ public class PickerCoverageTest extends UITestBase {
         nextButton.released();
         DisplayTest.flushEdt();
 
+        // #5092 deferred next/prev focus transfer until the dispose animation
+        // completes via the disposeToTheBottom(Runnable) callback, so the
+        // focus assertion has to wait for that animation rather than checking
+        // immediately after released().
+        runUntilFocusedOrEditing(f, nextTf);
         Assertions.assertTrue(nextTf.hasFocus() || nextTf.isEditing(), "Next component should have focus/editing");
 
         // Re-open picker
@@ -166,6 +200,7 @@ public class PickerCoverageTest extends UITestBase {
         prevButton.released();
         DisplayTest.flushEdt();
 
+        runUntilFocusedOrEditing(f, prevTf);
         Assertions.assertTrue(prevTf.hasFocus() || prevTf.isEditing(), "Prev component should have focus/editing");
 
         // Re-open picker to test Done/Cancel
@@ -494,5 +529,47 @@ public class PickerCoverageTest extends UITestBase {
         Assertions.assertNotNull(dlg, "Dialog should be open");
         Assertions.assertNotNull(findButtonWithText(dlg, "Top"), "Top custom button should be rendered");
         Assertions.assertNotNull(findButtonWithText(dlg, "Bottom"), "Bottom custom button should be rendered");
+    }
+
+    @FormTest
+    public void testLightweightPopupCustomButtonAlignments() {
+        cleanup();
+        Form form = new Form("Custom Alignment", new BoxLayout(BoxLayout.Y_AXIS));
+        Picker picker = new Picker();
+        picker.setType(Display.PICKER_TYPE_DATE);
+        picker.setUseLightweightPopup(true);
+        picker.addLightweightPopupButton("LeftBtn", new Runnable() {
+            @Override
+            public void run() {}
+        }, Picker.LightweightPopupButtonPlacement.BELOW_SPINNER, Component.LEFT);
+        picker.addLightweightPopupButton("CenterBtn", new Runnable() {
+            @Override
+            public void run() {}
+        }, Picker.LightweightPopupButtonPlacement.BELOW_SPINNER, Component.CENTER);
+        picker.addLightweightPopupButton("RightBtn", new Runnable() {
+            @Override
+            public void run() {}
+        }, Picker.LightweightPopupButtonPlacement.BELOW_SPINNER, Component.RIGHT);
+        form.add(picker);
+        form.show();
+        waitForForm(form);
+
+        picker.pressed();
+        picker.released();
+        DisplayTest.flushEdt();
+        runAnimations(form);
+
+        InteractionDialog dlg = findInteractionDialog(form);
+        Assertions.assertNotNull(dlg, "Dialog should be open");
+        Button leftBtn = findButtonWithText(dlg, "LeftBtn");
+        Button centerBtn = findButtonWithText(dlg, "CenterBtn");
+        Button rightBtn = findButtonWithText(dlg, "RightBtn");
+        Assertions.assertNotNull(leftBtn, "Left-aligned button should be rendered");
+        Assertions.assertNotNull(centerBtn, "Center-aligned button should be rendered");
+        Assertions.assertNotNull(rightBtn, "Right-aligned button should be rendered");
+        Assertions.assertTrue(leftBtn.getAbsoluteX() < centerBtn.getAbsoluteX(),
+                "Left-aligned button should be to the left of the center-aligned button");
+        Assertions.assertTrue(centerBtn.getAbsoluteX() < rightBtn.getAbsoluteX(),
+                "Center-aligned button should be to the left of the right-aligned button");
     }
 }

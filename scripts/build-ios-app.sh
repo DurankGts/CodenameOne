@@ -69,7 +69,7 @@ bia_log "Java version for baseline toolchain:"
 "$JAVA_HOME/bin/java" -version
 bia_log "Using JAVAC from JAVA17_HOME for demo compilation:"
 "$JAVA17_HOME/bin/javac" -version
-IOS_UISCENE="${IOS_UISCENE:-false}"
+IOS_UISCENE="${IOS_UISCENE:-true}"
 bia_log "Building sample app with ios.uiscene=${IOS_UISCENE}"
 EXTRA_IOS_ARGS=()
 if [ -n "${IOS_DEPENDENCY_ARGS:-}" ]; then
@@ -78,12 +78,21 @@ if [ -n "${IOS_DEPENDENCY_ARGS:-}" ]; then
   bia_log "Applying extra iOS build args: ${IOS_DEPENDENCY_ARGS}"
 fi
 
-APP_DIR="scripts/hellocodenameone"
+APP_DIR="${CN1_APP_DIR:-scripts/hellocodenameone}"
+
+# Derive the iOS project / scheme name from the app's own CN1 settings so
+# this script can build any CN1 app, not just hellocodenameone.
+CN1_SETTINGS_FILE="$REPO_ROOT/$APP_DIR/common/codenameone_settings.properties"
+if [ -f "$CN1_SETTINGS_FILE" ]; then
+  MAIN_NAME_FROM_SETTINGS="$(awk -F= '/^codename1.mainName=/{print $2; exit}' "$CN1_SETTINGS_FILE" | tr -d '\r')"
+fi
+APP_MAIN_NAME="${CN1_APP_MAIN_NAME:-${MAIN_NAME_FROM_SETTINGS:-HelloCodenameOne}}"
+bia_log "Using APP_DIR=$APP_DIR APP_MAIN_NAME=$APP_MAIN_NAME"
 
 xcodebuild -version
 
 bia_log "Building iOS Xcode project using Codename One port"
-cd $APP_DIR
+cd "$REPO_ROOT/$APP_DIR"
 VM_START=$(date +%s)
 
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-$REPO_ROOT/artifacts}"
@@ -91,11 +100,95 @@ mkdir -p "$ARTIFACTS_DIR"
 
 export CN1_BUILD_STATS_FILE="$ARTIFACTS_DIR/iphone-builder-stats.txt"
 
-bia_log "Running HelloCodenameOne Maven build with JAVA_HOME=$JAVA17_HOME"
+copy_tree_contents() {
+  local src="$1"
+  local dest="$2"
+  mkdir -p "$dest"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a "$src"/ "$dest"/
+  else
+    cp -R "$src"/. "$dest"/
+  fi
+}
+
+find_bytecode_translator_sources() {
+  local root="$1"
+  local best=""
+  local best_score=0
+  local dir score m_count c_count h_count
+
+  [ -d "$root" ] || return 1
+
+  while IFS= read -r dir; do
+    [ -d "$dir" ] || continue
+
+    score=0
+    [ -f "$dir/cn1_globals.m" ] && score=$((score + 100))
+    [ -f "$dir/xmlvm.h" ] && score=$((score + 100))
+
+    m_count="$(find "$dir" -maxdepth 1 -type f -name '*.m' 2>/dev/null | wc -l | tr -d ' ')"
+    c_count="$(find "$dir" -maxdepth 1 -type f -name '*.c' 2>/dev/null | wc -l | tr -d ' ')"
+    h_count="$(find "$dir" -maxdepth 1 -type f -name '*.h' 2>/dev/null | wc -l | tr -d ' ')"
+
+    score=$((score + m_count + c_count + h_count))
+
+    if [ "$score" -gt "$best_score" ]; then
+      best="$dir"
+      best_score="$score"
+    fi
+  done < <(
+    find "$root" -type d \
+      ! -path '*/Pods/*' \
+      ! -path '*/build/*' \
+      ! -path '*/Build/*' \
+      ! -path '*/DerivedData/*' \
+      ! -path '*/xcuserdata/*' \
+      2>/dev/null
+  )
+
+  [ -n "$best" ] || return 1
+  printf '%s\n' "$best"
+}
+
+stage_bytecode_translator_sources() {
+  local project_dir="$1"
+  local artifacts_dir="$2"
+
+  local bt_dir=""
+  local out_dir="$artifacts_dir/bytecode-translator-sources"
+  local zip_file="$artifacts_dir/bytecode-translator-sources.zip"
+  local listing_file="$artifacts_dir/bytecode-translator-files.txt"
+
+  bt_dir="$(find_bytecode_translator_sources "$project_dir" || true)"
+  if [ -z "$bt_dir" ]; then
+    bia_log "ByteCodeTranslator source directory not found under $project_dir"
+    return 0
+  fi
+
+  bia_log "Detected ByteCodeTranslator sources at $bt_dir"
+
+  rm -rf "$out_dir" "$zip_file"
+  mkdir -p "$out_dir"
+
+  copy_tree_contents "$bt_dir" "$out_dir"
+
+  find "$out_dir" -maxdepth 2 -type f \( -name '*.m' -o -name '*.c' -o -name '*.h' \) \
+    | sort > "$listing_file" || true
+
+  (
+    cd "$artifacts_dir"
+    zip -qry "$(basename "$zip_file")" "$(basename "$out_dir")"
+  )
+
+  bia_log "Staged ByteCodeTranslator sources in $out_dir"
+  bia_log "Created archive $zip_file"
+}
+
+bia_log "Running $APP_MAIN_NAME Maven build with JAVA_HOME=$JAVA17_HOME"
 (
   export JAVA_HOME="$JAVA17_HOME"
   export PATH="$JAVA_HOME/bin:$MAVEN_HOME/bin:$BASE_PATH"
-  MVN_IOS_LOG="$ARTIFACTS_DIR/hellocn1-ios-build.log"
+  MVN_IOS_LOG="$ARTIFACTS_DIR/cn1-ios-build.log"
   MVN_CMD=(
     ./mvnw package
     -DskipTests
@@ -116,18 +209,29 @@ bia_log "Running HelloCodenameOne Maven build with JAVA_HOME=$JAVA17_HOME"
   set -e
   if [ $RC -ne 0 ]; then
     bia_log "Maven iOS build failed (exit=$RC). Log: $MVN_IOS_LOG"
+    # Highlight the lines most likely to name the cause...
     bia_log "Key failure lines:"
-    if command -v rg >/dev/null 2>&1; then
-      rg -n "(iOS builder log:|Caused by:|BuildException|Cannot run program|UnsupportedClassVersionError|error:|\\[ERROR\\])" "$MVN_IOS_LOG" | tail -n 200 || true
-    else
-      grep -nE "(iOS builder log:|Caused by:|BuildException|Cannot run program|UnsupportedClassVersionError|error:|\\[ERROR\\])" "$MVN_IOS_LOG" | tail -n 200 || true
+    if [ -s "$MVN_IOS_LOG" ]; then
+      grep -nE "(iOS builder log:|Caused by:|BuildException|Cannot run program|UnsupportedClassVersionError|error:|cannot find symbol|package .* does not exist|Could not resolve|Failure to find|\\[ERROR\\])" "$MVN_IOS_LOG" | tail -n 200 || true
     fi
+    # ...but ALWAYS dump the tail of the full log too. The pattern grep above
+    # silently produced nothing on at least one CI run (a non-[ERROR] failure),
+    # leaving the job with zero diagnostics; an unconditional tail guarantees
+    # the actual Maven output is visible in the job log even when no pattern
+    # matches or the log is short.
+    bia_log "----- last 150 lines of $MVN_IOS_LOG (size: $(wc -c < "$MVN_IOS_LOG" 2>/dev/null || echo 0) bytes) -----"
+    if [ -s "$MVN_IOS_LOG" ]; then
+      tail -n 150 "$MVN_IOS_LOG" | sed 's/^/[cn1-ios-build] /'
+    else
+      bia_log "(Maven log is empty or missing -- the build failed before producing any output)"
+    fi
+    bia_log "----- end of $MVN_IOS_LOG -----"
     exit $RC
   fi
 )
 VM_END=$(date +%s)
 VM_TIME=$((VM_END - VM_START))
-cd ../..
+cd "$REPO_ROOT"
 
 echo "$VM_TIME" > "$ARTIFACTS_DIR/vm_time.txt"
 bia_log "VM translation time: ${VM_TIME}s (saved to $ARTIFACTS_DIR/vm_time.txt)"
@@ -162,6 +266,8 @@ if [ -z "$PROJECT_DIR" ]; then
 fi
 bia_log "Found generated iOS project at $PROJECT_DIR"
 
+stage_bytecode_translator_sources "$PROJECT_DIR" "$ARTIFACTS_DIR"
+
 if [ -f "$PROJECT_DIR/Podfile" ]; then
   if ! command -v pod >/dev/null 2>&1; then
     bia_log "Generated project requires CocoaPods but the pod command is not installed." >&2
@@ -183,22 +289,22 @@ else
   bia_log "Podfile not found in generated project; skipping pod install"
 fi
 
-WORKSPACE_XML='<?xml version="1.0" encoding="UTF-8"?>
+WORKSPACE_XML="<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <Workspace
-   version = "1.0">
+   version = \"1.0\">
    <FileRef
-      location = "group:HelloCodenameOne.xcodeproj">
+      location = \"group:${APP_MAIN_NAME}.xcodeproj\">
    </FileRef>
-</Workspace>'
-if [ ! -d "$PROJECT_DIR/HelloCodenameOne.xcworkspace" ] && [ -d "$PROJECT_DIR/HelloCodenameOne.xcodeproj" ]; then
+</Workspace>"
+if [ ! -d "$PROJECT_DIR/${APP_MAIN_NAME}.xcworkspace" ] && [ -d "$PROJECT_DIR/${APP_MAIN_NAME}.xcodeproj" ]; then
   bia_log "Creating fallback xcworkspace for generated Xcode project"
-  mkdir -p "$PROJECT_DIR/HelloCodenameOne.xcworkspace"
-  printf '%s\n' "$WORKSPACE_XML" > "$PROJECT_DIR/HelloCodenameOne.xcworkspace/contents.xcworkspacedata"
+  mkdir -p "$PROJECT_DIR/${APP_MAIN_NAME}.xcworkspace"
+  printf '%s\n' "$WORKSPACE_XML" > "$PROJECT_DIR/${APP_MAIN_NAME}.xcworkspace/contents.xcworkspacedata"
 fi
 
-if [ -d "$PROJECT_DIR/HelloCodenameOne.xcodeproj" ]; then
+if [ -d "$PROJECT_DIR/${APP_MAIN_NAME}.xcodeproj" ]; then
   bia_log "Ensuring shared Xcode scheme exists"
-  "$REPO_ROOT/scripts/ios/create-shared-scheme.py" "$PROJECT_DIR" HelloCodenameOne
+  "$REPO_ROOT/scripts/ios/create-shared-scheme.py" "$PROJECT_DIR" "$APP_MAIN_NAME"
 fi
 
 # Locate workspace or project for the next step
@@ -229,11 +335,11 @@ bia_log "Found Xcode entrypoint: $WORKSPACE"
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
   {
     echo "workspace=$WORKSPACE"
-    echo "scheme=HelloCodenameOne"
+    echo "scheme=$APP_MAIN_NAME"
   } >> "$GITHUB_OUTPUT"
 fi
 
-bia_log "Emitted outputs -> workspace=$WORKSPACE, scheme=HelloCodenameOne"
+bia_log "Emitted outputs -> workspace=$WORKSPACE, scheme=$APP_MAIN_NAME"
 
 # (Optional) dump xcodebuild -list for debugging
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-$REPO_ROOT/artifacts}"

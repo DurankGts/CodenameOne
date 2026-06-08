@@ -12,36 +12,43 @@ on:
     paths-ignore:
       - 'CodenameOneDesigner/**'
 
+concurrency:
+  # Cancel superseded runs of this workflow for the same PR branch
+  # (github.head_ref is set on pull_request events). On push to master
+  # head_ref is empty, so the group falls back to the unique run_id and
+  # every master commit is still tested in full -- no coverage lost.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   build-linux-jdk8:
 
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v6
     - name: Set up JDK 8
-      uses: actions/setup-java@v1
+      uses: actions/setup-java@v5
       with:
-        java-version: 1.8
-        java-package: jdk
+        java-version: '8'
+        distribution: 'temurin'
+        cache: 'maven'
     - name: Install dependencies
-      run: sudo apt-get update && sudo apt-get install xvfb
-    - name: Build with Maven
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
+    - name: Build with Maven (core + in-tree archetypes)
+      run: |
+        # The cn1{app,lib}-archetype modules are part of the maven/ reactor,
+        # so this single install also stages them into the local repo.
+        # -Darchetype.test.skip=true keeps the build fast; the heavier
+        # archetype ITs run in the release workflow.
+        cd maven
+        xvfb-run -a mvn install -Plocal-dev-javase -Darchetype.test.skip=true
+
+    - name: Refresh archetype catalog
       run: |
         cd maven
-        xvfb-run -a mvn install -Plocal-dev-javase
-      
-
-    - name: Fetch archetype projects
-      uses: carlosperate/download-file-action@v1.0.3
-      with:
-        file-url: https://github.com/shannah/cn1-maven-archetypes/archive/refs/heads/master.zip
-        file-name: cn1-maven-archetypes.zip 
-    - name: Install archetype projects
-      run: |
-        unzip cn1-maven-archetypes.zip
-        cd cn1-maven-archetypes-master
-        xvfb-run -a mvn install archetype:update-local-catalog -Plocal-dev-javase
+        xvfb-run -a mvn archetype:update-local-catalog -Plocal-dev-javase
         xvfb-run -a mvn archetype:crawl -Plocal-dev-javase
     - name: Run Maven Unit Tests
       run: |

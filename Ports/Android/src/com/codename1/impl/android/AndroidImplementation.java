@@ -97,6 +97,7 @@ import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PersistableBundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
@@ -147,6 +148,13 @@ import com.codename1.media.MediaProxy;
 import com.codename1.media.MediaRecorderBuilder;
 import com.codename1.messaging.Message;
 import com.codename1.notifications.LocalNotification;
+import com.codename1.notifications.NotificationChannelBuilder;
+import com.codename1.notifications.NotificationPermissionCallback;
+import com.codename1.notifications.NotificationPermissionRequest;
+import com.codename1.notifications.NotificationPermissionResult;
+import com.codename1.background.ForegroundService;
+import com.codename1.background.WorkRequest;
+import com.codename1.share.SharedContent;
 import com.codename1.payment.Purchase;
 import com.codename1.push.PushAction;
 import com.codename1.push.PushActionCategory;
@@ -252,6 +260,27 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     static final int DROID_IMPL_KEY_VOLUME_UP = -23457;
     static final int DROID_IMPL_KEY_VOLUME_DOWN = -23458;
     static final int DROID_IMPL_KEY_MUTE = -23459;
+    static final int DROID_IMPL_KEY_ENTER = -23460;
+    static final int DROID_IMPL_KEY_TAB = -23461;
+    static final int DROID_IMPL_KEY_ESCAPE = -23462;
+    static final int DROID_IMPL_KEY_HOME = -23463;
+    static final int DROID_IMPL_KEY_END = -23464;
+    static final int DROID_IMPL_KEY_PAGE_UP = -23465;
+    static final int DROID_IMPL_KEY_PAGE_DOWN = -23466;
+    static final int DROID_IMPL_KEY_INSERT = -23467;
+    static final int DROID_IMPL_KEY_FORWARD_DEL = -23468;
+    static final int DROID_IMPL_KEY_F1 = -23469;
+    static final int DROID_IMPL_KEY_F2 = -23470;
+    static final int DROID_IMPL_KEY_F3 = -23471;
+    static final int DROID_IMPL_KEY_F4 = -23472;
+    static final int DROID_IMPL_KEY_F5 = -23473;
+    static final int DROID_IMPL_KEY_F6 = -23474;
+    static final int DROID_IMPL_KEY_F7 = -23475;
+    static final int DROID_IMPL_KEY_F8 = -23476;
+    static final int DROID_IMPL_KEY_F9 = -23477;
+    static final int DROID_IMPL_KEY_F10 = -23478;
+    static final int DROID_IMPL_KEY_F11 = -23479;
+    static final int DROID_IMPL_KEY_F12 = -23480;
     static int[] leftSK = new int[]{DROID_IMPL_KEY_MENU};
 
     /**
@@ -301,7 +330,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     static CodenameOneActivity activity;
     static ComponentName activityComponentName;
     private static PowerManager.WakeLock pushWakeLock;
-    public static void acquirePushWakeLock(long timeout) {
+    public static synchronized void acquirePushWakeLock(long timeout) {
         if (getContext() == null) return;
         try {
             if (pushWakeLock == null) {
@@ -1062,6 +1091,11 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     }
 
     private static AndroidImplementation instance;
+    private static final String INTENT_PROPERTY_PREFIX = "android.intent.";
+    private static final String INTENT_EXTRA_PROPERTY_PREFIX = "android.intent.extra.";
+    private static final Set<String> intentPropertyKeys = new HashSet<String>();
+    private static final Object intentPropertyLock = new Object();
+    private static Intent lastPublishedIntent;
 
     public static AndroidImplementation getInstance() {
         return instance;
@@ -1070,6 +1104,72 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     public static void clearAppArg() {
         if (instance != null) {
             instance.setAppArg(null);
+            clearIntentProperties();
+        }
+    }
+
+    private static void clearIntentProperties() {
+        synchronized (intentPropertyLock) {
+            if (Display.isInitialized()) {
+                for (String key : new ArrayList<String>(intentPropertyKeys)) {
+                    Display.getInstance().setProperty(key, null);
+                }
+            }
+            intentPropertyKeys.clear();
+            lastPublishedIntent = null;
+        }
+    }
+
+    private static void publishIntentProperties(Activity activity, Intent intent) {
+        if (intent == null) {
+            return;
+        }
+
+        synchronized (intentPropertyLock) {
+            if (intent == lastPublishedIntent) {
+                return;
+            }
+
+            Map<String, String> nextProperties = new HashMap<String, String>();
+            nextProperties.put(INTENT_PROPERTY_PREFIX + "action", intent.getAction());
+            nextProperties.put(INTENT_PROPERTY_PREFIX + "data", intent.getDataString());
+            nextProperties.put(INTENT_PROPERTY_PREFIX + "type", intent.getType());
+
+            // Only getCallingPackage() is a verified caller identity.  Referrer values are caller-controlled.
+            String callerPackage = activity.getCallingPackage();
+            nextProperties.put(INTENT_PROPERTY_PREFIX + "caller", callerPackage);
+            nextProperties.put(INTENT_PROPERTY_PREFIX + "caller.verified", callerPackage != null ? "true" : "false");
+
+            Bundle extras = intent.getExtras();
+            if (extras != null) {
+                for (String key : extras.keySet()) {
+                    Object value = extras.get(key);
+                    String propertyKey = key.startsWith(INTENT_EXTRA_PROPERTY_PREFIX) ? key : INTENT_EXTRA_PROPERTY_PREFIX + key;
+                    nextProperties.put(propertyKey, value == null ? null : String.valueOf(value));
+                }
+            }
+
+            if (Display.isInitialized()) {
+                ArrayList<String> keysToRemove = new ArrayList<String>();
+                for (String key : intentPropertyKeys) {
+                    if (!nextProperties.containsKey(key)) {
+                        keysToRemove.add(key);
+                    }
+                }
+                for (String key : keysToRemove) {
+                    Display.getInstance().setProperty(key, null);
+                    intentPropertyKeys.remove(key);
+                }
+                for (Map.Entry<String, String> entry : nextProperties.entrySet()) {
+                    Display.getInstance().setProperty(entry.getKey(), entry.getValue());
+                    intentPropertyKeys.add(entry.getKey());
+                }
+            } else {
+                intentPropertyKeys.clear();
+                intentPropertyKeys.addAll(nextProperties.keySet());
+            }
+
+            lastPublishedIntent = intent;
         }
     }
 
@@ -1336,35 +1436,27 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
             metrics = getContext().getResources().getDisplayMetrics();
         }
 
-        if(metrics.densityDpi < DisplayMetrics.DENSITY_MEDIUM) {
+        int dpi = metrics.densityDpi;
+        if (dpi < DisplayMetrics.DENSITY_MEDIUM) {
             return Display.DENSITY_LOW;
         }
-
-        if(metrics.densityDpi < 213) {
+        if (dpi < 213) {
             return Display.DENSITY_MEDIUM;
         }
-
         // 213 == TV
-        if(metrics.densityDpi >= 213 &&  metrics.densityDpi <= DisplayMetrics.DENSITY_HIGH) {
+        if (dpi <= DisplayMetrics.DENSITY_HIGH) {
             return Display.DENSITY_HIGH;
         }
-
-        if(metrics.densityDpi > DisplayMetrics.DENSITY_HIGH && metrics.densityDpi < 400) {
+        if (dpi < 400) {
             return Display.DENSITY_VERY_HIGH;
         }
-
-        if(metrics.densityDpi >= 400 && metrics.densityDpi < 560) {
+        if (dpi < 560) {
             return Display.DENSITY_HD;
         }
-
-        if(metrics.densityDpi >= 560 && metrics.densityDpi <= 640) {
+        if (dpi <= 640) {
             return Display.DENSITY_2HD;
         }
-        if(metrics.densityDpi > 640) {
-            return Display.DENSITY_4K;
-        }
-
-        return Display.DENSITY_MEDIUM;
+        return Display.DENSITY_4K;
     }
 
     public static boolean isImmersive() {
@@ -1404,6 +1496,26 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
             int top = ((Integer) insetsClass.getField("top").get(insetsObject)).intValue();
             int right = ((Integer) insetsClass.getField("right").get(insetsObject)).intValue();
             int bottom = ((Integer) insetsClass.getField("bottom").get(insetsObject)).intValue();
+            // Include mandatory gesture insets (e.g. gesture navigation handle area).
+            // Some devices expose a larger interaction-protected bottom region here
+            // than in plain system bar insets.
+            try {
+                int mandatoryGesturesMask = ((Integer) typeClass
+                        .getMethod("mandatorySystemGestures")
+                        .invoke(null)).intValue();
+                Object mandatoryInsetsObject = insets.getClass()
+                        .getMethod("getInsets", new Class[]{int.class})
+                        .invoke(insets, new Object[]{mandatoryGesturesMask});
+                if (mandatoryInsetsObject != null) {
+                    Class mandatoryInsetsClass = mandatoryInsetsObject.getClass();
+                    left = Math.max(left, ((Integer) mandatoryInsetsClass.getField("left").get(mandatoryInsetsObject)).intValue());
+                    top = Math.max(top, ((Integer) mandatoryInsetsClass.getField("top").get(mandatoryInsetsObject)).intValue());
+                    right = Math.max(right, ((Integer) mandatoryInsetsClass.getField("right").get(mandatoryInsetsObject)).intValue());
+                    bottom = Math.max(bottom, ((Integer) mandatoryInsetsClass.getField("bottom").get(mandatoryInsetsObject)).intValue());
+                }
+            } catch (Throwable t) {
+                // Ignore if mandatory gesture insets are unavailable.
+            }
             result.set(left, top, right, bottom);
         } catch (Throwable t) {
             t.printStackTrace();  // Optional: log this or suppress if expected
@@ -1825,6 +1937,36 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     @Override
     protected void pointerDragged(int[] x, int[] y) {
         super.pointerDragged(x, y);
+    }
+
+    @Override
+    protected void pointerHover(int x, int y) {
+        super.pointerHover(x, y);
+    }
+
+    @Override
+    protected void pointerHover(int[] x, int[] y) {
+        super.pointerHover(x, y);
+    }
+
+    @Override
+    protected void pointerHoverPressed(int x, int y) {
+        super.pointerHoverPressed(x, y);
+    }
+
+    @Override
+    protected void pointerHoverPressed(int[] x, int[] y) {
+        super.pointerHoverPressed(x, y);
+    }
+
+    @Override
+    protected void pointerHoverReleased(int x, int y) {
+        super.pointerHoverReleased(x, y);
+    }
+
+    @Override
+    protected void pointerHoverReleased(int[] x, int[] y) {
+        super.pointerHoverReleased(x, y);
     }
 
     @Override
@@ -2572,6 +2714,17 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     }
 
     @Override
+    public void fillGradient(Object graphics, com.codename1.ui.Gradient gradient,
+            int x, int y, int width, int height) {
+        // Always route Android multi-stop gradients through the native Shader
+        // path - the software rasterizer in the base impl would otherwise
+        // allocate a per-call ARGB buffer on the Bitmap-graphics path used by
+        // mutable images, which on Android emulator hardware GCs heavily for
+        // conic / large fills (the case that hung the instrumentation suite).
+        ((AndroidGraphics) graphics).fillGradient(gradient, x, y, width, height);
+    }
+
+    @Override
     public void drawLabelComponent(Object nativeGraphics, int cmpX, int cmpY, int cmpHeight, int cmpWidth, Style style, String text, Object icon, Object stateIcon, int preserveSpaceForState, int gap, boolean rtl, boolean isOppositeSide, int textPosition, int stringWidth, boolean isTickerRunning, int tickerShiftText, boolean endsWith3Points, int valign) {
         if(AndroidAsyncView.legacyPaintLogic) {
             super.drawLabelComponent(nativeGraphics, cmpX, cmpY, cmpHeight, cmpWidth, style, text, icon, stateIcon, preserveSpaceForState, gap, rtl, isOppositeSide, textPosition, stringWidth, isTickerRunning, tickerShiftText, endsWith3Points, valign);
@@ -2906,6 +3059,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
 
         android.content.Intent intent = getActivity().getIntent();
         if (intent != null) {
+            publishIntentProperties(getActivity(), intent);
             String sharedText = intent.getStringExtra(Intent.EXTRA_TEXT);
             intent.removeExtra(Intent.EXTRA_TEXT);
             Uri u = intent.getData();
@@ -2999,7 +3153,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     private boolean isRunningOnAndroidStudioEmulator() {
         return Build.FINGERPRINT.startsWith("google/sdk_gphone")
                 && Build.FINGERPRINT.endsWith(":user/release-keys")
-                && Build.MANUFACTURER == "Google" && Build.PRODUCT.startsWith("sdk_gphone") && Build.BRAND == "google"
+                && "Google".equals(Build.MANUFACTURER) && Build.PRODUCT.startsWith("sdk_gphone") && "google".equals(Build.BRAND)
                 && Build.MODEL.startsWith("sdk_gphone");
     }
 
@@ -3445,7 +3599,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
      * @inheritDoc
      */
     public void playBuiltinSound(String soundIdentifier) {
-        if (getActivity() != null && Display.SOUND_TYPE_BUTTON_PRESS == soundIdentifier) {
+        if (getActivity() != null && Display.SOUND_TYPE_BUTTON_PRESS.equals(soundIdentifier)) {
             getActivity().runOnUiThread(new Runnable() {
                 public void run() {
                     if (myView != null) {
@@ -4841,23 +4995,63 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
      */
     public void installNativeTheme() {
         hasNativeTheme();
-        if (nativeThemeAvailable) {
-            try {
-                InputStream is;
-                if (android.os.Build.VERSION.SDK_INT < 14 && !isTablet() || Display.getInstance().getProperty("and.hololight", "false").equals("true")) {
-                    is = getResourceAsStream(getClass(), "/androidTheme.res");
+        if (!nativeThemeAvailable) {
+            return;
+        }
+        try {
+            // Resolve desired theme flavor. and.themeMode is the per-platform
+            // hint (auto | modern | material | hololight | legacy); the legacy
+            // name cn1.androidTheme is still honored for back-compat. The
+            // cross-platform shortcut nativeTheme=modern/legacy (deprecated
+            // alias: cn1.nativeTheme) feeds in when no platform-specific hint
+            // is set. Default stays on android_holo_light - what master
+            // shipped and what existing screenshot goldens are anchored
+            // against. The ancient pre-Holo androidTheme.res is only reached
+            // via explicit and.hololight=true (historical back-compat) or
+            // and.themeMode=legacy.
+            Display d = Display.getInstance();
+            String mode = d.getProperty("and.themeMode",
+                    d.getProperty("cn1.androidTheme", null));
+            if (mode == null) {
+                String shared = d.getProperty("nativeTheme",
+                        d.getProperty("cn1.nativeTheme", null));
+                if ("modern".equalsIgnoreCase(shared)) {
+                    mode = "material";
+                } else if ("legacy".equalsIgnoreCase(shared)) {
+                    mode = "hololight";
+                } else if ("true".equalsIgnoreCase(d.getProperty("and.hololight", "false"))) {
+                    mode = "legacy";
                 } else {
-                    is = getResourceAsStream(getClass(), "/android_holo_light.res");
+                    mode = "hololight";
                 }
-                Resources r = Resources.open(is);
-                Hashtable h = r.getTheme(r.getThemeResourceNames()[0]);
-                h.put("@commandBehavior", "Native");
-                UIManager.getInstance().setThemeProps(h);
-                is.close();
-                Display.getInstance().setCommandBehavior(Display.COMMAND_BEHAVIOR_NATIVE);
-            } catch (IOException ex) {
-                ex.printStackTrace();
+            } else {
+                mode = mode.toLowerCase();
             }
+
+            String resPath;
+            if ("material".equals(mode) || "modern".equals(mode) || "auto".equals(mode)) {
+                resPath = "/AndroidMaterialTheme.res";
+            } else if ("hololight".equals(mode) || "holo".equals(mode)) {
+                resPath = "/android_holo_light.res";
+            } else {
+                resPath = "/androidTheme.res";
+            }
+
+            InputStream is = getResourceAsStream(getClass(), resPath);
+            if (is == null) {
+                // Modern theme may not be in the apk if the framework build
+                // skipped native-themes generation. Fall back to Holo Light
+                // (master's default) so the app still boots with a known look.
+                is = getResourceAsStream(getClass(), "/android_holo_light.res");
+            }
+            Resources r = Resources.open(is);
+            Hashtable h = r.getTheme(r.getThemeResourceNames()[0]);
+            h.put("@commandBehavior", "Native");
+            UIManager.getInstance().setThemeProps(h);
+            is.close();
+            Display.getInstance().setCommandBehavior(Display.COMMAND_BEHAVIOR_NATIVE);
+        } catch (IOException ex) {
+            ex.printStackTrace();
         }
     }
 
@@ -5359,6 +5553,26 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         ((AndroidGraphics) nativeGraphics).rotate(angle, x, y);
     }
 
+    @Override
+    public void pushClip(Object graphics) {
+        ((AndroidGraphics) graphics).pushClip();
+    }
+
+    @Override
+    public void popClip(Object graphics) {
+        ((AndroidGraphics) graphics).popClip();
+    }
+
+    @Override
+    public boolean isTranslateMatrixSupported() {
+        return true;
+    }
+
+    @Override
+    public void translateMatrix(Object nativeGraphics, float x, float y) {
+        ((AndroidGraphics) nativeGraphics).translateMatrix(x, y);
+    }
+
     public void shear(Object nativeGraphics, float x, float y) {
     }
 
@@ -5467,7 +5681,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         mgr.removeAllCookie();
     }
     private static CookieManager cookieManager;
-    private static CookieManager getCookieManager() {
+    private static synchronized CookieManager getCookieManager() {
         if (android.os.Build.VERSION.SDK_INT > 28) {
             return CookieManager.getInstance();
         }
@@ -6880,6 +7094,34 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         t.printStackTrace(p);
     }
 
+    private AndroidBiometrics biometrics;
+    private AndroidSecureStorage secureStorage;
+    private AndroidNfc nfc;
+
+    @Override
+    public com.codename1.security.Biometrics getBiometrics() {
+        if (biometrics == null) {
+            biometrics = new AndroidBiometrics();
+        }
+        return biometrics;
+    }
+
+    @Override
+    public com.codename1.security.SecureStorage getSecureStorage() {
+        if (secureStorage == null) {
+            secureStorage = new AndroidSecureStorage();
+        }
+        return secureStorage;
+    }
+
+    @Override
+    public com.codename1.nfc.Nfc getNfc() {
+        if (nfc == null) {
+            nfc = new AndroidNfc(this);
+        }
+        return nfc;
+    }
+
     /**
      * This method returns the platform Location Control
      *
@@ -7499,6 +7741,11 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
 
     @Override
     public void share(String text, String image, String mimeType, Rectangle sourceRect){
+        share(text, image, mimeType, sourceRect, null);
+    }
+
+    @Override
+    public void share(String text, String image, String mimeType, Rectangle sourceRect, final com.codename1.share.ShareResultListener listener) {
         /*if(!checkForPermission(Manifest.permission.READ_PHONE_STATE, "This is required to perform share")){
             return;
         }*/
@@ -7516,7 +7763,81 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
             shareIntent.putExtra(Intent.EXTRA_STREAM, Uri.parse(fixAttachmentPath(image)));
             shareIntent.putExtra(Intent.EXTRA_TEXT, text);
         }
-        getContext().startActivity(Intent.createChooser(shareIntent, "Share with..."));
+
+        Intent chooser;
+        try {
+            if (listener != null && android.os.Build.VERSION.SDK_INT >= 22) {
+                chooser = buildShareChooserWithCallback(shareIntent, listener);
+            } else {
+                chooser = Intent.createChooser(shareIntent, "Share with...");
+            }
+        } catch (Throwable t) {
+            // Fall back to the plain chooser, then synthesize a listener
+            // result so the app doesn't hang on an unfulfilled callback.
+            chooser = Intent.createChooser(shareIntent, "Share with...");
+            if (listener != null) {
+                listener.onResult(com.codename1.share.ShareResult.sharedTo(null));
+            }
+        }
+        getContext().startActivity(chooser);
+    }
+
+    private static int nextShareReceiverId = 1;
+
+    @TargetApi(22)
+    private Intent buildShareChooserWithCallback(Intent shareIntent, final com.codename1.share.ShareResultListener listener) {
+        final Context appCtx = getContext().getApplicationContext();
+        final String action = appCtx.getPackageName() + ".CN1_SHARE_CHOSEN." + (nextShareReceiverId++);
+        // The receiver fires once when the user picks a target. Android
+        // does not expose a dismissal signal for the chooser, so the
+        // listener simply does not fire on user-cancel (see comment
+        // further down).
+        final boolean[] delivered = new boolean[1];
+        BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context ctx, Intent intent) {
+                if (delivered[0]) return;
+                delivered[0] = true;
+                try { appCtx.unregisterReceiver(this); } catch (Throwable ignore) {}
+                String pkg = null;
+                try {
+                    android.content.ComponentName cn = intent.getParcelableExtra(Intent.EXTRA_CHOSEN_COMPONENT);
+                    if (cn != null) pkg = cn.getPackageName();
+                } catch (Throwable ignore) {}
+                listener.onResult(com.codename1.share.ShareResult.sharedTo(pkg));
+            }
+        };
+        IntentFilter filter = new IntentFilter(action);
+        boolean registered = false;
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            // RECEIVER_EXPORTED = 0x2 -- constant exists at runtime on
+            // API 33+ but is not present in older android.jar build deps,
+            // so call the 3-arg overload via reflection to stay source-
+            // compatible.
+            try {
+                java.lang.reflect.Method m = Context.class.getMethod(
+                        "registerReceiver", BroadcastReceiver.class, IntentFilter.class, int.class);
+                m.invoke(appCtx, receiver, filter, Integer.valueOf(0x2));
+                registered = true;
+            } catch (Throwable ignore) {}
+        }
+        if (!registered) {
+            appCtx.registerReceiver(receiver, filter);
+        }
+        // Android's chooser IntentSender callback never fires on
+        // dismissal: there is no public API to observe a user-cancel.
+        // Apps that need a dismissal signal must use Activity-resume.
+
+        Intent pi = new Intent(action).setPackage(appCtx.getPackageName());
+        int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            // FLAG_MUTABLE was introduced in API 31; its numeric value
+            // (0x02000000) is referenced here directly so the source
+            // still compiles against pre-31 android.jar build deps.
+            piFlags |= 0x02000000;
+        }
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(appCtx, 0, pi, piFlags);
+        return Intent.createChooser(shareIntent, "Share with...", pendingIntent.getIntentSender());
     }
 
     /**
@@ -8956,8 +9277,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
             }
         }
 
-        boolean has = hasAndroidMarket();
-        if (!has) {
+        if (!hasAndroidMarket()) {
             Log.d("Codename One", "Device doesn't have Android market/google play can't register for push!");
             return;
         }
@@ -8965,15 +9285,8 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         if (id == null) {
             id = Display.getInstance().getProperty("gcm.sender_id", null);
         }
-        if(has) {
-            Log.d("Codename One", "Sending async push request for id: " + id);
-            ((CodenameOneActivity) getActivity()).registerForPush(id);
-        } else {
-            PushNotificationService.forceStartService(getActivity().getPackageName() + ".PushNotificationService", getActivity());
-            if(!registerServerPush(id, getApplicationKey(), (byte)10, "", getPackageName())) {
-                sendPushRegistrationError("Server registration error", 1);
-            }
-        }
+        Log.d("Codename One", "Sending async push request for id: " + id);
+        ((CodenameOneActivity) getActivity()).registerForPush(id);
     }
 
     public static void stopPollingLoop() {
@@ -9144,7 +9457,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
                 @Override
                 public void save(InputStream image, OutputStream response, String format, int width, int height, float quality) throws IOException {
                     Bitmap.CompressFormat f = Bitmap.CompressFormat.PNG;
-                    if (format == FORMAT_JPEG) {
+                    if (FORMAT_JPEG.equals(format)) {
                         f = Bitmap.CompressFormat.JPEG;
                     }
                     Image img = Image.createImage(image).scaled(width, height);
@@ -9231,7 +9544,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
                 @Override
                 protected void saveImage(Image img, OutputStream response, String format, float quality) throws IOException {
                     Bitmap.CompressFormat f = Bitmap.CompressFormat.PNG;
-                    if (format == FORMAT_JPEG) {
+                    if (FORMAT_JPEG.equals(format)) {
                         f = Bitmap.CompressFormat.JPEG;
                     }
                     Bitmap b = (Bitmap) img.getImage();
@@ -9240,7 +9553,7 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
 
                 @Override
                 public boolean isFormatSupported(String format) {
-                    return format == FORMAT_JPEG || format == FORMAT_PNG;
+                    return FORMAT_JPEG.equals(format) || FORMAT_PNG.equals(format);
                 }
             };
         }
@@ -9653,6 +9966,44 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         } catch(Throwable t) {
             return true;
         }
+    }
+
+    @Override
+    public com.codename1.impl.CameraImpl createCameraImpl() {
+        Activity act = getActivity();
+        if (act == null) return null;
+        return new AndroidCameraImpl(act);
+    }
+
+    // Deeper-network connectivity platform factories. Each returns a small
+    // platform-specific class living under
+    // com.codename1.impl.android.connectivity. Those classes are loaded
+    // lazily on first call so apps that never reference WiFi / Bonjour /
+    // USB / NetworkTypeListener never pay the loading cost.
+
+    @Override
+    protected com.codename1.io.wifi.WifiPlatform createWifiPlatform() {
+        return new com.codename1.impl.android.connectivity.AndroidWifiPlatform();
+    }
+
+    @Override
+    protected com.codename1.io.wifi.WifiDirectPlatform createWifiDirectPlatform() {
+        return new com.codename1.impl.android.connectivity.AndroidWifiDirectPlatform();
+    }
+
+    @Override
+    protected com.codename1.io.bonjour.BonjourPlatform createBonjourPlatform() {
+        return new com.codename1.impl.android.connectivity.AndroidBonjourPlatform();
+    }
+
+    @Override
+    protected com.codename1.io.usb.UsbPlatform createUsbPlatform() {
+        return new com.codename1.impl.android.connectivity.AndroidUsbPlatform();
+    }
+
+    @Override
+    protected com.codename1.io.NetworkTypePlatform createNetworkTypePlatform() {
+        return new com.codename1.impl.android.connectivity.AndroidNetworkTypePlatform();
     }
 
     public String getCurrentAccessPoint() {
@@ -10237,9 +10588,13 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         }
 
         public void writeToStream(byte[] param) {
+            writeToStream(param, 0, param.length);
+        }
+
+        public void writeToStream(byte[] param, int offset, int len) {
             try {
                 OutputStream os = getOutput();
-                os.write(param);
+                os.write(param, offset, len);
                 os.flush();
             } catch(IOException err) {
                 errorMessage = err.toString();
@@ -10384,6 +10739,21 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     @Override
     public void writeToSocketStream(Object socket, byte[] data) {
         ((SocketImpl)socket).writeToStream(data);
+    }
+
+    @Override
+    public boolean isWebSocketSupported() {
+        return true;
+    }
+
+    @Override
+    public com.codename1.impl.WebSocketImpl createWebSocketImpl(String url) {
+        return new AndroidWebSocketImpl(url);
+    }
+
+    @Override
+    public void writeToSocketStream(Object socket, byte[] data, int offset, int len) {
+        ((SocketImpl)socket).writeToStream(data, offset, len);
     }
 
     //Begin new Graphics Work
@@ -10898,6 +11268,11 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         PendingIntent pendingContentIntent = createPendingIntent(getContext(), 0, contentIntent);
 
         notificationIntent.putExtra(LocalNotificationPublisher.NOTIFICATION_INTENT, pendingContentIntent);
+        // carry the configured content intent as a template so the publisher can build
+        // a distinct per-action PendingIntent (with the action id and any remote input)
+        if (!notif.getActions().isEmpty()) {
+            notificationIntent.putExtra(LocalNotificationPublisher.NOTIFICATION_CONTENT_TEMPLATE, contentIntent);
+        }
 
 
         PendingIntent pendingIntent = getBroadcastPendingIntent(getContext(), 0, notificationIntent);
@@ -10946,6 +11321,54 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         b.putString("NOTIF_SOUND", notif.getAlertSound());
         b.putString("NOTIF_IMAGE", notif.getAlertImage());
         b.putInt("NOTIF_NUMBER", notif.getBadgeNumber());
+        b.putString("NOTIF_CHANNEL", notif.getChannelId());
+        b.putString("NOTIF_GROUP", notif.getGroupId());
+        b.putBoolean("NOTIF_GROUP_SUMMARY", notif.isGroupSummary());
+        b.putBoolean("NOTIF_FULLSCREEN", notif.isFullScreenIntent());
+        b.putBoolean("NOTIF_TIME_SENSITIVE", notif.isTimeSensitive());
+        b.putBoolean("NOTIF_ONGOING", notif.isOngoing());
+        b.putInt("NOTIF_PROGRESS_MAX", notif.getProgressMax());
+        b.putInt("NOTIF_PROGRESS", notif.getProgress());
+        b.putBoolean("NOTIF_PROGRESS_INDETERMINATE", notif.isProgressIndeterminate());
+        b.putString("NOTIF_CUSTOM_VIEW", notif.getCustomView());
+        java.util.List<LocalNotification.Action> actions = notif.getActions();
+        if (!actions.isEmpty()) {
+            ArrayList<String> ids = new ArrayList<String>();
+            ArrayList<String> titles = new ArrayList<String>();
+            ArrayList<String> icons = new ArrayList<String>();
+            ArrayList<String> placeholders = new ArrayList<String>();
+            ArrayList<String> buttons = new ArrayList<String>();
+            for (LocalNotification.Action a : actions) {
+                ids.add(a.getId());
+                titles.add(a.getTitle() == null ? "" : a.getTitle());
+                icons.add(a.getIcon() == null ? "" : a.getIcon());
+                placeholders.add(a.getTextInputPlaceholder() == null ? "" : a.getTextInputPlaceholder());
+                buttons.add(a.getTextInputButtonText() == null ? "" : a.getTextInputButtonText());
+            }
+            b.putStringArrayList("NOTIF_ACTION_IDS", ids);
+            b.putStringArrayList("NOTIF_ACTION_TITLES", titles);
+            b.putStringArrayList("NOTIF_ACTION_ICONS", icons);
+            b.putStringArrayList("NOTIF_ACTION_PLACEHOLDERS", placeholders);
+            b.putStringArrayList("NOTIF_ACTION_BUTTONS", buttons);
+        }
+        LocalNotification.MessagingStyle ms = notif.getMessagingStyle();
+        if (ms != null) {
+            b.putString("NOTIF_MSG_SELF", ms.getSelfDisplayName());
+            b.putString("NOTIF_MSG_TITLE", ms.getConversationTitle());
+            b.putBoolean("NOTIF_MSG_GROUP", ms.isGroupConversation());
+            ArrayList<String> texts = new ArrayList<String>();
+            ArrayList<String> senders = new ArrayList<String>();
+            long[] times = new long[ms.getMessages().size()];
+            int i = 0;
+            for (LocalNotification.MessagingStyle.Message m : ms.getMessages()) {
+                texts.add(m.getText() == null ? "" : m.getText());
+                senders.add(m.getSenderName() == null ? "" : m.getSenderName());
+                times[i++] = m.getTimestamp();
+            }
+            b.putStringArrayList("NOTIF_MSG_TEXTS", texts);
+            b.putStringArrayList("NOTIF_MSG_SENDERS", senders);
+            b.putLongArray("NOTIF_MSG_TIMES", times);
+        }
         return b;
     }
 
@@ -10957,7 +11380,405 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         n.setAlertSound(b.getString("NOTIF_SOUND"));
         n.setAlertImage(b.getString("NOTIF_IMAGE"));
         n.setBadgeNumber(b.getInt("NOTIF_NUMBER"));
+        // new fields are guarded so bundles serialized by older builds still parse
+        if (b.containsKey("NOTIF_CHANNEL")) {
+            n.setChannelId(b.getString("NOTIF_CHANNEL"));
+        }
+        if (b.containsKey("NOTIF_GROUP")) {
+            n.setGroup(b.getString("NOTIF_GROUP"));
+        }
+        n.setGroupSummary(b.getBoolean("NOTIF_GROUP_SUMMARY", false));
+        n.setFullScreenIntent(b.getBoolean("NOTIF_FULLSCREEN", false));
+        n.setTimeSensitive(b.getBoolean("NOTIF_TIME_SENSITIVE", false));
+        n.setOngoing(b.getBoolean("NOTIF_ONGOING", false));
+        int progressMax = b.getInt("NOTIF_PROGRESS_MAX", 0);
+        if (progressMax > 0) {
+            n.setProgress(progressMax, b.getInt("NOTIF_PROGRESS", 0));
+        }
+        n.setIndeterminateProgress(b.getBoolean("NOTIF_PROGRESS_INDETERMINATE", false));
+        if (b.containsKey("NOTIF_CUSTOM_VIEW")) {
+            n.setCustomView(b.getString("NOTIF_CUSTOM_VIEW"));
+        }
+        ArrayList<String> ids = b.getStringArrayList("NOTIF_ACTION_IDS");
+        if (ids != null) {
+            ArrayList<String> titles = b.getStringArrayList("NOTIF_ACTION_TITLES");
+            ArrayList<String> icons = b.getStringArrayList("NOTIF_ACTION_ICONS");
+            ArrayList<String> placeholders = b.getStringArrayList("NOTIF_ACTION_PLACEHOLDERS");
+            ArrayList<String> buttons = b.getStringArrayList("NOTIF_ACTION_BUTTONS");
+            for (int i = 0; i < ids.size(); i++) {
+                String placeholder = placeholders != null ? emptyToNull(placeholders.get(i)) : null;
+                String button = buttons != null ? emptyToNull(buttons.get(i)) : null;
+                if (placeholder != null || button != null) {
+                    n.addInputAction(ids.get(i), titles.get(i), placeholder, button);
+                } else {
+                    String icon = icons != null ? emptyToNull(icons.get(i)) : null;
+                    n.addAction(new LocalNotification.Action(ids.get(i), titles.get(i), icon));
+                }
+            }
+        }
+        if (b.containsKey("NOTIF_MSG_SELF")) {
+            LocalNotification.MessagingStyle ms = n.asMessagingStyle(b.getString("NOTIF_MSG_SELF"));
+            ms.conversationTitle(b.getString("NOTIF_MSG_TITLE"));
+            ms.groupConversation(b.getBoolean("NOTIF_MSG_GROUP", false));
+            ArrayList<String> texts = b.getStringArrayList("NOTIF_MSG_TEXTS");
+            ArrayList<String> senders = b.getStringArrayList("NOTIF_MSG_SENDERS");
+            long[] times = b.getLongArray("NOTIF_MSG_TIMES");
+            if (texts != null) {
+                for (int i = 0; i < texts.size(); i++) {
+                    ms.addMessage(texts.get(i),
+                            times != null && i < times.length ? times[i] : 0,
+                            senders != null ? emptyToNull(senders.get(i)) : null);
+                }
+            }
+        }
         return n;
+    }
+
+    private static String emptyToNull(String s) {
+        return s == null || s.length() == 0 ? null : s;
+    }
+
+    @Override
+    public void requestNotificationPermission(final NotificationPermissionRequest request, final NotificationPermissionCallback callback) {
+        if (callback == null) {
+            return;
+        }
+        final boolean granted;
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            granted = checkForPermission("android.permission.POST_NOTIFICATIONS", "This is required to receive notifications", true);
+        } else {
+            // notifications are allowed by default below Android 13
+            granted = true;
+        }
+        Display.getInstance().callSerially(new Runnable() {
+            public void run() {
+                callback.notificationPermissionResult(new NotificationPermissionResult(granted
+                        ? NotificationPermissionResult.AuthorizationLevel.AUTHORIZED
+                        : NotificationPermissionResult.AuthorizationLevel.DENIED));
+            }
+        });
+    }
+
+    @Override
+    public void registerNotificationChannel(NotificationChannelBuilder builder) {
+        if (builder == null || android.os.Build.VERSION.SDK_INT < 26) {
+            return;
+        }
+        try {
+            NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+            Class<?> clsChannel = Class.forName("android.app.NotificationChannel");
+            Constructor<?> ctor = clsChannel.getConstructor(String.class, CharSequence.class, int.class);
+            // map our 0..5 importance onto the platform IMPORTANCE_* (NONE=0 .. MAX=5)
+            Object channel = ctor.newInstance(builder.getId(), builder.getName(), builder.getImportance());
+            if (builder.getDescription() != null) {
+                clsChannel.getMethod("setDescription", String.class).invoke(channel, builder.getDescription());
+            }
+            clsChannel.getMethod("enableLights", boolean.class).invoke(channel, builder.isLightsEnabled());
+            if (builder.isLightsEnabled()) {
+                clsChannel.getMethod("setLightColor", int.class).invoke(channel, builder.getLightColor());
+            }
+            clsChannel.getMethod("enableVibration", boolean.class).invoke(channel, builder.isVibrationEnabled());
+            if (builder.getVibrationPattern() != null) {
+                clsChannel.getMethod("setVibrationPattern", long[].class).invoke(channel, (Object) builder.getVibrationPattern());
+            }
+            clsChannel.getMethod("setLockscreenVisibility", int.class).invoke(channel, builder.getLockscreenVisibility());
+            clsChannel.getMethod("setShowBadge", boolean.class).invoke(channel, builder.isShowBadge());
+            if (builder.getGroup() != null) {
+                clsChannel.getMethod("setGroup", String.class).invoke(channel, builder.getGroup());
+            }
+            String sound = builder.getSound();
+            if (sound != null && sound.length() > 0) {
+                sound = sound.toLowerCase();
+                Uri uri = Uri.parse("android.resource://" + getContext().getApplicationInfo().packageName + "/raw"
+                        + sound.substring(0, sound.indexOf(".")));
+                android.media.AudioAttributes attrs = new android.media.AudioAttributes.Builder()
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                        .build();
+                clsChannel.getMethod("setSound", Uri.class, android.media.AudioAttributes.class).invoke(channel, uri, attrs);
+            }
+            nm.getClass().getMethod("createNotificationChannel", clsChannel).invoke(nm, channel);
+        } catch (Throwable t) {
+            com.codename1.io.Log.e(t);
+        }
+    }
+
+    @Override
+    public void deleteNotificationChannel(String channelId) {
+        if (channelId == null || android.os.Build.VERSION.SDK_INT < 26) {
+            return;
+        }
+        try {
+            NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+            nm.getClass().getMethod("deleteNotificationChannel", String.class).invoke(nm, channelId);
+        } catch (Throwable t) {
+            com.codename1.io.Log.e(t);
+        }
+    }
+
+    @Override
+    public void createNotificationChannelGroup(String groupId, String groupName) {
+        if (groupId == null || android.os.Build.VERSION.SDK_INT < 26) {
+            return;
+        }
+        try {
+            NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+            Class<?> clsGroup = Class.forName("android.app.NotificationChannelGroup");
+            Constructor<?> ctor = clsGroup.getConstructor(String.class, CharSequence.class);
+            Object group = ctor.newInstance(groupId, groupName);
+            nm.getClass().getMethod("createNotificationChannelGroup", clsGroup).invoke(nm, group);
+        } catch (Throwable t) {
+            com.codename1.io.Log.e(t);
+        }
+    }
+
+    @Override
+    public void subscribeToPushTopic(final String topic) {
+        invokeFirebaseTopic("subscribeToTopic", topic);
+    }
+
+    @Override
+    public void unsubscribeFromPushTopic(final String topic) {
+        invokeFirebaseTopic("unsubscribeFromTopic", topic);
+    }
+
+    private void invokeFirebaseTopic(String methodName, String topic) {
+        try {
+            Class<?> cls = Class.forName("com.google.firebase.messaging.FirebaseMessaging");
+            Object instance = cls.getMethod("getInstance").invoke(null);
+            cls.getMethod(methodName, String.class).invoke(instance, topic);
+        } catch (ClassNotFoundException notAvailable) {
+            com.codename1.io.Log.p("Firebase Cloud Messaging is not available; topic '" + topic
+                    + "' subscription must be handled server side");
+        } catch (Throwable t) {
+            com.codename1.io.Log.e(t);
+        }
+    }
+
+    @Override
+    public boolean isReceiveSharedContentSupported() {
+        return true;
+    }
+
+    private static SharedContent pendingSharedContent;
+
+    /// Delivers shared content received from another app. If the CN1 app instance is
+    /// running it is dispatched immediately on the EDT; otherwise it is held until the app
+    /// finishes starting and `#deliverPendingSharedContent()` is invoked.
+    static void deliverSharedContent(SharedContent content) {
+        if (content == null) {
+            return;
+        }
+        Object app = CodenameOneImplementation.getCurrentApplicationInstance();
+        if (app != null && Display.isInitialized()) {
+            dispatchSharedContent(app, content);
+        } else {
+            pendingSharedContent = content;
+        }
+    }
+
+    /// Invoked once the app has started to flush any shared content that arrived before the
+    /// app instance existed.
+    public static void deliverPendingSharedContent() {
+        SharedContent c = pendingSharedContent;
+        pendingSharedContent = null;
+        Object app = CodenameOneImplementation.getCurrentApplicationInstance();
+        if (c != null && app != null) {
+            dispatchSharedContent(app, c);
+        }
+    }
+
+    private static void dispatchSharedContent(final Object app, final SharedContent content) {
+        if (!(app instanceof com.codename1.system.Lifecycle)) {
+            return;
+        }
+        Display.getInstance().callSerially(new Runnable() {
+            public void run() {
+                ((com.codename1.system.Lifecycle) app).onReceivedSharedContent(content);
+            }
+        });
+    }
+
+    // ---- Constraint-aware background work (JobScheduler) ----
+
+    @Override
+    public boolean isBackgroundWorkSupported() {
+        return android.os.Build.VERSION.SDK_INT >= 21;
+    }
+
+    private static int jobIdFor(String id) {
+        return (id.hashCode() & 0x7fffffff) % 1000000 + 1000;
+    }
+
+    @Override
+    public void scheduleBackgroundWork(WorkRequest request) {
+        if (android.os.Build.VERSION.SDK_INT < 21) {
+            return;
+        }
+        try {
+            android.app.job.JobScheduler scheduler =
+                    (android.app.job.JobScheduler) getContext().getSystemService(Context.JOB_SCHEDULER_SERVICE);
+            android.content.ComponentName component =
+                    new android.content.ComponentName(getContext(), CodenameOneJobService.class);
+            android.app.job.JobInfo.Builder builder =
+                    new android.app.job.JobInfo.Builder(jobIdFor(request.getId()), component);
+
+            if (request.isRequiresUnmeteredNetwork()) {
+                builder.setRequiredNetworkType(android.app.job.JobInfo.NETWORK_TYPE_UNMETERED);
+            } else if (request.isRequiresNetwork()) {
+                builder.setRequiredNetworkType(android.app.job.JobInfo.NETWORK_TYPE_ANY);
+            }
+            builder.setRequiresCharging(request.isRequiresCharging());
+            if (android.os.Build.VERSION.SDK_INT >= 23) {
+                builder.setRequiresDeviceIdle(request.isRequiresIdle());
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                builder.setRequiresBatteryNotLow(request.isRequiresBatteryNotLow());
+            }
+            if (request.isPeriodic()) {
+                builder.setPeriodic(Math.max(15 * 60 * 1000L, request.getMinIntervalMillis()));
+            } else {
+                if (request.getInitialDelayMillis() > 0) {
+                    builder.setMinimumLatency(request.getInitialDelayMillis());
+                }
+                builder.setOverrideDeadline(Math.max(request.getInitialDelayMillis(), 0) + 60 * 60 * 1000L);
+            }
+
+            PersistableBundle extras = new PersistableBundle();
+            extras.putString(CodenameOneJobService.EXTRA_WORKER_CLASS, request.getWorkerClass());
+            extras.putString(CodenameOneJobService.EXTRA_WORK_ID, request.getId());
+            for (java.util.Map.Entry<String, String> e : request.getInputData().entrySet()) {
+                extras.putString(CodenameOneJobService.INPUT_PREFIX + e.getKey(), e.getValue());
+            }
+            builder.setExtras(extras);
+            scheduler.schedule(builder.build());
+        } catch (Throwable t) {
+            com.codename1.io.Log.e(t);
+        }
+    }
+
+    @Override
+    public void cancelBackgroundWork(String workId) {
+        if (android.os.Build.VERSION.SDK_INT < 21) {
+            return;
+        }
+        try {
+            android.app.job.JobScheduler scheduler =
+                    (android.app.job.JobScheduler) getContext().getSystemService(Context.JOB_SCHEDULER_SERVICE);
+            scheduler.cancel(jobIdFor(workId));
+        } catch (Throwable t) {
+            com.codename1.io.Log.e(t);
+        }
+    }
+
+    @Override
+    public boolean isBackgroundProcessingSupported() {
+        return android.os.Build.VERSION.SDK_INT >= 21;
+    }
+
+    @Override
+    public void scheduleBackgroundProcessing(String id, long earliestBeginEpochMs, boolean requiresNetwork, boolean requiresPower, Runnable task) {
+        if (android.os.Build.VERSION.SDK_INT < 21 || task == null) {
+            return;
+        }
+        try {
+            CodenameOneJobService.registerProcessingRunnable(id, task);
+            android.app.job.JobScheduler scheduler =
+                    (android.app.job.JobScheduler) getContext().getSystemService(Context.JOB_SCHEDULER_SERVICE);
+            android.content.ComponentName component =
+                    new android.content.ComponentName(getContext(), CodenameOneJobService.class);
+            android.app.job.JobInfo.Builder builder =
+                    new android.app.job.JobInfo.Builder(jobIdFor("proc-" + id), component);
+            if (requiresNetwork) {
+                builder.setRequiredNetworkType(android.app.job.JobInfo.NETWORK_TYPE_ANY);
+            }
+            builder.setRequiresCharging(requiresPower);
+            long delay = earliestBeginEpochMs <= 0 ? 0 : Math.max(0, earliestBeginEpochMs - System.currentTimeMillis());
+            if (delay > 0) {
+                builder.setMinimumLatency(delay);
+            }
+            builder.setOverrideDeadline(delay + 60 * 60 * 1000L);
+            PersistableBundle extras = new PersistableBundle();
+            extras.putString(CodenameOneJobService.EXTRA_PROCESSING_ID, id);
+            builder.setExtras(extras);
+            scheduler.schedule(builder.build());
+        } catch (Throwable t) {
+            com.codename1.io.Log.e(t);
+        }
+    }
+
+    @Override
+    public void cancelBackgroundProcessing(String id) {
+        CodenameOneJobService.unregisterProcessingRunnable(id);
+        if (android.os.Build.VERSION.SDK_INT < 21) {
+            return;
+        }
+        try {
+            android.app.job.JobScheduler scheduler =
+                    (android.app.job.JobScheduler) getContext().getSystemService(Context.JOB_SCHEDULER_SERVICE);
+            scheduler.cancel(jobIdFor("proc-" + id));
+        } catch (Throwable t) {
+            com.codename1.io.Log.e(t);
+        }
+    }
+
+    // ---- Foreground service ----
+
+    @Override
+    public boolean isForegroundServiceSupported() {
+        return true;
+    }
+
+    @Override
+    public Object startForegroundService(String channelId, String title, String body, String iconName, ForegroundService.Task task, ForegroundService handle) {
+        int token = CodenameOneForegroundService.registerTask(task, handle, channelId, title, body, iconName);
+        try {
+            Intent intent = new Intent(getContext(), CodenameOneForegroundService.class);
+            intent.setAction(CodenameOneForegroundService.ACTION_START);
+            intent.putExtra(CodenameOneForegroundService.EXTRA_TOKEN, token);
+            intent.putExtra(CodenameOneForegroundService.EXTRA_CHANNEL, channelId);
+            intent.putExtra(CodenameOneForegroundService.EXTRA_TITLE, title);
+            intent.putExtra(CodenameOneForegroundService.EXTRA_BODY, body);
+            intent.putExtra(CodenameOneForegroundService.EXTRA_ICON, iconName);
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                getContext().startForegroundService(intent);
+            } else {
+                getContext().startService(intent);
+            }
+        } catch (Throwable t) {
+            com.codename1.io.Log.e(t);
+        }
+        return Integer.valueOf(token);
+    }
+
+    @Override
+    public void updateForegroundServiceNotification(Object nativeHandle, String title, String body) {
+        try {
+            Intent intent = new Intent(getContext(), CodenameOneForegroundService.class);
+            intent.setAction(CodenameOneForegroundService.ACTION_UPDATE);
+            if (nativeHandle instanceof Integer) {
+                intent.putExtra(CodenameOneForegroundService.EXTRA_TOKEN, ((Integer) nativeHandle).intValue());
+            }
+            intent.putExtra(CodenameOneForegroundService.EXTRA_TITLE, title);
+            intent.putExtra(CodenameOneForegroundService.EXTRA_BODY, body);
+            getContext().startService(intent);
+        } catch (Throwable t) {
+            com.codename1.io.Log.e(t);
+        }
+    }
+
+    @Override
+    public void stopForegroundService(Object nativeHandle) {
+        try {
+            Intent intent = new Intent(getContext(), CodenameOneForegroundService.class);
+            intent.setAction(CodenameOneForegroundService.ACTION_STOP);
+            if (nativeHandle instanceof Integer) {
+                intent.putExtra(CodenameOneForegroundService.EXTRA_TOKEN, ((Integer) nativeHandle).intValue());
+            }
+            getContext().startService(intent);
+        } catch (Throwable t) {
+            com.codename1.io.Log.e(t);
+        }
     }
 
     boolean brokenGaussian;
@@ -11181,5 +12002,124 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
                 }
             }
         });
+    }
+
+    // ================================================================
+    // Crypto bridge -- routes com.codename1.security onto the standard
+    // Android JCE provider.
+
+    private static java.security.SecureRandom androidSecureRandom;
+    private static final Object androidSecureRandomSync = new Object();
+
+    private static java.security.SecureRandom androidSecureRandom() {
+        synchronized (androidSecureRandomSync) {
+            if (androidSecureRandom == null) {
+                androidSecureRandom = new java.security.SecureRandom();
+            }
+            return androidSecureRandom;
+        }
+    }
+
+    @Override
+    public void secureRandomBytes(byte[] out) {
+        if (out == null) return;
+        androidSecureRandom().nextBytes(out);
+    }
+
+    @Override
+    public byte[] aesEncrypt(String transformation, byte[] key, byte[] iv, byte[] aad, byte[] plaintext) {
+        return androidAes(transformation, key, iv, aad, plaintext, javax.crypto.Cipher.ENCRYPT_MODE);
+    }
+
+    @Override
+    public byte[] aesDecrypt(String transformation, byte[] key, byte[] iv, byte[] aad, byte[] ciphertext) {
+        return androidAes(transformation, key, iv, aad, ciphertext, javax.crypto.Cipher.DECRYPT_MODE);
+    }
+
+    private static byte[] androidAes(String transformation, byte[] key, byte[] iv, byte[] aad, byte[] input, int mode) {
+        try {
+            javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance(transformation);
+            javax.crypto.spec.SecretKeySpec keySpec = new javax.crypto.spec.SecretKeySpec(key, "AES");
+            String tu = transformation == null ? "" : transformation.toUpperCase();
+            if (tu.indexOf("GCM") >= 0) {
+                cipher.init(mode, keySpec, new javax.crypto.spec.GCMParameterSpec(128, iv));
+            } else if (iv != null) {
+                cipher.init(mode, keySpec, new javax.crypto.spec.IvParameterSpec(iv));
+            } else {
+                cipher.init(mode, keySpec);
+            }
+            if (aad != null && aad.length > 0) {
+                cipher.updateAAD(aad);
+            }
+            return cipher.doFinal(input);
+        } catch (java.security.GeneralSecurityException e) {
+            throw new RuntimeException("AES " + (mode == javax.crypto.Cipher.ENCRYPT_MODE ? "encrypt" : "decrypt") + " failed: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public byte[] rsaEncrypt(String transformation, byte[] publicKeyX509, byte[] plaintext) {
+        try {
+            javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance(transformation);
+            java.security.KeyFactory kf = java.security.KeyFactory.getInstance("RSA");
+            java.security.PublicKey key = kf.generatePublic(new java.security.spec.X509EncodedKeySpec(publicKeyX509));
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key);
+            return cipher.doFinal(plaintext);
+        } catch (java.security.GeneralSecurityException e) {
+            throw new RuntimeException("RSA encrypt failed: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public byte[] rsaDecrypt(String transformation, byte[] privateKeyPkcs8, byte[] ciphertext) {
+        try {
+            javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance(transformation);
+            java.security.KeyFactory kf = java.security.KeyFactory.getInstance("RSA");
+            java.security.PrivateKey key = kf.generatePrivate(new java.security.spec.PKCS8EncodedKeySpec(privateKeyPkcs8));
+            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, key);
+            return cipher.doFinal(ciphertext);
+        } catch (java.security.GeneralSecurityException e) {
+            throw new RuntimeException("RSA decrypt failed: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public byte[] cryptoSign(String algorithm, String keyAlgorithm, byte[] privateKeyPkcs8, byte[] data) {
+        try {
+            java.security.KeyFactory kf = java.security.KeyFactory.getInstance(keyAlgorithm);
+            java.security.PrivateKey priv = kf.generatePrivate(new java.security.spec.PKCS8EncodedKeySpec(privateKeyPkcs8));
+            java.security.Signature sig = java.security.Signature.getInstance(algorithm);
+            sig.initSign(priv);
+            sig.update(data);
+            return sig.sign();
+        } catch (java.security.GeneralSecurityException e) {
+            throw new RuntimeException("sign failed: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public boolean cryptoVerify(String algorithm, String keyAlgorithm, byte[] publicKeyX509, byte[] data, byte[] signature) {
+        try {
+            java.security.KeyFactory kf = java.security.KeyFactory.getInstance(keyAlgorithm);
+            java.security.PublicKey pub = kf.generatePublic(new java.security.spec.X509EncodedKeySpec(publicKeyX509));
+            java.security.Signature sig = java.security.Signature.getInstance(algorithm);
+            sig.initVerify(pub);
+            sig.update(data);
+            return sig.verify(signature);
+        } catch (java.security.GeneralSecurityException e) {
+            throw new RuntimeException("verify failed: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public byte[][] generateRsaKeyPair(int bits) {
+        try {
+            java.security.KeyPairGenerator kpg = java.security.KeyPairGenerator.getInstance("RSA");
+            kpg.initialize(bits);
+            java.security.KeyPair kp = kpg.generateKeyPair();
+            return new byte[][]{ kp.getPublic().getEncoded(), kp.getPrivate().getEncoded() };
+        } catch (java.security.GeneralSecurityException e) {
+            throw new RuntimeException("RSA keypair generation failed: " + e.getMessage());
+        }
     }
 }

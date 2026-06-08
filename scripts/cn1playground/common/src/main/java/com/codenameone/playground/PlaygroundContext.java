@@ -1,10 +1,14 @@
 package com.codenameone.playground;
 
+import com.codename1.ui.CN;
+import com.codename1.ui.Component;
 import com.codename1.ui.Container;
 import com.codename1.ui.Dialog;
 import com.codename1.ui.Form;
-import com.codename1.ui.CN;
 import com.codename1.ui.util.Resources;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Host objects and helpers exposed to user scripts.
@@ -16,17 +20,35 @@ public class PlaygroundContext {
         void log(String message);
     }
 
+    /** Receives runtime errors that happen after a script has finished its
+     * initial evaluation — typically a lambda body that fails on a later
+     * event firing. Without this hook the EDT silently swallows the
+     * exception and the user sees a UI that no longer reacts to input. */
+    public interface RuntimeErrorReporter {
+        void reportRuntimeError(String message, Throwable cause);
+    }
+
     private final Form hostForm;
     private final Container previewRoot;
     private final Resources theme;
     private final Logger logger;
+    private final RuntimeErrorReporter runtimeErrorReporter;
     private Form shownForm;
+    private final List<Component> createdComponents = new ArrayList<Component>();
+    private Form firstCreatedForm;
+    private Component firstCreatedComponent;
 
     public PlaygroundContext(Form hostForm, Container previewRoot, Resources theme, Logger logger) {
+        this(hostForm, previewRoot, theme, logger, null);
+    }
+
+    public PlaygroundContext(Form hostForm, Container previewRoot, Resources theme, Logger logger,
+            RuntimeErrorReporter runtimeErrorReporter) {
         this.hostForm = hostForm;
         this.previewRoot = previewRoot;
         this.theme = theme;
         this.logger = logger;
+        this.runtimeErrorReporter = runtimeErrorReporter;
     }
 
     public Form getHostForm() {
@@ -56,6 +78,17 @@ public class PlaygroundContext {
     public static void debug(String message) {
     }
 
+    public static void notifyConstructed(Object instance) {
+        if (!(instance instanceof Component)) {
+            return;
+        }
+        PlaygroundContext context = CURRENT.get();
+        if (context == null) {
+            return;
+        }
+        context.recordCreatedComponent((Component) instance);
+    }
+
     public static boolean interceptMethodInvocation(Object target, String methodName, Object[] args) {
         PlaygroundContext context = CURRENT.get();
         if (context == null) {
@@ -79,6 +112,12 @@ public class PlaygroundContext {
         logger.log(message);
     }
 
+    public void reportRuntimeError(String message, Throwable cause) {
+        if (runtimeErrorReporter != null) {
+            runtimeErrorReporter.reportRuntimeError(message, cause);
+        }
+    }
+
     public void captureShownForm(Form form) {
         shownForm = form;
     }
@@ -89,6 +128,37 @@ public class PlaygroundContext {
 
     public void clearShownForm() {
         shownForm = null;
+    }
+
+    public void recordCreatedComponent(Component component) {
+        if (component == null || component == hostForm || component == previewRoot) {
+            return;
+        }
+        if (firstCreatedComponent == null) {
+            firstCreatedComponent = component;
+        }
+        if (firstCreatedForm == null && component instanceof Form) {
+            firstCreatedForm = (Form) component;
+        }
+        createdComponents.add(component);
+    }
+
+    public Component getFirstCreatedComponent() {
+        return firstCreatedComponent;
+    }
+
+    public Form getFirstCreatedForm() {
+        return firstCreatedForm;
+    }
+
+    public List<Component> getCreatedComponents() {
+        return createdComponents;
+    }
+
+    public void clearCreatedComponents() {
+        createdComponents.clear();
+        firstCreatedForm = null;
+        firstCreatedComponent = null;
     }
 
     public void clearPreview() {

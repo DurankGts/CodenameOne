@@ -39,14 +39,13 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class BytecodeInstructionIntegrationTest {
 
+    // Shared @MethodSource for the integration suites (RuntimeSemantics, Target,
+    // Bytecode, CleanTarget, Smoke, NativeAudit, FileClass, ...). Uses the
+    // diagonal compiler set -- each bytecode target compiled by its matching JDK
+    // (8->8 .. 25->25) -- rather than the full (compiler x target) cross-product,
+    // which re-tested the same bytecode shapes. See CompilerHelper.getDiagonalCompilers.
     static Stream<CompilerHelper.CompilerConfig> provideCompilerConfigs() {
-        List<CompilerHelper.CompilerConfig> configs = new ArrayList<>();
-        configs.addAll(CompilerHelper.getAvailableCompilers("1.8"));
-        configs.addAll(CompilerHelper.getAvailableCompilers("11"));
-        configs.addAll(CompilerHelper.getAvailableCompilers("17"));
-        configs.addAll(CompilerHelper.getAvailableCompilers("21"));
-        configs.addAll(CompilerHelper.getAvailableCompilers("25"));
-        return configs.stream();
+        return CompilerHelper.getDiagonalCompilers().stream();
     }
 
     @ParameterizedTest
@@ -564,6 +563,69 @@ class BytecodeInstructionIntegrationTest {
         }
     }
 
+    /**
+     * Regression test for the same class of bug as issue #3108, applied to
+     * MultiArray. The translator used to emit
+     *   alloc3DArray(td, POP_INT(), POP_INT(), POP_INT())
+     * and the 4D equivalent. C does not specify function-argument evaluation
+     * order, so clang on iOS would evaluate the POPs in reverse and silently
+     * swap the array dimensions -- "new int[a][b][c]" could be allocated as if
+     * it were "new int[c][b][a]".
+     *
+     * Asserts the emitted C reads each dimension with PEEK semantics
+     * ((*SP).data.i, (*(SP+1)).data.i, ...) after a single SP decrement, so
+     * the dimensions land in the right alloc?DArray slots regardless of how
+     * the C compiler reorders the function-argument evaluation.
+     */
+    @Test
+    void multiArrayEmissionIsArgumentOrderSafe() throws Exception {
+        Set<String> snapshot = snapshotArrayTypes();
+        try {
+            // 3D, fully-specified ("new int[a][b][c]").
+            MultiArray ma3 = new MultiArray("[[[I", 3);
+            List<String> deps3 = new ArrayList<>();
+            ma3.addDependencies(deps3);
+            StringBuilder out3 = new StringBuilder();
+            ma3.appendInstruction(out3, new ArrayList<>());
+            String c3 = out3.toString();
+            assertTrue(c3.contains("SP -= 3"),
+                    "3D MULTIANEWARRAY should decrement SP once for all dims:\n" + c3);
+            assertTrue(c3.contains("alloc3DArray(threadStateData, (*(SP+2)).data.i, (*(SP+1)).data.i, (*SP).data.i"),
+                    "3D dims=3 must read dims with PEEK in (innermost, middle, outermost) order:\n" + c3);
+            assertFalse(c3.contains("POP_INT(), POP_INT()"),
+                    "3D MULTIANEWARRAY must not chain multiple POP_INT calls:\n" + c3);
+
+            // 4D, fully-specified ("new int[a][b][c][d]").
+            MultiArray ma4 = new MultiArray("[[[[I", 4);
+            List<String> deps4 = new ArrayList<>();
+            ma4.addDependencies(deps4);
+            StringBuilder out4 = new StringBuilder();
+            ma4.appendInstruction(out4, new ArrayList<>());
+            String c4 = out4.toString();
+            assertTrue(c4.contains("SP -= 4"),
+                    "4D MULTIANEWARRAY should decrement SP once for all dims:\n" + c4);
+            assertTrue(c4.contains("alloc4DArray(threadStateData, (*(SP+3)).data.i, (*(SP+2)).data.i, (*(SP+1)).data.i, (*SP).data.i"),
+                    "4D dims=4 must read dims with PEEK in innermost-to-outermost order:\n" + c4);
+            assertFalse(c4.contains("POP_INT(), POP_INT()"),
+                    "4D MULTIANEWARRAY must not chain multiple POP_INT calls:\n" + c4);
+
+            // 2D was already safe; verify the existing pattern is intact.
+            MultiArray ma2 = new MultiArray("[[Ljava/lang/String;", 2);
+            List<String> deps2 = new ArrayList<>();
+            ma2.addDependencies(deps2);
+            StringBuilder out2 = new StringBuilder();
+            ma2.appendInstruction(out2, new ArrayList<>());
+            String c2 = out2.toString();
+            assertTrue(c2.contains("SP -= 2") &&
+                            c2.contains("(*(SP+1)).data.i, (*SP).data.i"),
+                    "2D MULTIANEWARRAY must keep the existing PEEK pattern:\n" + c2);
+            assertFalse(c2.contains("POP_INT(), POP_INT()"),
+                    "2D MULTIANEWARRAY must not chain multiple POP_INT calls:\n" + c2);
+        } finally {
+            restoreArrayTypes(snapshot);
+        }
+    }
+
     @Test
     void arrayLengthExpressionReducesAndAssigns() throws Exception {
         List<Instruction> instructions = new ArrayList<>();
@@ -853,7 +915,8 @@ class BytecodeInstructionIntegrationTest {
         compileDummyMainClass(sourceDir, "com.example", "MyAppDefault", config);
 
         String[] args = new String[] {
-                "csharp",
+                // Unrecognized output type routes to the plain copy-through default handler
+                "unknown",
                 sourceDir.toAbsolutePath().toString(),
                 outputDir.toAbsolutePath().toString(),
                 "MyAppDefault", "com.example", "My App", "1.0", "ios", "none"
@@ -1078,6 +1141,124 @@ class BytecodeInstructionIntegrationTest {
             assertTrue(code.contains("class__MyClass"));
         } finally {
             BasicInstruction.setSynchronizedMethod(false, false, null);
+        }
+    }
+
+    /**
+     * Regression test for issue #3108: a chained assignment with widening
+     * conversion ("this.a = this.b = doubleExpr") emits dup2_x1 + two
+     * putfield's. The translator's unfolded PUTFIELD path used to emit
+     * "set_field_X(POP_DOUBLE(), POP_OBJ())" -- but C does not specify the
+     * order of evaluation of function arguments, so clang on iOS was popping
+     * the operands in the wrong order, causing the double's bits to be
+     * interpreted as an object reference and crashing with NPE.
+     *
+     * This test asserts that the unfolded primitive PUTFIELD path uses PEEK
+     * (which has no side effect on SP) followed by an explicit pop, mirroring
+     * the fix that was already in place for the object PUTFIELD path.
+     */
+    @Test
+    void putfieldUnfoldedPathUsesPeekNotPop() {
+        // The unfolded path is taken when valueOp and targetOp are null,
+        // i.e. when tryReduce could not fold the operands into literals.
+        // Build a Field with PUTFIELD opcode for each primitive desc and
+        // check the emitted C.
+        String[][] cases = {
+                {"D", "PEEK_DOUBLE(1)"},
+                {"F", "PEEK_FLOAT(1)"},
+                {"J", "PEEK_LONG(1)"},
+                {"I", "PEEK_INT(1)"},
+                {"Z", "PEEK_INT(1)"},
+                {"B", "PEEK_INT(1)"},
+                {"C", "PEEK_INT(1)"},
+                {"S", "PEEK_INT(1)"},
+        };
+        for (String[] c : cases) {
+            String desc = c[0];
+            String expectedPeek = c[1];
+            com.codename1.tools.translator.bytecodes.Field f =
+                    new com.codename1.tools.translator.bytecodes.Field(
+                            Opcodes.PUTFIELD, "MyClass", "myField", desc);
+            StringBuilder out = new StringBuilder();
+            f.appendInstruction(out);
+            String c1 = out.toString();
+            assertTrue(c1.contains(expectedPeek),
+                    "PUTFIELD desc=" + desc + " should use " + expectedPeek
+                            + " but emitted:\n" + c1);
+            assertTrue(c1.contains("PEEK_OBJ(2)"),
+                    "PUTFIELD desc=" + desc + " should read target with PEEK_OBJ(2):\n" + c1);
+            // Explicit pop must follow (either SP -= 2 or POP_MANY).
+            assertTrue(c1.contains("SP -= 2") || c1.contains("POP_MANY"),
+                    "PUTFIELD desc=" + desc + " should pop the consumed slots explicitly:\n" + c1);
+            // Most importantly: must NOT use POP_X() inside the call where
+            // argument evaluation order would matter.
+            assertFalse(c1.contains("POP_DOUBLE(), POP_OBJ()"),
+                    "PUTFIELD double must not rely on C argument evaluation order:\n" + c1);
+            assertFalse(c1.contains("POP_FLOAT(), POP_OBJ()"),
+                    "PUTFIELD float must not rely on C argument evaluation order:\n" + c1);
+            assertFalse(c1.contains("POP_LONG(), POP_OBJ()"),
+                    "PUTFIELD long must not rely on C argument evaluation order:\n" + c1);
+            assertFalse(c1.contains("POP_INT(), POP_OBJ()"),
+                    "PUTFIELD int must not rely on C argument evaluation order:\n" + c1);
+        }
+
+        // Object PUTFIELD already used PEEK + POP_MANY; cover it too so a
+        // future change can't silently regress it back to POP.
+        com.codename1.tools.translator.bytecodes.Field objField =
+                new com.codename1.tools.translator.bytecodes.Field(
+                        Opcodes.PUTFIELD, "MyClass", "myField", "Ljava/lang/Object;");
+        StringBuilder objOut = new StringBuilder();
+        objField.appendInstruction(objOut);
+        String objC = objOut.toString();
+        assertTrue(objC.contains("PEEK_OBJ(1)") && objC.contains("PEEK_OBJ(2)"),
+                "Object PUTFIELD must read both operands with PEEK:\n" + objC);
+        assertFalse(objC.contains("POP_OBJ(), POP_OBJ()"),
+                "Object PUTFIELD must not rely on C argument evaluation order:\n" + objC);
+    }
+
+    /**
+     * Regression test for issue #3108 (second cause).
+     *
+     * The widening / narrowing conversion opcodes (I2D, I2L, F2D, F2L, L2D and
+     * their inverses) used to write the new value into SP[-1].data but leave
+     * the runtime type tag untouched. BC_DUP2_X1 / BC_DUP2_X2 / BC_DUP_X2
+     * dispatch via IS_DOUBLE_WORD(...) on that tag, so e.g. PUSH_INT (tag=INT)
+     * followed by I2D (data updated, tag still INT) followed by DUP2_X1 sent
+     * the dup through the cat-1 branch and shifted SP by +2 instead of +1.
+     * The chained assignment "a.x = b.x = (double) someInt" then read garbage
+     * for the second putfield's operands and crashed with NPE on iOS.
+     *
+     * Each cat-changing conversion must rewrite SP[-1].type to the new
+     * CN1_TYPE_*. Pure-arithmetic conversions (I2B/I2C/I2S, I2F/F2I) are not
+     * involved in dup-dispatch but are checked for symmetry.
+     */
+    @Test
+    void conversionOpcodesUpdateRuntimeTypeTag() {
+        Object[][] cases = {
+                {Opcodes.I2L, "I2L", "CN1_TYPE_LONG"},
+                {Opcodes.I2D, "I2D", "CN1_TYPE_DOUBLE"},
+                {Opcodes.I2F, "I2F", "CN1_TYPE_FLOAT"},
+                {Opcodes.L2I, "L2I", "CN1_TYPE_INT"},
+                {Opcodes.L2F, "L2F", "CN1_TYPE_FLOAT"},
+                {Opcodes.L2D, "L2D", "CN1_TYPE_DOUBLE"},
+                {Opcodes.F2I, "F2I", "CN1_TYPE_INT"},
+                {Opcodes.F2L, "F2L", "CN1_TYPE_LONG"},
+                {Opcodes.F2D, "F2D", "CN1_TYPE_DOUBLE"},
+                {Opcodes.D2I, "D2I", "CN1_TYPE_INT"},
+                {Opcodes.D2L, "D2L", "CN1_TYPE_LONG"},
+                {Opcodes.D2F, "D2F", "CN1_TYPE_FLOAT"},
+        };
+        for (Object[] c : cases) {
+            int opcode = (Integer) c[0];
+            String name = (String) c[1];
+            String expectedTypeTag = (String) c[2];
+            BasicInstruction instr = new BasicInstruction(opcode, 0);
+            StringBuilder out = new StringBuilder();
+            instr.appendInstruction(out, new ArrayList<Instruction>());
+            String emitted = out.toString();
+            assertTrue(emitted.contains("SP[-1].type = " + expectedTypeTag),
+                    name + " must rewrite SP[-1].type to " + expectedTypeTag
+                            + " so BC_DUP2_X1 / BC_DUP2_X2 / BC_DUP_X2 dispatch correctly. Emitted:\n" + emitted);
         }
     }
 

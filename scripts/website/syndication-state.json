@@ -1,0 +1,262 @@
+{
+  "_comment": "Tracks blog posts syndicated by scripts/website/syndicate_blog_posts.py and syndicate_browser_posts.py. Keyed by post slug. Each platform sub-object records the remote URL/id and ISO timestamp once syndication succeeds.",
+  "posts": {
+    "liquid-glass-material-3-modern-native-themes": {
+      "devto": {
+        "id": 3620800,
+        "url": "https://dev.to/codenameone/liquid-glass-material-3-and-a-lot-of-plumbing-2jkk",
+        "syndicated_at": "2026-05-06T13:08:18+00:00"
+      },
+      "hashnode": {
+        "id": "69fb2f0263ebe40f84df66db",
+        "url": "https://debugagent.com/liquid-glass-material-3-and-a-lot-of-plumbing",
+        "syndicated_at": "2026-05-06T12:24:00+00:00"
+      },
+      "foojay": {
+        "id": 123690,
+        "url": "https://foojay.io/wp-admin/post.php?post=123690&action=edit",
+        "preview_url": "https://foojay.io/?p=123690",
+        "featured_media_id": 123689,
+        "yoast_meta_set": true,
+        "syndicated_at": "2026-05-08T13:34:19+00:00"
+      },
+      "medium": {
+        "url": "https://medium.com/p/234eb2fad73d/edit",
+        "syndicated_at": "2026-05-09T11:28:11+00:00"
+      },
+      "dzone": {
+        "url": "https://dzone.com/content/3653548/edit.html",
+        "syndicated_at": "2026-05-09T16:48:46+00:00"
+      }
+    },
+    "metal-and-skins": {
+      "devto": {
+        "id": 3678044,
+        "url": "https://dev.to/codenameone/metal-and-skins-4e00",
+        "syndicated_at": "2026-05-15T13:34:26+00:00"
+      },
+      "hashnode": {
+        "url": "https://hashnode.com/draft/67a41962e690bb4ecd9fd9b8",
+        "cover_set": true,
+        "subheading_set": true,
+        "tags_set": true,
+        "canonical_set": true,
+        "syndicated_at": "2026-05-15T18:42:17+00:00"
+      },
+      "foojay": {
+        "id": 123840,
+        "url": "https://foojay.io/wp-admin/post.php?post=123840&action=edit",
+        "preview_url": "https://foojay.io/?p=123840",
+        "featured_media_id": 123839,
+        "yoast_meta_set": true,
+        "syndicated_at": "2026-05-16T13:31:58+00:00"
+      },
+      "medium": {
+        "url": "https://medium.com/p/f08d6680b1cf/edit",
+        "syndicated_at": "2026-05-18T13:52:17+00:00"
+      },
+      "dzone": {
+        "url": "https://dzone.com/content/3655676/edit.html",
+        "syndicated_at": "2026-05-18T13:53:16+00:00"
+      }
+    },
+    "skills-java17-and-theme-accents": {
+      "devto": {
+        "id": 3726146,
+        "url": "https://dev.to/codenameone/skills-java-17-and-theme-accents-59dp",
+        "syndicated_at": "2026-05-22T13:46:38+00:00"
+      },
+      "foojay": {
+        "id": 123913,
+        "url": "https://foojay.io/wp-admin/post.php?post=123913&action=edit",
+        "preview_url": "https://foojay.io/?p=123913",
+        "featured_media_id": 123912,
+        "yoast_meta_set": true,
+        "syndicated_at": "2026-05-22T13:47:26+00:00"
+      },
+      "medium": {
+        "url": "https://medium.com/p/a92f2e65c4b5/edit",
+        "syndicated_at": "2026-05-22T15:01:26+00:00"
+      },
+      "dzone": {
+        "url": "https://dzone.com/content/3655800/edit.html",
+        "syndicated_at": "2026-05-22T15:02:38+00:00"
+      },
+      "hashnode": {
+        "url": "https://hashnode.com/edit/cmpvyqtam00051sjk98woaz8u",
+        "published": true,
+        "draft_url": "https://hashnode.com/draft/6a07e19fea8975272b6efaf2",
+        "cover_set": true,
+        "subheading_set": true,
+        "tags_set": true,
+        "canonical_set": true,
+        "syndicated_at": "2026-06-02T01:33:02+00:00"
+      }
+    },
+    "nfc-crypto-biometrics-and-build-cloud": {
+      "devto": {
+        "id": 3778808,
+        "url": "https://dev.to/codenameone/nfc-crypto-biometrics-and-a-new-build-cloud-119j",
+        "syndicated_at": "2026-05-29T14:01:41+00:00"
+      },
+      "foojay": {
+        "id": 124003,
+        "url": "https://foojay.io/wp-admin/post.php?post=124003&action=edit",
+        "preview_url": "https://foojay.io/?p=124003",
+        "featured_media_id": 124002,
+        "yoast_meta_set": true,
+        "syndicated_at": "2026-05-29T14:02:56+00:00"
+      },
+      "medium": {
+        "url": "https://medium.com/p/b7dab4277d90/edit",
+        "syndicated_at": "2026-05-29T15:01:20+00:00"
+      },
+      "dzone": {
+        "url": "https://dzone.com/content/3657524/edit.html",
+        "syndicated_at": "2026-05-31T15:01:20+00:00"
+      },
+      "hashnode": {
+        "url": "https://hashnode.com/edit/cmpvyt0pa00061sjkhsqh5xji",
+        "published": true,
+        "draft_url": "https://hashnode.com/draft/6a1e32e181824da877d77d72",
+        "cover_set": true,
+        "subheading_set": true,
+        "tags_set": true,
+        "canonical_set": true,
+        "syndicated_at": "2026-06-02T01:34:44+00:00"
+      }
+    },
+    "metal-default-new-build-cloud-and-a-new-format": {
+      "devto": {
+        "id": 3828546,
+        "url": "https://dev.to/codenameone/metal-default-a-new-build-cloud-and-a-new-format-11hg",
+        "syndicated_at": "2026-06-05T13:58:05+00:00"
+      },
+      "foojay": {
+        "id": 124128,
+        "url": "https://foojay.io/wp-admin/post.php?post=124128&action=edit",
+        "preview_url": "https://foojay.io/?p=124128",
+        "featured_media_id": 124127,
+        "yoast_meta_set": true,
+        "syndicated_at": "2026-06-05T13:59:11+00:00"
+      },
+      "medium": {
+        "url": "https://medium.com/p/1945f698dd28/edit",
+        "syndicated_at": "2026-06-05T15:01:09+00:00"
+      },
+      "dzone": {
+        "url": "https://dzone.com/content/3658581/edit.html",
+        "syndicated_at": "2026-06-05T15:02:20+00:00"
+      },
+      "hashnode": {
+        "url": "https://hashnode.com/edit/cmq120nmg001h1sq14zpg0q1j",
+        "published": true,
+        "draft_url": "https://hashnode.com/draft/6a22e50abdc172ef8847e8b0",
+        "cover_set": true,
+        "subheading_set": true,
+        "tags_set": true,
+        "canonical_set": true,
+        "syndicated_at": "2026-06-05T15:03:31+00:00"
+      }
+    },
+    "developer-workflow-debug-and-junit": {
+      "devto": {
+        "id": 3835213,
+        "url": "https://dev.to/codenameone/on-device-debugging-and-junit-5-245",
+        "syndicated_at": "2026-06-06T13:32:21+00:00"
+      },
+      "foojay": {
+        "id": 124137,
+        "url": "https://foojay.io/wp-admin/post.php?post=124137&action=edit",
+        "preview_url": "https://foojay.io/?p=124137",
+        "featured_media_id": 124136,
+        "yoast_meta_set": true,
+        "syndicated_at": "2026-06-06T13:33:29+00:00"
+      },
+      "medium": {
+        "url": "https://medium.com/p/57036bf1aeaf/edit",
+        "syndicated_at": "2026-06-06T15:01:49+00:00"
+      },
+      "hashnode": {
+        "url": "https://hashnode.com/edit/cmq2hhs3v00031spqd70cf2w9",
+        "published": true,
+        "draft_url": "https://hashnode.com/draft/6a2436bae769bc0019e10426",
+        "cover_set": true,
+        "subheading_set": true,
+        "tags_set": true,
+        "canonical_set": true,
+        "syndicated_at": "2026-06-06T15:04:35+00:00"
+      },
+      "dzone": {
+        "url": "https://dzone.com/content/3656694/edit.html",
+        "syndicated_at": "2026-06-06T15:14:17+00:00"
+      }
+    },
+    "platform-apis-in-the-core": {
+      "devto": {
+        "id": 3841163,
+        "url": "https://dev.to/codenameone/ai-oauth-and-other-platform-apis-in-the-core-nd2",
+        "syndicated_at": "2026-06-07T13:32:48+00:00"
+      },
+      "foojay": {
+        "id": 124141,
+        "url": "https://foojay.io/wp-admin/post.php?post=124141&action=edit",
+        "preview_url": "https://foojay.io/?p=124141",
+        "featured_media_id": 124140,
+        "yoast_meta_set": true,
+        "syndicated_at": "2026-06-07T13:33:49+00:00"
+      },
+      "medium": {
+        "url": "https://medium.com/p/362f74616708/edit",
+        "syndicated_at": "2026-06-07T15:01:52+00:00"
+      },
+      "dzone": {
+        "url": "https://dzone.com/content/3656699/edit.html",
+        "syndicated_at": "2026-06-07T15:18:55+00:00"
+      },
+      "hashnode": {
+        "url": "https://hashnode.com/edit/cmq3xhm4u000i1spq2hgddqg6",
+        "published": true,
+        "draft_url": "https://hashnode.com/draft/6a258bea0d543e9c5d254f2a",
+        "cover_set": true,
+        "subheading_set": true,
+        "tags_set": true,
+        "canonical_set": true,
+        "syndicated_at": "2026-06-07T15:20:02+00:00"
+      }
+    },
+    "build-time-codegen": {
+      "devto": {
+        "id": 3849555,
+        "url": "https://dev.to/codenameone/openapi-orm-svg-and-lottie-56ea",
+        "syndicated_at": "2026-06-08T14:32:08+00:00"
+      },
+      "foojay": {
+        "id": 124152,
+        "url": "https://foojay.io/wp-admin/post.php?post=124152&action=edit",
+        "preview_url": "https://foojay.io/?p=124152",
+        "featured_media_id": 124151,
+        "yoast_meta_set": true,
+        "syndicated_at": "2026-06-08T14:33:02+00:00"
+      },
+      "medium": {
+        "url": "https://medium.com/p/ab7837351417/edit",
+        "syndicated_at": "2026-06-08T15:01:39+00:00"
+      },
+      "dzone": {
+        "url": "https://dzone.com/content/3656726/edit.html",
+        "syndicated_at": "2026-06-08T15:02:43+00:00"
+      },
+      "hashnode": {
+        "url": "https://hashnode.com/edit/cmq5ccmj900000bjehn2p1zvu",
+        "published": true,
+        "draft_url": "https://hashnode.com/draft/6a26d99db1bc3cdb83ac9ac3",
+        "cover_set": true,
+        "subheading_set": true,
+        "tags_set": true,
+        "canonical_set": true,
+        "syndicated_at": "2026-06-08T15:03:50+00:00"
+      }
+    }
+  }
+}

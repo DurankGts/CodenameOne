@@ -1,0 +1,76 @@
+name: Archetype simulator smoke
+
+# Smoke-tests that an archetype-generated project can run `cn1:css` (the
+# CN1CSSCLI subprocess that boots JavaSEPort) with `cn1.autoDefaultResourceBundle`
+# forced on. This reproduces the user-side preference state that masked
+# issue #4850 in CI for six months: the bug was deterministic on the user
+# code path but invisible to CI runners with the default-false preference.
+#
+# Path-gated to the modules whose changes can break this code path so we
+# don't run the heavy archetype-generate-and-build for unrelated edits.
+on:
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'Ports/JavaSE/**'
+      - 'CodenameOneDesigner/**'
+      - 'CodenameOne/src/com/codename1/ui/plaf/UIManager.java'
+      - 'maven/codenameone-maven-plugin/**'
+      - 'maven/cn1app-archetype/**'
+      - 'maven/cn1lib-archetype/**'
+      - 'maven/integration-tests/cn1app-archetype-test.sh'
+      - 'maven/integration-tests/inc/**'
+      - '.github/workflows/archetype-smoke.yml'
+  push:
+    branches: [ master ]
+    paths:
+      - 'Ports/JavaSE/**'
+      - 'CodenameOneDesigner/**'
+      - 'CodenameOne/src/com/codename1/ui/plaf/UIManager.java'
+      - 'maven/codenameone-maven-plugin/**'
+      - 'maven/cn1app-archetype/**'
+      - 'maven/cn1lib-archetype/**'
+      - 'maven/integration-tests/cn1app-archetype-test.sh'
+      - 'maven/integration-tests/inc/**'
+      - '.github/workflows/archetype-smoke.yml'
+
+concurrency:
+  # Cancel superseded runs of this workflow for the same PR branch
+  # (github.head_ref is set on pull_request events). On push to master
+  # head_ref is empty, so the group falls back to the unique run_id and
+  # every master commit is still tested in full -- no coverage lost.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  archetype-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up JDK 8
+        uses: actions/setup-java@v5
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+          cache: 'maven'
+      - name: Install xvfb
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
+      - name: Build Codename One Maven artifacts (includes archetypes)
+        run: |
+          # The cn1{app,lib}-archetype modules are inlined into the maven/
+          # reactor since the migration, so this single install also stages
+          # the archetypes into the local repo for `archetype:generate`.
+          # -Darchetype.test.skip=true keeps the smoke fast — the per-tag
+          # ITs already run in the release workflow.
+          cd maven
+          xvfb-run -a mvn install -Plocal-dev-javase -DskipTests -Darchetype.test.skip=true -Dmaven.javadoc.skip=true
+      - name: Refresh archetype catalog
+        run: |
+          cd maven
+          xvfb-run -a mvn archetype:update-local-catalog -Plocal-dev-javase
+          xvfb-run -a mvn archetype:crawl -Plocal-dev-javase
+      - name: Run archetype simulator smoke (auto-bundle pref forced on)
+        run: |
+          cd maven/integration-tests
+          xvfb-run -a bash cn1app-archetype-test.sh

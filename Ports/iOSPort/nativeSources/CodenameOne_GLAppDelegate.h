@@ -28,10 +28,22 @@
 #ifdef CN1_INCLUDE_NOTIFICATIONS
 #import <UserNotifications/UserNotifications.h>
 #endif
+// Legacy compatibility flag (off by default). When defined, the AppDelegate calls
+// requestAuthorizationWithOptions in didFinishLaunchingWithOptions, restoring the
+// pre-issue-#4876 behavior where the system notification prompt fires at launch.
+// Enable from the build hint ios.notificationPermissionAtLaunch=true.
+//#define CN1_NOTIFICATION_PERMISSION_AT_LAUNCH
 
 @class CodenameOne_GLViewController;
 
+// On Mac Catalyst the app delegate must be a UIResponder so UIKit invokes
+// -buildMenuWithBuilder: on it for the native menu bar. On iOS keep it as NSObject
+// (the historical superclass) so phone/tablet behavior and rendering are unchanged.
+#if TARGET_OS_MACCATALYST
+@interface CodenameOne_GLAppDelegate : UIResponder <UIApplicationDelegate
+#else
 @interface CodenameOne_GLAppDelegate : NSObject <UIApplicationDelegate
+#endif
 #ifdef CN1_INCLUDE_NOTIFICATIONS
 ,UNUserNotificationCenterDelegate
 #endif

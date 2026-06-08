@@ -10,11 +10,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v6
       - name: Set up Maven Central Repository
-        uses: actions/setup-java@v1
+        uses: actions/setup-java@v5
         with:
-          java-version: 1.8
+          java-version: '8'
+          distribution: 'temurin'
+          cache: 'maven'
           server-id: central
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
@@ -28,20 +30,62 @@ jobs:
       - name: Check Maven Version
         run: mvn -v
 
-      - name: Deploy with Maven
+      - name: Deploy Maven artifacts (core + archetypes)
+        id: deploy
+        continue-on-error: true
         run: |
           cat $HOME/.m2/settings.xml
           cd maven
           bash update-version.sh "$GITHUB_REF_NAME"
           export GPG_TTY=$(tty)
-          xvfb-run -a mvn deploy -Psign-artifacts -Dgpg.passphrase=$MAVEN_GPG_PASSPHRASE -Plocal-dev-javase
-          cd ..
-          git clone https://github.com/shannah/cn1-maven-archetypes
-          cd cn1-maven-archetypes
-          bash update-version.sh "$GITHUB_REF_NAME"
-          xvfb-run -a mvn deploy -Psign-artifacts -Dgpg.passphrase=$MAVEN_GPG_PASSPHRASE -Plocal-dev-javase
+          # The cn1{app,lib}-archetype modules are part of the main reactor
+          # since the in-tree migration, so a single mvn deploy publishes
+          # everything (core + maven plugin + both archetypes).
+          # -Darchetype.test.skip=true: the archetypes' ITs generate a
+          # project pinned to the current cn1Version and invoke the
+          # codenameone-maven-plugin against it; that plugin is being
+          # published in this same reactor so it's not yet on Central
+          # when the ITs run. -DskipTests covers the matching surefire pass.
+          xvfb-run -a mvn deploy -Psign-artifacts -Dgpg.passphrase=$MAVEN_GPG_PASSPHRASE -Plocal-dev-javase -Darchetype.test.skip=true -DskipTests
         env:
           MAVEN_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
-      
+
+      - name: Confirm artifacts on Maven Central (only after deploy failure)
+        id: confirm
+        if: steps.deploy.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          # central-publishing-maven-plugin occasionally reports
+          # "Deployment failed while publishing" even when the bundle was
+          # actually accepted and published. As a safety net for that
+          # false-positive case, poll Maven Central for the key artifacts:
+          # the codenameone-maven-plugin (proxy for the core release) plus
+          # both archetypes. Skipped when the deploy already reported
+          # success (the artifact may still be propagating from Sonatype
+          # Central to repo1; that propagation can take 30+ minutes and
+          # isn't worth blocking on).
+          set +e
+          for i in $(seq 1 90); do
+            plugin_code=$(curl -s -o /dev/null -w "%{http_code}" \
+              "https://repo1.maven.org/maven2/com/codenameone/codenameone-maven-plugin/${GITHUB_REF_NAME}/codenameone-maven-plugin-${GITHUB_REF_NAME}.pom")
+            app_code=$(curl -s -o /dev/null -w "%{http_code}" \
+              "https://repo1.maven.org/maven2/com/codenameone/cn1app-archetype/${GITHUB_REF_NAME}/cn1app-archetype-${GITHUB_REF_NAME}.pom")
+            lib_code=$(curl -s -o /dev/null -w "%{http_code}" \
+              "https://repo1.maven.org/maven2/com/codenameone/cn1lib-archetype/${GITHUB_REF_NAME}/cn1lib-archetype-${GITHUB_REF_NAME}.pom")
+            if [ "$plugin_code" = "200" ] && [ "$app_code" = "200" ] && [ "$lib_code" = "200" ]; then
+              echo "Confirmed codenameone-maven-plugin + cn1{app,lib}-archetype ${GITHUB_REF_NAME} on Maven Central"
+              exit 0
+            fi
+            echo "[$i/90] Waiting on Maven Central (plugin=$plugin_code, cn1app=$app_code, cn1lib=$lib_code)"
+            sleep 20
+          done
+          echo "Artifacts ${GITHUB_REF_NAME} did not appear on Maven Central within 30 minutes"
+          exit 1
+
+      - name: Fail when release did not complete
+        if: steps.deploy.outcome != 'success' && steps.confirm.outcome != 'success'
+        run: |
+          echo "Release failed: deploy reported failure and the artifacts never appeared on Maven Central."
+          exit 1

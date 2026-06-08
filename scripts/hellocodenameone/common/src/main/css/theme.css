@@ -69,3 +69,245 @@ TabsColorSync {
 TabsColorSync.pressed {
     color: green;
 }
+
+/* CSS-gradient screenshot tests. Each UIID exercises one of the gradient
+   functions the CSS compiler now compiles down to a native descriptor
+   instead of a rasterized fallback image. The Java side picks each tile up
+   by UIID so the only thing under test is the compiler + Style + port
+   gradient renderer round-trip. */
+CssGradientTile {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+}
+CssGradientLinearAngled {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: linear-gradient(45deg, #ff0080 0%, #ff8c00 50%, #40e0d0 100%);
+}
+CssGradientLinearToSide {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: linear-gradient(to bottom right, #1d4ed8, #003);
+}
+CssGradientLinearMismatchedAlpha {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: linear-gradient(90deg, rgba(255, 0, 0, 0.6), blue);
+}
+CssGradientRadialFarthestCorner {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: radial-gradient(circle farthest-corner at 30% 30%, #ffffff, #001 70%);
+}
+CssGradientRadialEllipse {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: radial-gradient(ellipse closest-side at 50% 50%, #ffeeff, #002233);
+}
+CssGradientConic {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: conic-gradient(from 0deg at 50% 50%, red, yellow, green, blue, red);
+}
+CssGradientRepeatingLinear {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: repeating-linear-gradient(45deg, #eeeeee 0%, #cc3344 10%);
+}
+CssGradientRepeatingRadial {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: repeating-radial-gradient(circle at center, #ffffff 0%, #cc3344 16%);
+}
+
+/* filter / backdrop-filter UIIDs. These verify the CSS compiler stores the
+   blur radius on the Style; actual paint-time blurring is not yet wired
+   through the component paint pipeline (it lands as a follow-up using
+   Graphics.gaussianBlur), so we don't take a screenshot of these tiles -
+   the test only asserts the Style fields round-trip. */
+CssFilterBlurNone {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: linear-gradient(45deg, #ff0080, #40e0d0);
+}
+CssFilterBlurLight {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: linear-gradient(45deg, #ff0080, #40e0d0);
+    filter: blur(2px);
+}
+CssFilterBlurHeavy {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: linear-gradient(45deg, #ff0080, #40e0d0);
+    filter: blur(8px);
+}
+CssFilterBackdrop {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(12px);
+}
+
+/* Non-blur CSS filter functions. These verify the CSS compiler reduces a
+   `filter:` chain (brightness/contrast/grayscale/hue-rotate/invert/opacity/
+   saturate/sepia) to a single 4x5 color matrix on Style. Paint-time
+   integration is the same follow-up as filter:blur; the test only asserts
+   the matrix round-trips via theme.res. */
+CssFilterBrightness {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: linear-gradient(45deg, #ff0080, #40e0d0);
+    filter: brightness(1.5);
+}
+CssFilterContrast {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: linear-gradient(45deg, #ff0080, #40e0d0);
+    filter: contrast(0.6);
+}
+CssFilterGrayscale {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: linear-gradient(45deg, #ff0080, #40e0d0);
+    filter: grayscale(1);
+}
+CssFilterInvert {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: linear-gradient(45deg, #ff0080, #40e0d0);
+    filter: invert(1);
+}
+CssFilterSepia {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: linear-gradient(45deg, #ff0080, #40e0d0);
+    filter: sepia(0.8);
+}
+CssFilterChain {
+    padding: 0px;
+    margin: 0.5mm;
+    border: none;
+    background: linear-gradient(45deg, #ff0080, #40e0d0);
+    filter: brightness(1.2) contrast(0.9) saturate(1.3);
+}
+
+/* Build-time SVG transcoder: each SVG referenced via url() is picked up by
+ * codenameone-maven-plugin:transcode-svg, transcoded to a GeneratedSVGImage
+ * subclass, and registered with the theme under its source filename. The
+ * cn1-source-dpi hint here is the same one multi-images use: it tells the
+ * transcoder which CN1 density bucket the SVG was authored for so the
+ * runtime size scales to the device. */
+SVGStarStyle {
+    background: url(star.svg);
+    cn1-source-dpi: very-high;
+    bg-type: image_scaled_fit;
+    padding: 4mm;
+}
+
+SVGGradientCircleStyle {
+    background: url(gradient_circle.svg);
+    cn1-source-dpi: very-high;
+    bg-type: image_scaled_fit;
+    padding: 4mm;
+}
+
+SVGPathArrowStyle {
+    background: url(path_arrow.svg);
+    cn1-source-dpi: very-high;
+    bg-type: image_scaled_fit;
+    padding: 4mm;
+}
+
+SVGSpinnerStyle {
+    background: url(spinner_animated.svg);
+    /* Explicit millimeter dimensions carry across DPIs the same way
+     * font-size: 3mm does -- 12mm by 12mm on every device, regardless
+     * of the SVG's declared <svg width=> or device density. */
+    cn1-svg-width: 12mm;
+    cn1-svg-height: 12mm;
+    bg-type: image_scaled_fit;
+    padding: 4mm;
+}
+
+SVGPulsingCircleStyle {
+    background: url(pulsing_circle.svg);
+    cn1-svg-width: 12mm;
+    cn1-svg-height: 12mm;
+    bg-type: image_scaled_fit;
+    padding: 4mm;
+}
+
+/* Exercises <text> rendering with fill colors, anchor, font-weight,
+ * font-style + a rounded-rect frame underneath. */
+SVGLogoTextStyle {
+    background: url(logo_text.svg);
+    cn1-svg-width: 30mm;
+    cn1-svg-height: 12mm;
+    bg-type: image_scaled_fit;
+    padding: 2mm;
+}
+
+/* Exercises complex path commands -- S/T smooth curves, dashed strokes. */
+SVGWavePathStyle {
+    background: url(wave_path.svg);
+    cn1-svg-width: 30mm;
+    cn1-svg-height: 8mm;
+    bg-type: image_scaled_fit;
+    padding: 2mm;
+}
+
+/* Multiple parallel animations on one element -- rotate + rx/ry. */
+SVGColorMorphStyle {
+    background: url(color_morph.svg);
+    cn1-svg-width: 18mm;
+    cn1-svg-height: 18mm;
+    bg-type: image_scaled_fit;
+    padding: 2mm;
+}
+
+/* Exercises <clipPath> + gradient fill + clipped text. */
+SVGClippedBadgeStyle {
+    background: url(clipped_badge.svg);
+    cn1-svg-width: 16mm;
+    cn1-svg-height: 16mm;
+    bg-type: image_scaled_fit;
+    padding: 2mm;
+}
+
+/* Build-time Lottie transcoder: Bodymovin JSON files are lowered into the
+ * same SVG model the SVG transcoder uses, so the cn1-svg-width / -height
+ * hints sized for SVG apply here too. */
+LottieSpinnerStyle {
+    background: url(lottie_spinner.json);
+    cn1-svg-width: 14mm;
+    cn1-svg-height: 14mm;
+    bg-type: image_scaled_fit;
+    padding: 2mm;
+}
+
+LottiePulseStyle {
+    background: url(lottie_pulse.json);
+    cn1-svg-width: 14mm;
+    cn1-svg-height: 14mm;
+    bg-type: image_scaled_fit;
+    padding: 2mm;
+}

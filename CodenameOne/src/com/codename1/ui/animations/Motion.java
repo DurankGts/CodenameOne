@@ -30,8 +30,9 @@ import com.codename1.util.MathUtil;
 /// another. This class can be subclassed to implement any motion equation for
 /// appropriate physics effects.
 ///
-/// This class relies on the System.currentTimeMillis() method to provide
-/// transitions between coordinates. The motion can be subclassed to provide every
+/// This class relies on [AnimationTime.now()][AnimationTime#now()] to provide
+/// transitions between coordinates, allowing the underlying clock to be
+/// overridden for deterministic playback or custom animation pacing. The motion can be subclassed to provide every
 /// type of motion feel from parabolic motion to spline and linear motion. The default
 /// implementation provides a simple algorithm giving the feel of acceleration and
 /// deceleration.
@@ -46,6 +47,7 @@ public class Motion {
     private static final int CUBIC = 4;
     private static final int COLOR_LINEAR = 5;
     private static final int EXPONENTIAL_DECAY = 6;
+    private static final int CRITICAL_DAMPED_SPRING = 7;
     private static boolean slowMotion;
     private final int[] previousLastReturnedValue = new int[3];
     private final long[] previousLastReturnedValueTime = new long[3];
@@ -313,6 +315,30 @@ public class Motion {
         return deceleration;
     }
 
+    /// Creates a critically-damped spring motion from source to destination. This is the
+    /// envelope of a second-order critically damped system step response:
+    /// `x(t) = dst - (dst - src) * (1 + w*t) * e^(-w*t)` where w is chosen so the residual
+    /// at t=duration is about 2%. Produces a quick initial approach with a soft settling
+    /// tail, closer in feel to the iOS rubber-band snap-back than the quadratic
+    /// `createDecelerationMotion` curve.
+    ///
+    /// #### Parameters
+    ///
+    /// - `sourceValue`: the number from which we are starting
+    ///
+    /// - `destinationValue`: the number to which we are heading
+    ///
+    /// - `duration`: the length in milliseconds of the motion
+    ///
+    /// #### Returns
+    ///
+    /// new motion object
+    public static Motion createCriticalDampedSpringMotion(int sourceValue, int destinationValue, int duration) {
+        Motion m = new Motion(sourceValue, destinationValue, duration);
+        m.motionType = CRITICAL_DAMPED_SPRING;
+        return m;
+    }
+
     /// Creates a deceleration motion starting from the current position of another motion.
     ///
     /// #### Parameters
@@ -332,7 +358,7 @@ public class Motion {
                 motion.destinationValue < motion.sourceValue
                         ? Math.min(motion.destinationValue, maxDestinationValue)
                         : Math.max(motion.destinationValue, maxDestinationValue),
-                (int) Math.min(maxDuration, motion.duration - (System.currentTimeMillis() - motion.startTime))
+                (int) Math.min(maxDuration, motion.duration - (AnimationTime.now() - motion.startTime))
         );
     }
 
@@ -371,7 +397,7 @@ public class Motion {
     /// Sends the motion to the end time instantly which is useful for flushing an animation
     public void finish() {
         if (!isFinished()) {
-            startTime = System.currentTimeMillis() - duration;
+            startTime = AnimationTime.now() - duration;
             currentMotionTime = -1;
             previousCurrentMotionTime = -1;
         }
@@ -379,17 +405,17 @@ public class Motion {
 
     /// Sets the start time to the current time
     public void start() {
-        startTime = System.currentTimeMillis();
+        startTime = AnimationTime.now();
     }
 
     /// Returns the current time within the motion relative to start time
     ///
     /// #### Returns
     ///
-    /// long value representing System.currentTimeMillis() - startTime
+    /// long value representing AnimationTime.now() - startTime
     public long getCurrentMotionTime() {
         if (currentMotionTime < 0) {
-            return System.currentTimeMillis() - startTime;
+            return AnimationTime.now() - startTime;
         }
         return currentMotionTime;
     }
@@ -419,7 +445,7 @@ public class Motion {
     ///
     /// #### Returns
     ///
-    /// true if System.currentTimeMillis() > duration + startTime or the last returned value is the destination value
+    /// true if AnimationTime.now() > duration + startTime or the last returned value is the destination value
     public boolean isFinished() {
         return getCurrentMotionTime() > duration || destinationValue == lastReturnedValue || (EXPONENTIAL_DECAY == motionType && previousLastReturnedValue[0] == lastReturnedValue);
     }
@@ -464,31 +490,118 @@ public class Motion {
         if (isFinished()) {
             return destinationValue;
         }
+        // getCurrentMotionTime() is already motion-relative -- it returns
+        // currentMotionTime when set or (AnimationTime.now() - startTime)
+        // otherwise. The previous implementation then subtracted startTime
+        // twice in two duplicated `if (currentMotionTime > -1)` blocks,
+        // which produced nonsense for any motion driven by
+        // setCurrentMotionTime(). Just clamp to [0, duration]. See #1524.
         float totalTime = duration;
-        float currentTime = (int) getCurrentMotionTime();
-        if (currentMotionTime > -1) {
-            currentTime -= startTime;
-            totalTime -= startTime;
-        }
-        currentTime = Math.min(currentTime, totalTime);
-        if (currentMotionTime > -1) {
-            currentTime -= startTime;
-            totalTime -= startTime;
+        float currentTime = Math.min((int) getCurrentMotionTime(), (int) totalTime);
+        if (currentTime < 0f) {
+            currentTime = 0f;
         }
         float dis = Math.abs(destinationValue - sourceValue);
-        float p = currentTime / totalTime;
-        float a = (1 - p) * (1 - p) * (1 - p) * p0;
-        float b = 3 * (1 - p) * (1 - p) * p * p1;
-        float c = 3 * (1 - p) * p * p * p2;
-        float d = p * p * p * p3;
+        float t = currentTime / totalTime;
+
+        // CSS-style cubic-bezier(x1, y1, x2, y2): the four parameters are the
+        // X and Y coordinates of the two control points. P0=(0,0) and
+        // P3=(1,1) are implicit. The previous implementation just plugged
+        // the four floats into a 1D Bernstein basis polynomial directly,
+        // which is not the same curve -- e.g. cubic-bezier(0, 0, 0.75, 1)
+        // returned 0.41 at t=0.5 instead of the CSS-correct ~0.62. See
+        // #1524. Implement the standard solver: find u such that Bx(u) = t,
+        // then evaluate By(u).
+        float x1 = p0;
+        float y1 = p1;
+        float x2 = p2;
+        float y2 = p3;
+        float u = solveBezierForT(t, x1, x2);
+        float value = bezierAxis(u, y1, y2);
+
         int current;
         if (destinationValue > sourceValue) {
-            current = sourceValue + (int) ((a + b + c + d) * dis);
+            current = sourceValue + (int) (value * dis);
         } else {
-            int currentDis = (int) ((a + b + c + d) * dis);
-            current = sourceValue - currentDis;
+            current = sourceValue - (int) (value * dis);
         }
         return current;
+    }
+
+    /// Evaluates one coordinate of the implicit CSS cubic-bezier curve
+    /// (P0=0, P3=1, with control coordinates {@code c1} and {@code c2}) at
+    /// parameter {@code u} in [0,1]. The Bernstein-basis expansion of
+    /// {@code (1-u)^3*0 + 3*(1-u)^2*u*c1 + 3*(1-u)*u^2*c2 + u^3*1}.
+    private static float bezierAxis(float u, float c1, float c2) {
+        float omu = 1f - u;
+        return 3f * omu * omu * u * c1
+                + 3f * omu * u * u * c2
+                + u * u * u;
+    }
+
+    /// Derivative dBx/du of {@link #bezierAxis(float, float, float)}.
+    private static float bezierAxisDerivative(float u, float c1, float c2) {
+        float omu = 1f - u;
+        return 3f * omu * omu * c1
+                + 6f * omu * u * (c2 - c1)
+                + 3f * u * u * (1f - c2);
+    }
+
+    /// Solves {@code Bx(u) = t} for {@code u} using a few Newton-Raphson
+    /// iterations and falls back to bisection if Newton-Raphson stalls
+    /// (e.g. for nearly-degenerate control points whose derivative is 0).
+    /// Same general technique CSS engines use for cubic-bezier timing
+    /// functions.
+    private static float solveBezierForT(float t, float x1, float x2) {
+        if (t <= 0f) {
+            return 0f;
+        }
+        if (t >= 1f) {
+            return 1f;
+        }
+        // The CSS cubic-bezier domain requires x1 and x2 in [0,1] for a
+        // monotonic x(u); guard so a caller passing values outside that
+        // range still gets a sane curve by clamping.
+        float cx1 = Math.max(0f, Math.min(1f, x1));
+        float cx2 = Math.max(0f, Math.min(1f, x2));
+
+        float u = t;
+        for (int i = 0; i < 8; i++) {
+            float bxAtU = bezierAxis(u, cx1, cx2);
+            float diff = bxAtU - t;
+            if (Math.abs(diff) < 1e-6f) {
+                return u;
+            }
+            float deriv = bezierAxisDerivative(u, cx1, cx2);
+            if (deriv == 0f) {
+                break;
+            }
+            u -= diff / deriv;
+            if (u < 0f) {
+                u = 0f;
+            } else if (u > 1f) {
+                u = 1f;
+            }
+        }
+
+        // Bisection fallback - guaranteed to converge given Bx is
+        // monotonically non-decreasing on [0,1] when 0 <= cx1, cx2 <= 1.
+        float lo = 0f;
+        float hi = 1f;
+        u = t;
+        for (int i = 0; i < 16; i++) {
+            float bxAtU = bezierAxis(u, cx1, cx2);
+            if (Math.abs(bxAtU - t) < 1e-5f) {
+                return u;
+            }
+            if (bxAtU < t) {
+                lo = u;
+            } else {
+                hi = u;
+            }
+            u = 0.5f * (lo + hi);
+        }
+        return u;
     }
 
     /// Returns the value for the motion for the current clock time.
@@ -529,6 +642,9 @@ public class Motion {
                 break;
             case EXPONENTIAL_DECAY:
                 lastReturnedValue = getExponentialDecay();
+                break;
+            case CRITICAL_DAMPED_SPRING:
+                lastReturnedValue = getCriticalDampedSpring();
                 break;
             default:
                 lastReturnedValue = getLinear();
@@ -712,6 +828,31 @@ public class Motion {
             x = Math.max(destinationValue, x);
         }
         return x;
+    }
+
+    // Critically damped second-order step response: produces a fast initial approach
+    // with a soft tail, no overshoot. Omega*duration = 5.83 so residual is ~2% at t=duration.
+    private static final double CRITICAL_DAMPED_OMEGA_T = 5.83d;
+
+    private int getCriticalDampedSpring() {
+        if (isFinished()) {
+            return destinationValue;
+        }
+        float totalTime = duration;
+        float currentTime = (int) getCurrentMotionTime();
+        if (currentMotionTime > -1) {
+            currentTime -= startTime;
+            totalTime -= startTime;
+        }
+        if (totalTime <= 0) {
+            return destinationValue;
+        }
+        if (currentTime > totalTime) {
+            currentTime = totalTime;
+        }
+        double omegaT = CRITICAL_DAMPED_OMEGA_T * (currentTime / (double) totalTime);
+        double residual = (1.0d + omegaT) * MathUtil.exp(-omegaT);
+        return (int) Math.round(destinationValue - (destinationValue - sourceValue) * residual);
     }
 
     /// The number from which we are starting (usually indicating animation start position)

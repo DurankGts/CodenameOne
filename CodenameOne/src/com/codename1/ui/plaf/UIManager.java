@@ -75,6 +75,14 @@ public class UIManager {
     private Style defaultStyle = new Style();
     private Style defaultSelectedStyle = new Style();
     private boolean useLargerTextScale;
+    /// Tracks the original (unscaled) Font we replaced in themeProps when
+    /// [#applyLargerTextScaleToThemeFonts] last ran. Without this, each scale
+    /// change derives from the previously-scaled font and compounds, so going
+    /// XL -> XXL over-scales and going XXL -> Large never shrinks back. The
+    /// parallel scaledFontDerived map records the Font we wrote, so we only
+    /// restore entries that the theme has not overwritten in the meantime.
+    private final Map<String, Font> scaledFontOriginals = new HashMap<String, Font>();
+    private final Map<String, Font> scaledFontDerived = new HashMap<String, Font>();
     /// The resource bundle allows us to implicitly localize the UI on the fly, once its
     /// installed all internal application strings query the resource bundle and extract
     /// their values from this table if applicable.
@@ -1320,7 +1328,17 @@ public class UIManager {
             themeProps.put("CommandList.sel#border", Border.createLineBorder(1));
         }
 
-        if (installedTheme == null || !installedTheme.containsKey("Toolbar.derive")) {
+        // The default Toolbar.derive=TitleArea was historically added so
+        // legacy themes that styled TitleArea got the same look on Toolbar
+        // for free. The modern themes (and any user theme that wires
+        // TitleArea.derive=Toolbar) flips the relationship the other way -
+        // setting both directions creates a cycle that infinite-loops
+        // createStyle when the resolver follows derive recursively. Skip
+        // the legacy default in that case.
+        boolean userDeclaredTitleAreaDerivesToolbar = installedTheme != null
+                && "Toolbar".equals(installedTheme.get("TitleArea.derive"));
+        if (!userDeclaredTitleAreaDerivesToolbar
+                && (installedTheme == null || !installedTheme.containsKey("Toolbar.derive"))) {
             themeProps.put("Toolbar.derive", "TitleArea");
         }
         if (installedTheme == null || !installedTheme.containsKey("FloatingActionButton.derive")) {
@@ -1490,12 +1508,169 @@ public class UIManager {
     /// - `themeProps`: the properties of the given theme
     public void addThemeProps(Hashtable themeProps) {
         if (accessible) {
+            dropSupersededBindings(themeProps);
             buildTheme(themeProps);
             styles.clear();
             selectedStyles.clear();
             imageCache.clear();
             current.refreshTheme(false);
         }
+    }
+
+    /// CSSWatcher's live-reload funnels every recompile through
+    /// [#addThemeProps], which never clears [#themeConstants]. When a user
+    /// replaces a `var()`-bound CSS rule with a literal, the recompiled
+    /// theme.res carries the new style value but no longer emits the
+    /// matching `@cn1-bind:<key>` entry. Without intervention the stale
+    /// binding left in `themeConstants` would let [#applyThemeBindings]
+    /// stomp the user's literal change back to the previous binding's
+    /// resolved value -- visibly hiding every CSS edit.
+    ///
+    /// This pre-pass runs only on the overlay entry point (`addThemeProps`),
+    /// not on the full reset path ([#setThemePropsImpl] -> [#buildTheme],
+    /// which clears `themeConstants` itself, and the `@includeNativeBool`
+    /// layered initial load whose existing screenshots depend on bindings
+    /// staying in place). For each style key being re-set by the incoming
+    /// load that does NOT re-assert its binding, drop the matching binding
+    /// from `themeConstants` so the new literal wins.
+    private void dropSupersededBindings(Hashtable themeProps) {
+        if (themeProps == null || themeConstants == null || themeConstants.isEmpty()) {
+            return;
+        }
+        Enumeration e = themeProps.keys();
+        while (e.hasMoreElements()) {
+            Object keyObj = e.nextElement();
+            if (!(keyObj instanceof String)) {
+                continue;
+            }
+            String key = (String) keyObj;
+            if (key.startsWith("@")) {
+                continue;
+            }
+            String boundConstant = "cn1-bind:" + key;
+            if (themeConstants.containsKey(boundConstant)
+                    && !themeProps.containsKey("@" + boundConstant)) {
+                themeConstants.remove(boundConstant);
+            }
+        }
+    }
+
+    /// Scales the font sizes of the current theme by the given factor, e.g.
+    /// a factor of 1.2 increases all font sizes by 20% and a factor of 0.8
+    /// decreases them by 20%. Only fonts that support scaling (TTF or native:
+    /// fonts, see [Font#isTTFNativeFont()]) are affected; system fonts are
+    /// skipped since their size is fixed by the underlying platform.
+    ///
+    /// The zoom is applied relative to the current state of the theme, so
+    /// calling this method repeatedly compounds the effect. To undo a zoom,
+    /// either reapply the theme or call this method with the reciprocal
+    /// factor.
+    ///
+    /// **Note:** this updates the theme definitions and clears the cached
+    /// styles, but components already shown on a form continue to render
+    /// with the Font instances they captured before the call. To apply the
+    /// new sizes to a live form, invoke `refreshTheme()` on it (typically
+    /// `CN.getCurrentForm().refreshTheme()`) after calling this method.
+    ///
+    /// #### Parameters
+    ///
+    /// - `factor`: the multiplier applied to every scalable font size. Must
+    ///   be greater than zero.
+    public void zoomFonts(float factor) {
+        if (factor <= 0f) {
+            throw new IllegalArgumentException("Zoom factor must be greater than zero");
+        }
+        if (factor == 1f) {
+            return;
+        }
+        for (Map.Entry<String, Object> entry : themeProps.entrySet()) {
+            if (!entry.getKey().endsWith(Style.FONT)) {
+                continue;
+            }
+            Object value = entry.getValue();
+            Font font = null;
+            if (value instanceof Font) {
+                font = (Font) value;
+            } else if (value instanceof String) {
+                Font parsed = parseFont((String) value);
+                if (parsed != null && parsed.isTTFNativeFont()) {
+                    font = parsed;
+                }
+            }
+            if (font == null || !font.isTTFNativeFont()) {
+                continue;
+            }
+            Font scaled = scaleFontByFactor(font, factor);
+            if (scaled != null && scaled != font) { //NOPMD CompareObjectsWithEquals
+                entry.setValue(scaled);
+            }
+        }
+        Font defFont = defaultStyle.getFont();
+        if (defFont != null && defFont.isTTFNativeFont()) {
+            Font scaled = scaleFontByFactor(defFont, factor);
+            if (scaled != null && scaled != defFont) { //NOPMD CompareObjectsWithEquals
+                defaultStyle.setFont(scaled);
+            }
+        }
+        Font defSelFont = defaultSelectedStyle.getFont();
+        if (defSelFont != null && defSelFont.isTTFNativeFont()) {
+            Font scaled = scaleFontByFactor(defSelFont, factor);
+            if (scaled != null && scaled != defSelFont) { //NOPMD CompareObjectsWithEquals
+                defaultSelectedStyle.setFont(scaled);
+            }
+        }
+        styles.clear();
+        selectedStyles.clear();
+        imageCache.clear();
+        current.refreshTheme(false);
+    }
+
+    private Font scaleFontByFactor(Font font, float factor) {
+        if (font == null || !font.isTTFNativeFont()) {
+            return font;
+        }
+        float baseSize = font.getPixelSize();
+        if (baseSize <= 0) {
+            baseSize = font.getHeight();
+        }
+        if (baseSize <= 0) {
+            return font;
+        }
+        try {
+            return font.derive(baseSize * factor, font.getStyle());
+        } catch (Exception ex) {
+            Log.e(ex);
+            return font;
+        }
+    }
+
+    /// Invalidates the cached Style instances and re-runs the theme build pass
+    /// against the currently installed theme properties. Callers use this after
+    /// state changes that affect style resolution (notably `Display.setDarkMode`,
+    /// which makes `$Dark<UIID>` entries eligible) without reloading the theme
+    /// from a resource file. Components styled after this call resolve against
+    /// the refreshed theme; already-resolved Style references on existing
+    /// components keep their old values until those components re-fetch their
+    /// styles.
+    public void refreshTheme() {
+        if (!accessible || themeProps == null) {
+            return;
+        }
+        Hashtable props = new Hashtable();
+        for (Map.Entry<String, Object> e : themeProps.entrySet()) {
+            props.put(e.getKey(), e.getValue());
+        }
+        // buildTheme strips `@`-prefixed constants into themeConstants and
+        // drops them from the main themeProps map. Round-tripping through
+        // setThemePropsImpl would therefore lose every constant - so
+        // re-add them from themeConstants with the `@` restored, matching
+        // the shape buildTheme expects on input.
+        if (themeConstants != null) {
+            for (Map.Entry<String, Object> e : themeConstants.entrySet()) {
+                props.put("@" + e.getKey(), e.getValue());
+            }
+        }
+        setThemePropsImpl(props);
     }
 
     /// Returns a theme constant defined in the resource editor
@@ -1625,7 +1800,33 @@ public class UIManager {
             themelisteners.fireActionEvent(new ActionEvent(themeProps, ActionEvent.Type.Theme));
         }
         buildTheme(themeProps);
+        breakTitleAreaToolbarDeriveCycle();
         current.refreshTheme(true);
+    }
+
+    /// resetThemeProps decides whether to install the legacy
+    /// `Toolbar.derive=TitleArea` default by inspecting only the *immediate*
+    /// installedTheme it was handed. When a user theme has
+    /// `@includeNativeBool: true`, buildTheme later layers in a native theme
+    /// (e.g. iOS Modern's `TitleArea.derive=Toolbar`) and the user theme on
+    /// top - and those layers can flip the derive direction without the
+    /// outer reset noticing. Once both `Toolbar.derive=TitleArea` and
+    /// `TitleArea.derive=Toolbar` exist in the merged themeProps,
+    /// `createStyle` recurses indefinitely and Logs `Error creating style
+    /// TitleArea` (the catch returns a default style, but the cycle leaves
+    /// the chrome unstyled and the app effectively stuck). Drop the legacy
+    /// default once we can see the merged state.
+    private void breakTitleAreaToolbarDeriveCycle() {
+        if (themeProps == null) {
+            return;
+        }
+        Object titleAreaDerive = themeProps.get("TitleArea.derive");
+        if ("Toolbar".equals(titleAreaDerive)) {
+            Object toolbarDerive = themeProps.get("Toolbar.derive");
+            if ("TitleArea".equals(toolbarDerive)) {
+                themeProps.remove("Toolbar.derive");
+            }
+        }
     }
 
     private void buildTheme(Hashtable themeProps) {
@@ -1647,6 +1848,8 @@ public class UIManager {
             }
             this.themeProps.put(key, themeProps.get(key));
         }
+
+        applyThemeBindings();
 
         updateLargerTextScaleSettingFromTheme();
 
@@ -1709,6 +1912,99 @@ public class UIManager {
 
     }
 
+    /// Theme entries can be bound to a named theme constant via a
+    /// `@cn1-bind:&lt;themeKey&gt;=&lt;varName&gt;` pseudo-constant emitted by the CSS
+    /// compiler when it expands a `var(--name, fallback)` reference. The
+    /// compiler still inlines `fallback` as the baked-in default (so themes
+    /// load correctly with no override), but additionally records that the
+    /// resolved style property tracks `--name`.
+    ///
+    /// At runtime, callers tune the palette by injecting an `@&lt;varName&gt;`
+    /// constant via [#addThemeProps]. This method walks the binding entries
+    /// and overlays the override value onto every bound style key, so a
+    /// single `addThemeProps({"@accent-color": "ff2d95"})` call retunes
+    /// every UIID whose CSS rule referenced `var(--accent-color, ...)`.
+    /// Bindings without a matching override are left at their baked-in
+    /// default (whatever was already in themeProps from the initial load).
+    private void applyThemeBindings() {
+        if (themeConstants == null || themeConstants.isEmpty() || themeProps == null) {
+            return;
+        }
+        final String prefix = "cn1-bind:";
+        for (Map.Entry<String, Object> entry : themeConstants.entrySet()) {
+            String constantKey = entry.getKey();
+            if (constantKey == null || !constantKey.startsWith(prefix)) {
+                continue;
+            }
+            Object varNameObj = entry.getValue();
+            if (!(varNameObj instanceof String)) {
+                continue;
+            }
+            String varName = ((String) varNameObj).trim();
+            if (varName.length() == 0) {
+                continue;
+            }
+            Object override = themeConstants.get(varName);
+            if (!(override instanceof String)) {
+                continue;
+            }
+            String themeKey = constantKey.substring(prefix.length());
+            if (themeKey.length() == 0) {
+                continue;
+            }
+            // Only retune keys that are already present in themeProps so a
+            // stale binding entry (left over after the bound rule was
+            // dropped from the source CSS) can't materialize a phantom
+            // style key from the user's override value.
+            if (!themeProps.containsKey(themeKey)) {
+                continue;
+            }
+            String overrideValue = (String) override;
+            if (themeKey.endsWith("Color")) {
+                overrideValue = normalizeBoundColorValue(overrideValue);
+                if (overrideValue == null) {
+                    continue;
+                }
+            }
+            themeProps.put(themeKey, overrideValue);
+        }
+    }
+
+    /// `loadTheme` stores color theme entries as plain hex strings (no `#`,
+    /// lowercase). User-supplied overrides may use either form, so trim a
+    /// leading `#` and lowercase the value before assigning it to a bound
+    /// color key. Returns null when the value can't be parsed as a 3- or
+    /// 6-digit hex color so the binding falls through to its default.
+    private static String normalizeBoundColorValue(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String value = raw.trim();
+        if (value.length() == 0) {
+            return null;
+        }
+        if (value.charAt(0) == '#') {
+            value = value.substring(1);
+        }
+        if (value.length() == 3) {
+            char r = value.charAt(0);
+            char g = value.charAt(1);
+            char b = value.charAt(2);
+            value = "" + r + r + g + g + b + b;
+        }
+        if (value.length() != 6) {
+            return null;
+        }
+        for (int i = 0; i < 6; i++) {
+            char c = value.charAt(i);
+            boolean hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (!hex) {
+                return null;
+            }
+        }
+        return value.toLowerCase();
+    }
+
     private Map<String, String> parseCache() {
         if (parseCache == null) {
             parseCache = new HashMap<String, String>();
@@ -1754,6 +2050,26 @@ public class UIManager {
     }
 
     private void applyLargerTextScaleToThemeFonts() {
+        // Roll back any prior scaling we applied so this pass always derives
+        // from the original installed font. Without the rollback, repeated
+        // refreshes compound (each scale multiplies the previously-derived
+        // pixel size) and a return to scale 1.0 never actually shrinks fonts.
+        if (!scaledFontOriginals.isEmpty()) {
+            for (Map.Entry<String, Font> entry : scaledFontOriginals.entrySet()) {
+                String key = entry.getKey();
+                Object current = themeProps.get(key);
+                Font derived = scaledFontDerived.get(key);
+                // Only restore when the theme still holds the Font we wrote;
+                // an intervening setThemeProps/addThemeProps may have replaced
+                // it with a new original we must keep.
+                if (current == derived) { //NOPMD CompareObjectsWithEquals
+                    themeProps.put(key, entry.getValue());
+                }
+            }
+            scaledFontOriginals.clear();
+            scaledFontDerived.clear();
+        }
+
         float scale = getEffectiveLargerTextScale();
         if (scale <= 1f) {
             return;
@@ -1764,8 +2080,11 @@ public class UIManager {
             }
             Object value = entry.getValue();
             if (value instanceof Font) {
-                Font scaled = scaleFontForLargerText((Font) value, scale);
-                if (scaled != value) { //NOPMD CompareObjectsWithEquals
+                Font original = (Font) value;
+                Font scaled = scaleFontForLargerText(original, scale);
+                if (scaled != original) { //NOPMD CompareObjectsWithEquals
+                    scaledFontOriginals.put(entry.getKey(), original);
+                    scaledFontDerived.put(entry.getKey(), scaled);
                     entry.setValue(scaled);
                 }
             }
@@ -2091,6 +2410,26 @@ public class UIManager {
                     backgroundGradient[4] = Float.valueOf(1);
                 }
                 style.setBackgroundGradient(backgroundGradient);
+            }
+            Object gradient = themeProps.get(id + Style.GRADIENT);
+            if (gradient instanceof com.codename1.ui.Gradient) {
+                style.setGradient((com.codename1.ui.Gradient) gradient);
+            }
+            Object filterBlur = themeProps.get(id + Style.FILTER_BLUR);
+            if (filterBlur instanceof Number) {
+                style.setFilterBlurRadius(((Number) filterBlur).floatValue());
+            }
+            Object backdropFilterBlur = themeProps.get(id + Style.BACKDROP_FILTER_BLUR);
+            if (backdropFilterBlur instanceof Number) {
+                style.setBackdropFilterBlurRadius(((Number) backdropFilterBlur).floatValue());
+            }
+            Object filterMatrix = themeProps.get(id + Style.FILTER_COLOR_MATRIX);
+            if (filterMatrix instanceof float[]) {
+                style.setFilterColorMatrix((float[]) filterMatrix);
+            }
+            Object backdropFilterMatrix = themeProps.get(id + Style.BACKDROP_FILTER_COLOR_MATRIX);
+            if (backdropFilterMatrix instanceof float[]) {
+                style.setBackdropFilterColorMatrix((float[]) backdropFilterMatrix);
             }
             if (bgImage != null) {
                 Image im = null;

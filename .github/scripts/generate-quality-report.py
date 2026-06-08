@@ -900,6 +900,9 @@ def main() -> None:
             "NP_BOOLEAN_RETURN_NULL",
             "RC_REF_COMPARISON_BAD_PRACTICE_BOOLEAN",
             "OS_OPEN_STREAM",
+            "OS_OPEN_STREAM_EXCEPTION_PATH",
+            "OBL_UNSATISFIED_OBLIGATION_EXCEPTION_EDGE",
+            "RV_RETURN_VALUE_IGNORED_BAD_PRACTICE",
             "REFLC_REFLECTION_MAY_INCREASE_ACCESSIBILITY_OF_CLASS",
             "REC_CATCH_EXCEPTION",
             "RCN_REDUNDANT_NULLCHECK_WOULD_HAVE_BEEN_A_NPE",
@@ -959,14 +962,19 @@ def main() -> None:
             return False
 
 
-        violations = [
-            f for f in spotbugs.findings
-            if f.rule in forbidden_rules and not _is_exempt(f)
-        ]
-        if violations:
+        # Apply the same forbidden_rules to every SpotBugs report (android,
+        # ios, codenameone-maven-plugin, ...) -- not just core-unittests --
+        # so a quality regression in a port is caught in CI just as quickly
+        # as one in core.
+        all_violations: List[Tuple[str, Finding]] = []
+        for label, report in spotbugs_reports.items():
+            for f in report.findings:
+                if f.rule in forbidden_rules and not _is_exempt(f):
+                    all_violations.append((label, f))
+        if all_violations:
             print("\n❌ Build failed due to forbidden SpotBugs violations:")
-            for v in violations:
-                print(f"  - {v.rule}: {v.location} - {v.message}")
+            for label, v in all_violations:
+                print(f"  - {v.rule}: {label} {v.location} - {v.message}")
             exit(1)
 
     pmd = parse_pmd()
@@ -1027,6 +1035,16 @@ def main() -> None:
             print("\n❌ Build failed due to forbidden PMD violations:")
             for v in violations:
                 print(f"  - {v.rule}: {v.location} - {v.message}")
+            exit(1)
+
+    checkstyle = parse_checkstyle()
+    if checkstyle:
+        violations = [f for f in checkstyle.findings if f.severity == "Error"]
+        if violations:
+            print("\n❌ Build failed due to Checkstyle errors:")
+            for v in violations:
+                rule = v.rule or "unknown"
+                print(f"  - {rule}: {v.location} - {v.message}")
             exit(1)
 
 

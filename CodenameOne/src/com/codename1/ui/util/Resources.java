@@ -117,6 +117,12 @@ public class Resources {
     private static int lastLoadedDPI;
     private static boolean runtimeMultiImages;
     private static boolean failOnMissingTruetype = true;
+
+    /// Global image registry populated by the build-time SVG transcoder. Keyed
+    /// by the source filename ("home.svg") and also under the filename stem
+    /// ("home") so CSS-style `url(home.svg)` references and direct
+    /// `getImage("home")` calls both resolve to the same instance.
+    private static final Map<String, Image> generatedImages = new HashMap<String, Image>();
     /// Hashtable containing the mapping between element types and their names in the
     /// resource hashtable
     private final HashMap<String, Byte> resourceTypes = new HashMap<String, Byte>();
@@ -880,7 +886,61 @@ public class Resources {
     ///
     /// cached image instance
     public Image getImage(String id) {
+        // The generated-image registry wins over the local resources map
+        // so the build-time SVG transcoder's installGlobal() call -- run
+        // from the per-port wiring (JavaSEPort.init reflectively, or the
+        // iOS / Android Stub emitted by IPhoneBuilder / AndroidGradleBuilder
+        // when the project contains SVGs) -- overrides the 1x1 PNG
+        // placeholder the CSS compiler stored under the same name.
+        Image gen;
+        synchronized (generatedImages) {
+            gen = generatedImages.get(id);
+        }
+        if (gen != null) {
+            return gen;
+        }
         return (Image) resources.get(id);
+    }
+
+    /// Install an [Image] into this resources bundle under the given name so a
+    /// subsequent [#getImage(String)] returns it. Used by the build-time SVG
+    /// transcoder registry to inject generated images alongside the resources
+    /// loaded from the `.res` file.
+    public void setImage(String id, Image image) {
+        if (id == null || image == null) {
+            return;
+        }
+        resources.put(id, image);
+        resourceTypes.put(id, Byte.valueOf(MAGIC_IMAGE));
+    }
+
+    /// Add an [Image] to the global registry consulted by every
+    /// [#getImage(String)] call as a fallback. Intended for the
+    /// auto-generated `com.codename1.generated.svg.SVGRegistry` produced by
+    /// the SVG transcoder mojo -- application code should not normally call
+    /// this directly.
+    ///
+    /// Registers the image both under the supplied `id` and (if `id` ends with
+    /// `.svg`) under the bare filename stem so a CSS reference like
+    /// `url(home.svg)` and a code reference like `getImage("home")` both
+    /// resolve to the same instance.
+    public static void registerGeneratedImage(String id, Image image) {
+        if (id == null || image == null) {
+            return;
+        }
+        synchronized (generatedImages) {
+            generatedImages.put(id, image);
+            // Register the bare stem too so getImage("home") works whether
+            // the source asset was home.svg, home.json (Lottie), or
+            // home.lottie. Keeps the call site format-agnostic.
+            int dot = id.lastIndexOf('.');
+            if (dot > 0) {
+                String stem = id.substring(0, dot);
+                if (!generatedImages.containsKey(stem)) {
+                    generatedImages.put(stem, image);
+                }
+            }
+        }
     }
 
     /// Returns the data resource from the file
@@ -929,7 +989,11 @@ public class Resources {
     ///
     /// Hashtable containing key value pairs for localized data
     public Hashtable<String, String> getL10N(String id, String locale) {
-        return (Hashtable<String, String>) ((Hashtable) resources.get(id)).get(locale);
+        Hashtable bundles = (Hashtable) resources.get(id);
+        if (bundles == null) {
+            return null;
+        }
+        return (Hashtable<String, String>) bundles.get(locale);
     }
 
     /// Returns an enumration of the locales supported by this resource id
@@ -942,7 +1006,11 @@ public class Resources {
     ///
     /// enumeration of strings containing bundle names
     public Enumeration listL10NLocales(String id) {
-        return ((Hashtable) resources.get(id)).keys();
+        Hashtable bundles = (Hashtable) resources.get(id);
+        if (bundles == null) {
+            return null;
+        }
+        return bundles.keys();
     }
 
     /// Returns a collection of the l10 locale names
@@ -955,7 +1023,11 @@ public class Resources {
     ///
     /// collection of strings containing bundle names
     public Collection<String> l10NLocaleSet(String id) {
-        return ((Hashtable<String, String>) resources.get(id)).keySet();
+        Hashtable<String, String> bundles = (Hashtable<String, String>) resources.get(id);
+        if (bundles == null) {
+            return null;
+        }
+        return bundles.keySet();
     }
 
     /// Returns the font resource from the file
@@ -1389,6 +1461,61 @@ public class Resources {
         return Font.createTrueTypeFont(fontName, fileName).derive(fontSize, f.getStyle());
     }
 
+    /// Reads the binary form of a `Gradient` from the resource stream.
+    /// Layout: byte kind, byte cycleMethod, float angle,
+    /// float relCenterX, float relCenterY, byte radialShape, byte radialExtent,
+    /// float relRadiusX, float relRadiusY, float fromAngle,
+    /// int stopCount, [int color, float position] * stopCount.
+    /// Kind selects which subclass we materialize (linear / radial / conic).
+    /// Fields not relevant to the chosen subclass are still consumed so the
+    /// stream position stays aligned with the writer.
+    private com.codename1.ui.Gradient readGradient(DataInputStream input) throws IOException {
+        byte kind = input.readByte();
+        byte cycleMethod = input.readByte();
+        float angle = input.readFloat();
+        float relCx = input.readFloat();
+        float relCy = input.readFloat();
+        byte radialShape = input.readByte();
+        byte radialExtent = input.readByte();
+        float relRx = input.readFloat();
+        float relRy = input.readFloat();
+        float fromAngle = input.readFloat();
+        int count = input.readInt();
+        int[] colors = new int[count];
+        float[] positions = new float[count];
+        for (int i = 0; i < count; i++) {
+            colors[i] = input.readInt();
+            positions[i] = input.readFloat();
+        }
+        switch (kind) {
+            case com.codename1.ui.Gradient.KIND_RADIAL: {
+                com.codename1.ui.RadialGradient g = new com.codename1.ui.RadialGradient(colors, positions);
+                g.setCycleMethod(cycleMethod);
+                g.setShape(radialShape);
+                g.setExtent(radialExtent);
+                g.setRelativeCenterX(relCx);
+                g.setRelativeCenterY(relCy);
+                g.setRelativeRadiusX(relRx);
+                g.setRelativeRadiusY(relRy);
+                return g;
+            }
+            case com.codename1.ui.Gradient.KIND_CONIC: {
+                com.codename1.ui.ConicGradient g = new com.codename1.ui.ConicGradient(colors, positions);
+                g.setCycleMethod(cycleMethod);
+                g.setRelativeCenterX(relCx);
+                g.setRelativeCenterY(relCy);
+                g.setFromAngleDegrees(fromAngle);
+                return g;
+            }
+            case com.codename1.ui.Gradient.KIND_LINEAR:
+            default: {
+                com.codename1.ui.LinearGradient g = new com.codename1.ui.LinearGradient(angle, colors, positions);
+                g.setCycleMethod(cycleMethod);
+                return g;
+            }
+        }
+    }
+
     Hashtable loadTheme(String id, boolean newerVersion) throws IOException {
         Hashtable theme = new Hashtable();
         String densityStr = Display.getInstance().getDensityStr();
@@ -1735,6 +1862,25 @@ public class Resources {
                             Float.valueOf(input.readFloat())
                     });
                 }
+                continue;
+            }
+
+            if (key.endsWith(Style.GRADIENT)) {
+                theme.put(key, readGradient(input));
+                continue;
+            }
+
+            if (key.endsWith(Style.FILTER_BLUR) || key.endsWith(Style.BACKDROP_FILTER_BLUR)) {
+                theme.put(key, Float.valueOf(input.readFloat()));
+                continue;
+            }
+
+            if (key.endsWith(Style.FILTER_COLOR_MATRIX) || key.endsWith(Style.BACKDROP_FILTER_COLOR_MATRIX)) {
+                float[] matrix = new float[20];
+                for (int i = 0; i < 20; i++) {
+                    matrix[i] = input.readFloat();
+                }
+                theme.put(key, matrix);
                 continue;
             }
 

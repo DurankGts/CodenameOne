@@ -177,7 +177,9 @@ The setup is covered in depth in [this article and video](https://www.codenameon
 " img width="80%"> </a>
 </div>
 
-**IMPORTANT:** Building Codename One requires **JDK 8**, currently. You cannot use JDK 11 as some sub-modules must use `-source 1.5` and `-target 1.5` to maintain backward compatibility with parts of the toolchain.
+**IMPORTANT:** *Building* the Codename One framework from source requires **JDK 8** -- some sub-modules must use `-source 1.5` and `-target 1.5` to maintain backward compatibility with parts of the toolchain, and newer JDKs cannot emit those targets.
+
+*Running* a Codename One application (the simulator or the "Run as desktop app" target) supports **JDK 11 through 25** (Eclipse Temurin: <https://adoptium.net>).
 
 
 ### Quick Start with Maven
@@ -190,17 +192,7 @@ mvn install -Plocal-dev-javase
 
 NOTE: The `-Plocal-dev-javase` profile is necessary for building the javase port.  Without it, you'll get build errors.
 
-This will build and install Codename One in your local Maven repository. This process can take a while since it automatically downloads dependencies with a size of ~1GB.  
-
-
-To build the archetype projects from source, you should check out the [cn1-maven-archetypes](https://github.com/shannah/cn1-maven-archetypes) repository and build it also:
-
-~~~~
-git clone https://github.com/shannah/cn1-maven-archetypes
-cd cn1-maven-archetypes
-mvn install -Plocal-dev-javase
-~~~~  
-
+This will build and install Codename One in your local Maven repository, including the `cn1app-archetype` and `cn1lib-archetype` Maven archetypes. This process can take a while since it automatically downloads dependencies with a size of ~1GB.
 
 Now that Codename One is installed in your local Maven repository, you can use that version in a project instead of the release version.
 A new testing project can be quickly generated with the [Codename One initializr](https://start.codenameone.com).

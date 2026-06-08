@@ -787,6 +787,13 @@ public class SideMenuBar extends MenuBar {
                     ((BorderLayout) titleArea.getLayout()).setCenterBehavior(BorderLayout.CENTER_BEHAVIOR_CENTER_ABSOLUTE);
                 }
             }
+            // Defensive: when this form is shown immediately after a side-menu
+            // close (issue #4895), the title area can have been laid out
+            // before the openButton was attached. Mark the openButton for a
+            // fresh preferred-size calc and queue a relayout for the next
+            // paint so the hamburger isn't rendered at width 0.
+            openButton.setShouldCalcPreferredSize(true);
+            titleArea.revalidateLater();
         }
         if (cmd != null) {
             String placement = (String) cmd.getClientProperty(COMMAND_PLACEMENT_KEY);
@@ -1798,8 +1805,21 @@ public class SideMenuBar extends MenuBar {
         @Override
         public void actionPerformed(final ActionEvent evt) {
             if (Toolbar.isOnTopSideMenu() && (Toolbar.isGlobalToolbar() || Display.getInstance().getCommandBehavior() != Display.COMMAND_BEHAVIOR_SIDE_NAVIGATION)) {
-                Display.getInstance().getCurrent().getToolbar().closeSideMenu();
-                cmd.actionPerformed(evt);
+                // Issue #4979: fire the command *after* the side-menu
+                // dispose animation has finished and the Toolbar's
+                // layered-pane dim backdrop has been detached. The
+                // previous code ran cmd.actionPerformed synchronously
+                // right after starting the async dispose, so if the
+                // command invoked a modal Dialog.show() the Dialog's
+                // event pump took over the EDT before
+                // detachToolbarLayeredPane could fire -- leaving the
+                // dim backdrop visible after the Dialog was dismissed.
+                Display.getInstance().getCurrent().getToolbar().closeSideMenu(new Runnable() {
+                    @Override
+                    public void run() {
+                        cmd.actionPerformed(evt);
+                    }
+                });
                 return;
             }
             if (transitionRunning) {

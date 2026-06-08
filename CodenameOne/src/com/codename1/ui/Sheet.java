@@ -23,6 +23,8 @@
 package com.codename1.ui;
 
 import com.codename1.ui.ComponentSelector.ComponentClosure;
+import com.codename1.ui.animations.ComponentAnimation;
+import com.codename1.ui.animations.Motion;
 import com.codename1.ui.events.ActionEvent;
 import com.codename1.ui.events.ActionListener;
 import com.codename1.ui.geom.Rectangle;
@@ -35,6 +37,7 @@ import com.codename1.ui.plaf.RoundRectBorder;
 import com.codename1.ui.plaf.Style;
 import com.codename1.ui.plaf.UIManager;
 import com.codename1.ui.util.EventDispatcher;
+import com.codename1.util.AsyncResource;
 
 import static com.codename1.ui.ComponentSelector.$;
 
@@ -125,6 +128,10 @@ public class Sheet extends Container {
     private Component titleComponent = title;
     private final EventDispatcher closeListeners = new EventDispatcher();
     private final EventDispatcher backListeners = new EventDispatcher();
+    /// Pending result resource published by `#showForResult` and completed by
+    /// `#finish`. When the sheet is dismissed without an explicit `finish()` the
+    /// resource is completed with `null` (cancellation analogue).
+    private AsyncResource<Object> pendingResult;
     private final Button backButton = new Button(FontImage.MATERIAL_CLOSE);
     private final Container commandsContainer = new Container(BoxLayout.x());
     private final Container titleComponentContainer = FlowLayout.encloseCenterMiddle(title);
@@ -152,6 +159,176 @@ public class Sheet extends Container {
             }
         }
 
+    };
+    private boolean swipeToDismissEnabled = true;
+    private boolean dragging;
+    private int dragStartPointerX;
+    private int dragStartPointerY;
+    private int dragStartSheetX;
+    private int dragStartSheetY;
+    private long lastDragTime;
+    private int lastDragPointerX;
+    private int lastDragPointerY;
+    private float dragVelocity;
+    private boolean dismissAnimating;
+    private final ActionListener formSwipePressedListener = new ActionListener() {
+        @Override
+        public void actionPerformed(ActionEvent evt) {
+            if (!swipeToDismissEnabled || !allowClose || dismissAnimating) {
+                return;
+            }
+            int x = evt.getX();
+            int y = evt.getY();
+            // Drag to dismiss is initiated only on the title bar (excluding the
+            // back button and commands container, which are interactive controls)
+            // so it does not interfere with content scrolling or button taps.
+            if (!titleBar.contains(x, y)) {
+                return;
+            }
+            if (backButton.isVisible() && backButton.contains(x, y)) {
+                return;
+            }
+            if (commandsContainer.contains(x, y)) {
+                return;
+            }
+            dragging = true;
+            dragStartPointerX = x;
+            dragStartPointerY = y;
+            dragStartSheetX = getX();
+            dragStartSheetY = getY();
+            lastDragPointerX = x;
+            lastDragPointerY = y;
+            lastDragTime = System.currentTimeMillis();
+            dragVelocity = 0f;
+        }
+    };
+    private final ActionListener formSwipeDraggedListener = new ActionListener() {
+        @Override
+        public void actionPerformed(ActionEvent evt) {
+            if (!dragging) {
+                return;
+            }
+            int x = evt.getX();
+            int y = evt.getY();
+            int dx = x - dragStartPointerX;
+            int dy = y - dragStartPointerY;
+            int positionInt = getPositionInt();
+            boolean moved = false;
+            switch (positionInt) {
+                case S:
+                case C:
+                    if (dy > 0) {
+                        setY(dragStartSheetY + dy);
+                        moved = true;
+                    } else {
+                        setY(dragStartSheetY);
+                    }
+                    break;
+                case N:
+                    if (dy < 0) {
+                        setY(dragStartSheetY + dy);
+                        moved = true;
+                    } else {
+                        setY(dragStartSheetY);
+                    }
+                    break;
+                case E:
+                    if (dx > 0) {
+                        setX(dragStartSheetX + dx);
+                        moved = true;
+                    } else {
+                        setX(dragStartSheetX);
+                    }
+                    break;
+                case W:
+                    if (dx < 0) {
+                        setX(dragStartSheetX + dx);
+                        moved = true;
+                    } else {
+                        setX(dragStartSheetX);
+                    }
+                    break;
+                default:
+                    break;
+            }
+            long now = System.currentTimeMillis();
+            // Treat sub-millisecond gaps as 1ms so a fast successive drag
+            // event still produces a finite velocity reading rather than
+            // silently keeping the previous value (which would be zero on
+            // the first sample).
+            long elapsed = Math.max(1, now - lastDragTime);
+            int dragDelta;
+            if (positionInt == E || positionInt == W) {
+                dragDelta = x - lastDragPointerX;
+            } else {
+                dragDelta = y - lastDragPointerY;
+            }
+            dragVelocity = dragDelta * 1000f / elapsed;
+            lastDragPointerX = x;
+            lastDragPointerY = y;
+            lastDragTime = now;
+            if (moved) {
+                evt.consume();
+                Container parent = getParent();
+                if (parent != null) {
+                    parent.repaint();
+                }
+            }
+        }
+    };
+    private final ActionListener formSwipeReleasedListener = new ActionListener() {
+        @Override
+        public void actionPerformed(ActionEvent evt) {
+            if (!dragging) {
+                return;
+            }
+            dragging = false;
+            int positionInt = getPositionInt();
+            int distance;
+            int dimension;
+            float velocity = dragVelocity;
+            switch (positionInt) {
+                case S:
+                case C:
+                    distance = getY() - dragStartSheetY;
+                    dimension = getHeight();
+                    break;
+                case N:
+                    distance = dragStartSheetY - getY();
+                    dimension = getHeight();
+                    velocity = -velocity;
+                    break;
+                case E:
+                    distance = getX() - dragStartSheetX;
+                    dimension = getWidth();
+                    break;
+                case W:
+                    distance = dragStartSheetX - getX();
+                    dimension = getWidth();
+                    velocity = -velocity;
+                    break;
+                default:
+                    distance = 0;
+                    dimension = 1;
+                    break;
+            }
+            // A drag past one third of the sheet, or a sufficiently fast flick
+            // (~50 dips/sec) in the dismiss direction, dismisses the sheet.
+            // Otherwise we snap back to the resting position.
+            boolean horizontal = positionInt == E || positionInt == W;
+            int flickThreshold = Display.getInstance().convertToPixels(50, horizontal);
+            boolean dismiss = distance > dimension / 3 || velocity > flickThreshold;
+            if (dismiss) {
+                evt.consume();
+                animateDismissFromDrag(DEFAULT_TRANSITION_DURATION);
+            } else if (distance > 0) {
+                evt.consume();
+                Container parent = getParent();
+                if (parent != null) {
+                    parent.animateLayout(DEFAULT_TRANSITION_DURATION);
+                }
+            }
+        }
     };
     private boolean allowClose = true;
     /// The position on the screen where the sheet is displayed on phones.
@@ -364,14 +541,71 @@ public class Sheet extends Container {
             this.allowClose = allowClose;
             if (!allowClose && isInitialized()) {
                 form.removePointerPressedListener(formPointerListener);
+                detachSwipeListeners(form);
+                dragging = false;
             } else if (allowClose && isInitialized()) {
                 form.addPointerPressedListener(formPointerListener);
+                attachSwipeListeners(form);
             }
             if (parentSheet == null) {
                 backButton.setVisible(allowClose);
                 backButton.setEnabled(allowClose);
             }
         }
+    }
+
+    /// Checks whether this sheet can be dismissed by swiping it toward the
+    /// edge of the screen (e.g. swiping down for a south-positioned sheet).
+    ///
+    /// #### Returns
+    ///
+    /// True if swipe-to-dismiss is enabled.
+    ///
+    /// #### Since
+    ///
+    /// 8.0
+    public boolean isSwipeToDismissEnabled() {
+        return swipeToDismissEnabled;
+    }
+
+    /// Enables or disables the swipe-to-dismiss gesture. When enabled (the default),
+    /// a downward drag on the sheet's title bar (or the corresponding direction for
+    /// other positions) will close the sheet. The gesture is also subject to
+    /// {@link #isAllowClose()}; if `allowClose` is false the gesture is disabled
+    /// regardless of this flag.
+    ///
+    /// #### Parameters
+    ///
+    /// - `swipeToDismissEnabled`: True to enable the swipe-to-dismiss gesture, false to disable it.
+    ///
+    /// #### Since
+    ///
+    /// 8.0
+    public void setSwipeToDismissEnabled(boolean swipeToDismissEnabled) {
+        if (this.swipeToDismissEnabled != swipeToDismissEnabled) {
+            this.swipeToDismissEnabled = swipeToDismissEnabled;
+            if (!swipeToDismissEnabled) {
+                dragging = false;
+            }
+        }
+    }
+
+    private void attachSwipeListeners(Form f) {
+        if (f == null) {
+            return;
+        }
+        f.addPointerPressedListener(formSwipePressedListener);
+        f.addPointerDraggedListener(formSwipeDraggedListener);
+        f.addPointerReleasedListener(formSwipeReleasedListener);
+    }
+
+    private void detachSwipeListeners(Form f) {
+        if (f == null) {
+            return;
+        }
+        f.removePointerPressedListener(formSwipePressedListener);
+        f.removePointerDraggedListener(formSwipeDraggedListener);
+        f.removePointerReleasedListener(formSwipeReleasedListener);
     }
 
     /// Gets the content pane of the sheet.  All sheet content should be added to the content pane
@@ -497,6 +731,68 @@ public class Sheet extends Container {
     /// - #show(int)
     public void show() {
         show(DEFAULT_TRANSITION_DURATION);
+    }
+
+    /// Shows the sheet and returns an `AsyncResource` that will be completed when
+    /// the sheet finishes -- either with `#finish(Object)` carrying a chosen value,
+    /// or with `null` when the sheet is dismissed via back/swipe.
+    ///
+    /// Lets sheets be used as inline confirmation dialogs / pickers without
+    /// wiring up `addCloseListener` + state-shared variables:
+    ///
+    /// ```java
+    /// PickerSheet sheet = new PickerSheet();
+    /// sheet.<String>showForResult().ready(new SuccessCallback<String>() {
+    ///     public void onSuccess(String picked) {
+    ///         if (picked != null) handle(picked);
+    ///     }
+    /// });
+    /// ```
+    ///
+    /// The result type is supplied at the call site; use `Sheet#finish(Object)`
+    /// internally to complete it. The cast is unchecked at runtime -- pick a type
+    /// you control inside the sheet.
+    ///
+    /// #### Since 8.0
+    public <T> AsyncResource<T> showForResult() {
+        return showForResult(DEFAULT_TRANSITION_DURATION);
+    }
+
+    /// `#showForResult` with a custom slide duration.
+    ///
+    /// #### Since 8.0
+    @SuppressWarnings("unchecked")
+    public <T> AsyncResource<T> showForResult(int duration) {
+        // Always create a fresh resource per show -- re-showing a Sheet via
+        // showForResult is a new transaction.
+        pendingResult = new AsyncResource<Object>();
+        show(duration);
+        return (AsyncResource<T>) pendingResult;
+    }
+
+    /// Completes the result resource returned by `#showForResult` and dismisses the
+    /// sheet. No-op (besides dismissal) if `showForResult` was not used to open
+    /// this sheet.
+    ///
+    /// #### Parameters
+    /// - `result`: the value to deliver to the resource subscriber. May be null,
+    ///   in which case subscribers see the same outcome as a user-initiated
+    ///   dismissal.
+    ///
+    /// #### Since 8.0
+    public void finish(Object result) {
+        AsyncResource<Object> r = pendingResult;
+        pendingResult = null;
+        if (r != null && !r.isDone()) {
+            try {
+                r.complete(result);
+            } catch (Throwable t) {
+                com.codename1.io.Log.e(t);
+            }
+        }
+        // Dismiss the sheet: walk up parents to the root and hide. Reuse back()
+        // semantics so transitions match.
+        back();
     }
 
     /// Shows the sheet over the current form using a slide-up transition with given duration in milliseconds.
@@ -941,7 +1237,14 @@ public class Sheet extends Container {
 
                 if (parent != null && parent.getComponentForm() != null) {
                     cnt.remove();
-                    parent.getComponentForm().revalidateLater();
+                    Form parentForm = parent.getComponentForm();
+                    parentForm.revalidateLater();
+                    // revalidateLater() only schedules work for the next
+                    // paint cycle, but cnt.remove() does not by itself wake
+                    // the EDT, so without an explicit repaint here the
+                    // form's dim overlay remains on screen until the next
+                    // user input. See issue #4899.
+                    parentForm.repaint();
                     fireCloseEvent(true);
                     stopTrackingBounds();
 
@@ -951,6 +1254,67 @@ public class Sheet extends Container {
             }
         });
 
+    }
+
+    /// Animates the sheet from its current (mid-drag) position to the off-screen
+    /// hidden position and then disposes it. Unlike `#hide(int)` this does not
+    /// snap back to the layout-resting position before sliding out, which would
+    /// produce a visible jump after the user releases their finger.
+    private void animateDismissFromDrag(final int duration) {
+        final Container cnt = getParent();
+        if (cnt == null) {
+            // Nothing to animate; fall through to the standard hide path.
+            hide(duration);
+            return;
+        }
+        Form f = getComponentForm();
+        if (f == null) {
+            hide(duration);
+            return;
+        }
+        dismissAnimating = true;
+        final int fromX = getX();
+        final int fromY = getY();
+        final int toX = getHiddenX(cnt);
+        final int toY = getHiddenY(cnt);
+        final Motion xMotion = Motion.createEaseOutMotion(fromX, toX, duration);
+        final Motion yMotion = Motion.createEaseOutMotion(fromY, toY, duration);
+        xMotion.start();
+        yMotion.start();
+        ComponentAnimation animation = new ComponentAnimation() {
+            @Override
+            public boolean isInProgress() {
+                return !(xMotion.isFinished() && yMotion.isFinished());
+            }
+
+            @Override
+            protected void updateState() {
+                setX(xMotion.getValue());
+                setY(yMotion.getValue());
+                cnt.repaint();
+            }
+        };
+        Runnable onComplete = new Runnable() {
+            @Override
+            public void run() {
+                Container parent = cnt.getParent();
+                if (parent != null && cnt.getComponentForm() != null) {
+                    cnt.remove();
+                    Form parentForm = parent.getComponentForm();
+                    parentForm.revalidateLater();
+                    // revalidateLater() only schedules work for the next
+                    // paint cycle, but cnt.remove() does not by itself wake
+                    // the EDT, so without an explicit repaint here the
+                    // form's dim overlay remains on screen until the next
+                    // user input. See issue #4899.
+                    parentForm.repaint();
+                    fireCloseEvent(true);
+                    stopTrackingBounds();
+                }
+                dismissAnimating = false;
+            }
+        };
+        f.getAnimationManager().addAnimation(animation, onComplete);
     }
 
     @Override
@@ -992,6 +1356,7 @@ public class Sheet extends Container {
         form = getComponentForm();
         if (form != null && allowClose) {
             form.addPointerPressedListener(formPointerListener);
+            attachSwipeListeners(form);
         }
     }
 
@@ -999,8 +1364,10 @@ public class Sheet extends Container {
     protected void deinitialize() {
         if (form != null) {
             form.removePointerPressedListener(formPointerListener);
+            detachSwipeListeners(form);
             form = null;
         }
+        dragging = false;
         super.deinitialize();
     }
 
@@ -1058,6 +1425,19 @@ public class Sheet extends Container {
         closeListeners.fireActionEvent(new ActionEvent(this));
         if (parentsToo && parentSheet != null) {
             parentSheet.fireCloseEvent(true);
+        }
+        // Auto-resolve a pending showForResult() with null when the sheet closes
+        // without finish() having been called (back, swipe-dismiss, or being
+        // replaced by another sheet). This mirrors how Android Activity onResult
+        // semantics treat a cancelled return: subscribers see a null payload.
+        AsyncResource<Object> r = pendingResult;
+        if (r != null && !r.isDone()) {
+            pendingResult = null;
+            try {
+                r.complete(null);
+            } catch (Throwable t) {
+                com.codename1.io.Log.e(t);
+            }
         }
     }
 

@@ -23,8 +23,12 @@
 #import "DrawGradient.h"
 #import "CodenameOne_GLViewController.h"
 #import "DrawGradientTextureCache.h"
+#ifdef CN1_USE_METAL
+#import "CN1Metalcompat.h"
+#endif
 
 #ifdef USE_ES2
+#ifndef CN1_USE_METAL
 extern GLKMatrix4 CN1modelViewMatrix;
 extern GLKMatrix4 CN1projectionMatrix;
 extern GLKMatrix4 CN1transformMatrix;
@@ -102,6 +106,7 @@ static GLuint getOGLProgram(){
     return program;
 }
 
+#endif // !CN1_USE_METAL
 #endif
 
 
@@ -123,6 +128,10 @@ static GLuint getOGLProgram(){
 }
 #ifdef USE_ES2
 -(void)execute {
+#ifdef CN1_USE_METAL
+    CN1MetalDrawGradient(type, startColor, endColor, x, y, width, height,
+                         relativeX, relativeY, relativeSize);
+#else
     glUseProgram(getOGLProgram());
     GLuint textureName = [DrawGradientTextureCache checkCache:type startColorA:startColor endColorA:endColor widthA:width heightA:height relativeXA:relativeX relativeYA:relativeY relativeSizeA:relativeSize];
     int p2w = nextPowerOf2(width);
@@ -275,9 +284,10 @@ static GLuint getOGLProgram(){
     
     glBindTexture(GL_TEXTURE_2D, 0);
     GLErrorLog;
-    
+
     //glUseProgram(CN1activeProgram);
     //GLErrorLog;
+#endif // CN1_USE_METAL
 
 }
 #else
