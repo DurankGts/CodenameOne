@@ -23,6 +23,7 @@
  */
 package com.codename1.ui;
 
+import com.codename1.analytics.Analytics;
 import com.codename1.annotations.Async;
 import com.codename1.capture.VideoCaptureConstraints;
 import com.codename1.codescan.CodeScanner;
@@ -37,6 +38,8 @@ import com.codename1.io.Preferences;
 import com.codename1.io.Util;
 import com.codename1.l10n.L10NManager;
 import com.codename1.location.LocationManager;
+import com.codename1.printing.PrintResult;
+import com.codename1.printing.PrintResultListener;
 import com.codename1.security.Biometrics;
 import com.codename1.security.SecureStorage;
 import com.codename1.share.ShareResult;
@@ -543,6 +546,36 @@ public final class Display extends CN1Constants {
             simd = created;
         }
         return simd;
+    }
+
+    /// Returns true if the current platform provides a hardware accelerated 3D
+    /// GPU backend for `com.codename1.gpu.RenderView`.
+    public boolean isGpuSupported() {
+        return impl.getGpuImplementation() != null;
+    }
+
+    /// Creates the native GPU peer backing a `RenderView`. Intended for use by
+    /// `RenderView`; returns null on platforms without a 3D backend.
+    public PeerComponent createGpuPeer(com.codename1.gpu.RenderView view) {
+        com.codename1.impl.gpu.GpuImplementation gpu = impl.getGpuImplementation();
+        return gpu != null ? gpu.createPeer(view) : null;
+    }
+
+    /// Sets whether a GPU peer renders continuously or only on demand. Intended
+    /// for use by `RenderView`.
+    public void gpuSetContinuous(PeerComponent peer, boolean continuous) {
+        com.codename1.impl.gpu.GpuImplementation gpu = impl.getGpuImplementation();
+        if (gpu != null) {
+            gpu.setContinuous(peer, continuous);
+        }
+    }
+
+    /// Requests a single frame from a GPU peer. Intended for use by `RenderView`.
+    public void gpuRequestRender(PeerComponent peer) {
+        com.codename1.impl.gpu.GpuImplementation gpu = impl.getGpuImplementation();
+        if (gpu != null) {
+            gpu.requestRender(peer);
+        }
     }
 
     /// Indicates the maximum frames the API will try to draw every second
@@ -1117,8 +1150,15 @@ public final class Display extends CN1Constants {
                 }
                 Log.e(err);
                 if (crashReporter != null) {
-                    CodenameOneThread.handleException(err);
+                    // Hand the actual throwable to the registered reporter
+                    // BEFORE impl.handleEDTException gets a chance to short
+                    // circuit (legacy AndroidImplementation returns true
+                    // after showing its own AlertDialog, which used to
+                    // silently lose the exception for anyone hooking via
+                    // setCrashReporter -- including CrashProtection).
+                    crashReporter.exception(err);
                 }
+                CodenameOneThread.handleException(err);
                 if (!impl.handleEDTException(err)) {
                     if (errorHandler != null) {
                         errorHandler.fireActionEvent(new ActionEvent(err, ActionEvent.Type.Exception));
@@ -3252,6 +3292,36 @@ public final class Display extends CN1Constants {
     /// #### Parameters
     ///
     /// - `e`: listener receiving the errors
+    /// Returns a snapshot of recent platform log output (e.g. logcat
+    /// tail on Android). Used by [com.codename1.crash.CrashProtection]
+    /// to attach device-log context to a crash report. Returns `null`
+    /// on platforms that have no readable process log (`javase`,
+    /// `javascript`).
+    public String getNativeLogSnapshot() {
+        return impl.getNativeLogSnapshot();
+    }
+
+    /// Installs the platform native crash handler used by crash
+    /// protection. On platforms where a native crash (a signal, an
+    /// uncaught Objective-C exception, a segfault in JNI code) cannot
+    /// reach the JVM error path, the handler writes a structured
+    /// record to disk before the process dies. The record is replayed
+    /// on the next launch via [#consumePendingNativeCrash()].
+    /// Idempotent.
+    public void installNativeCrashHandler() {
+        impl.installNativeCrashHandler();
+    }
+
+    /// Returns the captured native crash evidence (raw backtrace +
+    /// signal info as a text blob) from [#installNativeCrashHandler()],
+    /// or `null` if none. The implementation deletes the underlying
+    /// record before returning so the same crash isn't replayed on
+    /// subsequent launches. Crash protection wraps the returned blob
+    /// in a synthetic report payload.
+    public String consumePendingNativeCrash() {
+        return impl.consumePendingNativeCrash();
+    }
+
     public void removeEdtErrorHandler(ActionListener e) {
         if (errorHandler != null) {
             errorHandler.removeListener(e);
@@ -3861,6 +3931,22 @@ public final class Display extends CN1Constants {
         impl.execute(url, response);
     }
 
+    /// Offers the given in-memory bytes to the user as a downloadable file,
+    /// bypassing local storage. This exists for platforms (currently the
+    /// JavaScript port) where the storage-backed {@link #execute(String)}
+    /// download path is unavailable. Returns {@code true} if the platform
+    /// handled the download, {@code false} if unsupported (callers should then
+    /// fall back to writing the file and calling {@link #execute(String)}).
+    ///
+    /// #### Parameters
+    ///
+    /// - `fileName`: the suggested file name for the download
+    ///
+    /// - `bytes`: the file contents
+    public boolean downloadBytesAsFile(String fileName, byte[] bytes) {
+        return impl.downloadBytesAsFile(fileName, bytes);
+    }
+
     /// Returns one of the density variables appropriate for this device, notice that
     /// density doesn't always correspond to resolution and an implementation might
     /// decide to change the density based on DPI constraints.
@@ -4115,6 +4201,23 @@ public final class Display extends CN1Constants {
 
     }
 
+    /// Indicates whether this platform provides a native low latency sound pool
+    /// backing `com.codename1.gaming.SoundPool`. When false the gaming layer uses a
+    /// `com.codename1.media.MediaManager` based fallback.
+    public boolean isSoundPoolSupported() {
+        return impl.isSoundPoolSupported();
+    }
+
+    /// Creates a native low latency sound pool peer for `com.codename1.gaming.SoundPool`,
+    /// or returns null when this platform has no native backend.
+    ///
+    /// #### Parameters
+    ///
+    /// - `maxStreams`: the maximum number of simultaneously playing voices
+    public com.codename1.media.SoundPoolPeer createSoundPool(int maxStreams) {
+        return impl.createSoundPool(maxStreams);
+    }
+
     /// Creates a soft/weak reference to an object that allows it to be collected
     /// yet caches it. This method is in the porting layer since CLDC only includes
     /// weak references while some platforms include nothing at all and some include
@@ -4276,6 +4379,49 @@ public final class Display extends CN1Constants {
     /// true if this is a desktop application
     public boolean isDesktop() {
         return impl.isDesktop();
+    }
+
+    /// Indicates whether the application is running on a smartwatch form factor
+    /// (Apple Watch / Wear OS). Notice that this is often a guess derived from
+    /// the device metadata.
+    ///
+    /// #### Returns
+    ///
+    /// true if the device is assumed to be a smartwatch
+    public boolean isWatch() {
+        return impl.isWatch();
+    }
+
+    /// Indicates whether the application is running on a television form factor
+    /// (Apple TV / Android TV / Google TV). Notice that this is often a guess
+    /// derived from the device metadata.
+    ///
+    /// #### Returns
+    ///
+    /// true if the device is assumed to be a TV
+    public boolean isTV() {
+        return impl.isTV();
+    }
+
+    /// Indicates whether a head unit (Apple CarPlay / Google Android Auto) is currently connected and
+    /// projecting the `com.codename1.car` experience. See `com.codename1.car.Car#isCarConnected()`.
+    ///
+    /// #### Returns
+    ///
+    /// true if a car is connected
+    public boolean isCarConnected() {
+        return impl.isCarConnected();
+    }
+
+    /// Returns the platform bridge used by the `com.codename1.car` API to render in-car templates, or
+    /// null when in-car projection is unsupported on this port. Internal -- application code uses the
+    /// `com.codename1.car` API rather than this bridge directly.
+    ///
+    /// #### Returns
+    ///
+    /// the car bridge, or null
+    public com.codename1.car.spi.CarBridge getCarBridge() {
+        return impl.getCarBridge();
     }
 
     /// Returns true if the device has dialing capabilities
@@ -5131,6 +5277,31 @@ public final class Display extends CN1Constants {
         return impl.isNativeShareSupported();
     }
 
+    /// Indicates whether the platform exposes a native in-app review/rating
+    /// prompt (the OS-sanctioned "rate this app" sheet). When false the
+    /// [com.codename1.appreview.AppReview] API falls back to a Codename One
+    /// drawn rating widget.
+    ///
+    /// #### Returns
+    ///
+    /// true if the platform can present a native review prompt.
+    public boolean isNativeInAppReviewSupported() {
+        return impl.isNativeInAppReviewSupported();
+    }
+
+    /// Requests the native in-app review prompt. Should only be invoked when
+    /// [#isNativeInAppReviewSupported] returns true. The platforms hide whether
+    /// the user actually rated and may throttle the prompt; `done` reports
+    /// whether the request reached the native review controller.
+    ///
+    /// #### Parameters
+    ///
+    /// - `done`: invoked with `true` once the native prompt was requested or
+    ///   `false` when the platform did not handle it. May be null.
+    public void requestNativeInAppReview(SuccessCallback<Boolean> done) {
+        impl.requestNativeInAppReview(done);
+    }
+
     /// Share the required information using the platform sharing services.
     /// a Sharing service can be: mail, sms, facebook, twitter,...
     /// This method is implemented if isNativeShareSupported() returned true for
@@ -5216,6 +5387,13 @@ public final class Display extends CN1Constants {
     ///
     /// - `listener`: callback for the share outcome. May be null.
     public void share(String textOrPath, String image, String mimeType, Rectangle sourceRect, ShareResultListener listener) {
+        // Analytics auto-instrumentation: this 5-arg overload is the chokepoint
+        // that every share(...) variant funnels into. The autoEvent path is
+        // consent-gated, a no-op when no provider is registered, and never
+        // throws into the caller. "type" is the coarse share content type.
+        Map<String, Object> shareParams = new HashMap<String, Object>();
+        shareParams.put("type", image != null ? "image" : "text");
+        Analytics.autoEvent("share", "engagement", shareParams);
         if (listener == null) {
             impl.share(textOrPath, image, mimeType, sourceRect);
             return;
@@ -5225,6 +5403,53 @@ public final class Display extends CN1Constants {
             @Override
             public void onResult(final ShareResult result) {
                 final ShareResult r = result != null ? result : ShareResult.sharedTo(null);
+                callSerially(new Runnable() {
+                    @Override
+                    public void run() {
+                        finalListener.onResult(r);
+                    }
+                });
+            }
+        });
+    }
+
+    /// Indicates if the underlying platform can print documents through
+    /// [#print(String,String,PrintResultListener)].
+    ///
+    /// #### Returns
+    ///
+    /// true if the underlying platform handles printing.
+    public boolean isPrintingSupported() {
+        return impl.isPrintingSupported();
+    }
+
+    /// Print a document file through the platform printing system,
+    /// typically showing the native print dialog where the user picks a
+    /// printer and options. The outcome is reported through `listener` on
+    /// the EDT.
+    ///
+    /// All printing platforms accept PDF (`application/pdf`) and common
+    /// image types (`image/png`, `image/jpeg`); other mime types fail with
+    /// [PrintResult#STATUS_FAILED] on platforms that can't render them.
+    /// See [com.codename1.printing.Printer] for a friendlier facade.
+    ///
+    /// #### Parameters
+    ///
+    /// - `filePath`: path of the document in [com.codename1.io.FileSystemStorage]
+    ///
+    /// - `mimeType`: the document type, e.g. `application/pdf`, `image/png`
+    ///
+    /// - `listener`: callback for the print outcome. May be null.
+    public void print(String filePath, String mimeType, PrintResultListener listener) {
+        if (listener == null) {
+            impl.print(filePath, mimeType, null);
+            return;
+        }
+        final PrintResultListener finalListener = listener;
+        impl.print(filePath, mimeType, new PrintResultListener() {
+            @Override
+            public void onResult(final PrintResult result) {
+                final PrintResult r = result != null ? result : PrintResult.completed();
                 callSerially(new Runnable() {
                     @Override
                     public void run() {
@@ -6012,6 +6237,53 @@ public final class Display extends CN1Constants {
         return impl.isReceiveSharedContentSupported();
     }
 
+    /// Returns true if the platform supports publishing data to a Wallet
+    /// issuer-provisioning extension. Used internally by
+    /// `com.codename1.payment.WalletExtension`.
+    public boolean isWalletExtensionSupported() {
+        return impl.isWalletExtensionSupported();
+    }
+
+    /// Publishes the Wallet extension pass entries, replacing the previous
+    /// list. Used internally by `com.codename1.payment.WalletExtension`.
+    ///
+    /// #### Parameters
+    ///
+    /// - `remote`: true for the Apple Watch list, false for the iPhone list
+    ///
+    /// - `entries`: the available cards; null or empty clears the list
+    public void walletExtensionSetPassEntries(boolean remote, com.codename1.payment.WalletPassEntry[] entries) {
+        impl.walletExtensionClearPassEntries(remote);
+        if (entries != null) {
+            for (com.codename1.payment.WalletPassEntry e : entries) {
+                if (e == null) {
+                    continue;
+                }
+                impl.walletExtensionAddPassEntry(remote, e.getIdentifier(), e.getTitle(),
+                        e.getCardholderName(), e.getPrimaryAccountSuffix(), e.getPaymentNetwork(),
+                        e.getLocalizedDescription(), e.getArtPng());
+            }
+        }
+    }
+
+    /// Sets the Wallet extension requires-authentication flag. Used
+    /// internally by `com.codename1.payment.WalletExtension`.
+    public void walletExtensionSetRequiresAuthentication(boolean requiresAuthentication) {
+        impl.walletExtensionSetRequiresAuthentication(requiresAuthentication);
+    }
+
+    /// Publishes the Wallet extension auth token. Used internally by
+    /// `com.codename1.payment.WalletExtension`.
+    public void walletExtensionSetAuthToken(String token) {
+        impl.walletExtensionSetAuthToken(token);
+    }
+
+    /// Clears all published Wallet extension data. Used internally by
+    /// `com.codename1.payment.WalletExtension`.
+    public void walletExtensionClear() {
+        impl.walletExtensionClear();
+    }
+
     /// Subscribes the device to a push topic. Used internally by
     /// `com.codename1.push.Push`.
     ///
@@ -6169,6 +6441,37 @@ public final class Display extends CN1Constants {
     /// true if this device is jailbroken or rooted, false if not or unknown.
     public boolean isJailbrokenDevice() {
         return impl.isJailbrokenDevice();
+    }
+
+    /// Requests a signed device-attestation token (Play Integrity / App Attest) bound to the server
+    /// nonce. See `com.codename1.security.DeviceIntegrity#requestIntegrityToken(String)`.
+    public AsyncResource<String> requestIntegrityToken(String nonce) {
+        return impl.requestIntegrityToken(nonce);
+    }
+
+    /// Returns true if device-attestation (Play Integrity / App Attest) is supported and bundled.
+    public boolean isAttestationSupported() {
+        return impl.isAttestationSupported();
+    }
+
+    /// Non-exiting RASP check, true if the device appears rooted/jailbroken/instrumented/tampered.
+    public boolean isDeviceCompromised() {
+        return impl.isDeviceCompromised();
+    }
+
+    /// Returns the reason codes behind `isDeviceCompromised()` (e.g. "root", "frida", "emulator").
+    public String[] getCompromiseReasons() {
+        return impl.getCompromiseReasons();
+    }
+
+    /// Returns the component ids of the accessibility services currently enabled on the device.
+    public String[] getEnabledAccessibilityServices() {
+        return impl.getEnabledAccessibilityServices();
+    }
+
+    /// Marks the current screen secure (Android `FLAG_SECURE`), blocking screenshots/recording/scraping.
+    public void setSecureScreen(boolean secure) {
+        impl.setSecureScreen(secure);
     }
 
     /// Returns the build hints for the simulator, this will only work in the debug environment and it's

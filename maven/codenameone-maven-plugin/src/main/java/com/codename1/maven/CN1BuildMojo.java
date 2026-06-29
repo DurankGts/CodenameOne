@@ -33,7 +33,15 @@ import static com.codename1.maven.PathUtil.path;
  */
 @Mojo(name="build", requiresDependencyResolution = ResolutionScope.COMPILE_PLUS_RUNTIME,
         requiresDependencyCollection = ResolutionScope.COMPILE_PLUS_RUNTIME)
-@Execute(phase = LifecyclePhase.PACKAGE)
+// NOTE: deliberately NOT @Execute(phase = PACKAGE). The build goal is always
+// bound to the package phase by the project poms (see the desktop_build / win /
+// ios / android / javascript profiles), so package runs before this goal within
+// the normal lifecycle. Adding @Execute here additionally forked a *second*
+// package lifecycle, which on Maven 3.9+ re-ran jar:jar against the already
+// attached (empty) per-module artifact and aborted the build with "You have to
+// use a classifier to attach supplemental artifacts...". The fork was redundant
+// for the only supported invocation (mvn package), so it is removed. Invoking
+// the goal bare (mvn cn1:build) without a prior package is not a supported flow.
 public class CN1BuildMojo extends AbstractCN1Mojo {
 
     public static final String BUILD_TARGET_XCODE_PROJECT = Executor.BUILD_TARGET_XCODE_PROJECT;
@@ -159,6 +167,81 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
         task.execute();
     }
 
+
+    /**
+     * Localized launcher icons (cn1_icon_&lt;lang&gt;[_&lt;country&gt;].png) are scaled up to the
+     * largest launcher density by the build server, so a low-resolution source produces a
+     * blurry icon. Maven copies these into the build output (target/classes) with its
+     * incremental resource plugin, which also leaves stale copies behind when a source icon
+     * is removed or replaced (only {@code mvn clean} clears them). Scan the compiled output
+     * directories that will be bundled and sent to the build server and warn about any
+     * localized icon that is too small to render sharply -- this catches both an undersized
+     * new icon and an outdated low-resolution one lingering in target/classes.
+     *
+     * @param classpathElements the compile classpath; directory entries are the project /
+     *                          module {@code target/classes} folders that get bundled.
+     * @param codenameOneSettings the project's codenameone_settings.properties, used to detect
+     *                           whether adaptive icons are enabled (which raises the target size).
+     */
+    private void warnAboutSmallLocalizedIcons(List<String> classpathElements, File codenameOneSettings)
+            throws MojoFailureException {
+        int largestTarget = 192;
+        try {
+            Properties settings = new Properties();
+            try (FileInputStream fis = new FileInputStream(codenameOneSettings)) {
+                settings.load(fis);
+            }
+            if ("true".equals(settings.getProperty("codename1.arg.android.enableAdaptiveIcons", "false").trim())) {
+                largestTarget = 432;
+            }
+        } catch (IOException ex) {
+            getLog().debug("Could not read " + codenameOneSettings + " to determine adaptive icon setting", ex);
+        }
+        List<String> undersizedIcons = new ArrayList<String>();
+        for (String element : classpathElements) {
+            File dir = new File(element);
+            if (dir.isDirectory()) {
+                collectSmallLocalizedIcons(dir, largestTarget, undersizedIcons);
+            }
+        }
+        if (!undersizedIcons.isEmpty()) {
+            throw new MojoFailureException("The following localized launcher icon(s) are smaller than "
+                    + largestTarget + "x" + largestTarget + "px and would be upscaled to a blurry icon in the "
+                    + "production build:\n  " + String.join("\n  ", undersizedIcons)
+                    + "\nSupply each localized icon at no less than " + largestTarget + "x" + largestTarget
+                    + "px (1024x1024 recommended, matching the main app icon). NOTE: if you recently replaced an icon, "
+                    + "an offending copy may be a stale resource left in target/classes -- run 'mvn clean' to clear it.");
+        }
+    }
+
+    private void collectSmallLocalizedIcons(File dir, int largestTarget, List<String> undersizedIcons) {
+        File[] children = dir.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (File child : children) {
+            if (child.isDirectory()) {
+                collectSmallLocalizedIcons(child, largestTarget, undersizedIcons);
+                continue;
+            }
+            String lower = child.getName().toLowerCase();
+            if (!lower.startsWith("cn1_icon_") || !lower.endsWith(".png")) {
+                continue;
+            }
+            try {
+                BufferedImage img = ImageIO.read(child);
+                if (img == null) {
+                    undersizedIcons.add(child + " (not a valid PNG image)");
+                    continue;
+                }
+                if (img.getWidth() < largestTarget || img.getHeight() < largestTarget) {
+                    undersizedIcons.add(child + " (" + img.getWidth() + "x" + img.getHeight() + "px)");
+                }
+            } catch (IOException ex) {
+                getLog().debug("Could not read localized icon " + child + " to check its resolution", ex);
+            }
+        }
+    }
 
     /**
      * The dependency scopes to include in the jar file that is sent to the build server.
@@ -314,16 +397,22 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
     }
 
     public static final String BUILD_TARGET_MAC_NATIVE_PROJECT = Executor.BUILD_TARGET_MAC_NATIVE_PROJECT;
+    public static final String BUILD_TARGET_MAC_NATIVE = Executor.BUILD_TARGET_MAC_NATIVE;
+    public static final String BUILD_TARGET_LINUX_NATIVE = Executor.BUILD_TARGET_LINUX_NATIVE;
 
     private boolean isLocalBuildTarget(String buildTarget) {
+        // windows-device (BUILD_TARGET_WINDOWS_NATIVE) is a *cloud* build: it sends
+        // a "win32" build to the server (see the windows-device target in
+        // buildxml-template.xml), mirroring linux-device. Only the explicit
+        // local-windows-device cross-compile and the windows-source project
+        // generation are local.
         return (buildTarget.startsWith("local-") || BUILD_TARGET_XCODE_PROJECT.equals(buildTarget)
                 || BUILD_TARGET_ANDROID_PROJECT.equals(buildTarget)
                 || BUILD_TARGET_MAC_NATIVE_PROJECT.equals(buildTarget)
-                || BUILD_TARGET_WINDOWS_NATIVE_PROJECT.equals(buildTarget)
-                || BUILD_TARGET_WINDOWS_NATIVE.equals(buildTarget));
+                || BUILD_TARGET_WINDOWS_NATIVE_PROJECT.equals(buildTarget));
     }
 
-    private void createAntProject() throws IOException, LibraryPropertiesException, MojoExecutionException {
+    private void createAntProject() throws IOException, LibraryPropertiesException, MojoExecutionException, MojoFailureException {
         File cn1dir = new File(project.getBuild().getDirectory() + File.separator + "codenameone");
         File antProject = new File(cn1dir, "antProject");
 
@@ -353,6 +442,8 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
             throw new MojoExecutionException("Failed to get classpath elements", ex);
 
         }
+
+        warnAboutSmallLocalizedIcons(cpElements, codenameOneSettings);
 
         File appExtensionsJar = getAppExtensionsJar();
         if (appExtensionsJar != null) {
@@ -602,11 +693,18 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
 
             if (isLocalBuildTarget(buildTarget)) {
                 automated = false;
-                if (BUILD_TARGET_WINDOWS_NATIVE.equals(buildTarget) || BUILD_TARGET_WINDOWS_NATIVE_PROJECT.equals(buildTarget)
+                if (BUILD_TARGET_WINDOWS_NATIVE_PROJECT.equals(buildTarget)
                         || "local-windows-device".equals(buildTarget)) {
-                    // Native ParparVM Windows build (clang-cl). Distinct from the
-                    // JVM-bundled "windows-desktop" (javase) target.
+                    // Local native ParparVM Windows cross-compile (clang-cl) and the
+                    // windows-source project generation. The cloud win32 build
+                    // (windows-device) is NOT local -- it falls through to the
+                    // server submission below. Distinct from the JVM-bundled
+                    // "windows-desktop" (javase) target.
                     doWindowsNativeLocalBuild(antProject, cn1SettingsProps, antDistJar);
+                } else if ("local-linux-device".equals(buildTarget)) {
+                    // Native ParparVM Linux build (GTK3/Cairo, CMake/Ninja). Distinct
+                    // from the JVM-bundled "linux-desktop" (javase) target.
+                    doLinuxNativeLocalBuild(antProject, cn1SettingsProps, antDistJar);
                 } else if (buildTarget.contains("android") || BUILD_TARGET_ANDROID_PROJECT.equals(buildTarget)) {
                     doAndroidLocalBuild(antProject, cn1SettingsProps, antDistJar);
                 } else if (BUILD_TARGET_MAC_NATIVE_PROJECT.equals(buildTarget)) {
@@ -624,9 +722,13 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
                 }
             } else {
                 // Cloud-builds route through a remote build server; for the Mac
-                // native target we set the same macNative.enabled hint here so
-                // the server-side IPhoneBuilder takes the Mac branch.
-                if (BUILD_TARGET_MAC_NATIVE_PROJECT.equals(buildTarget)) {
+                // native targets we set the same macNative.enabled hint here so the
+                // server-side IPhoneBuilder takes the Mac branch. Both the source
+                // project (mac-source) and the device build (mac-os-x-native) need it
+                // -- previously only mac-source did, so the cloud mac-os-x-native
+                // target rode the plain iOS pipeline instead of emitting a Mac app.
+                if (BUILD_TARGET_MAC_NATIVE_PROJECT.equals(buildTarget)
+                        || BUILD_TARGET_MAC_NATIVE.equals(buildTarget)) {
                     cn1SettingsProps.setProperty("codename1.arg.macNative.enabled", "true");
                 }
                 if (automated) {
@@ -811,6 +913,29 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
         r.setDisplayName(props.getProperty("codename1.displayName"));
         r.setPackageName(props.getProperty("codename1.packageName"));
         r.setMainClass(props.getProperty("codename1.mainName"));
+        // watchMain: optional separate lifecycle entry point for the Apple Watch
+        // / Wear OS slice, declared next to codename1.mainName in
+        // codenameone_settings.properties as codename1.watchMain. May legally
+        // point at the same class as mainName, but a distinct entry point lets
+        // the watch slice tree-shake more aggressively. Passed as a build arg so
+        // it rides the extensible args map (no BuildRequest wire-format change)
+        // and reaches WatchNativeBuilder via request.getArg("watchMain").
+        {
+            String cn1WatchMain = props.getProperty("codename1.watchMain");
+            if (cn1WatchMain != null && cn1WatchMain.trim().length() > 0) {
+                r.putArgument("watchMain", cn1WatchMain.trim());
+            }
+        }
+        // tvMain: optional separate lifecycle entry point for the Apple TV
+        // (tvOS) slice, declared as codename1.tvMain. Like watchMain it may
+        // point at the same class as mainName; a distinct value also auto-enables
+        // the tvOS target. Reaches TvNativeBuilder via request.getArg("tvMain").
+        {
+            String cn1TvMain = props.getProperty("codename1.tvMain");
+            if (cn1TvMain != null && cn1TvMain.trim().length() > 0) {
+                r.putArgument("tvMain", cn1TvMain.trim());
+            }
+        }
         r.setVersion(props.getProperty("codename1.version"));
         String iconPath = props.getProperty("codename1.icon");
         File iconFile = new File(iconPath);
@@ -1050,6 +1175,29 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
         r.setDisplayName(props.getProperty("codename1.displayName"));
         r.setPackageName(props.getProperty("codename1.packageName"));
         r.setMainClass(props.getProperty("codename1.mainName"));
+        // watchMain: optional separate lifecycle entry point for the Apple Watch
+        // / Wear OS slice, declared next to codename1.mainName in
+        // codenameone_settings.properties as codename1.watchMain. May legally
+        // point at the same class as mainName, but a distinct entry point lets
+        // the watch slice tree-shake more aggressively. Passed as a build arg so
+        // it rides the extensible args map (no BuildRequest wire-format change)
+        // and reaches WatchNativeBuilder via request.getArg("watchMain").
+        {
+            String cn1WatchMain = props.getProperty("codename1.watchMain");
+            if (cn1WatchMain != null && cn1WatchMain.trim().length() > 0) {
+                r.putArgument("watchMain", cn1WatchMain.trim());
+            }
+        }
+        // tvMain: optional separate lifecycle entry point for the Apple TV
+        // (tvOS) slice, declared as codename1.tvMain. Like watchMain it may
+        // point at the same class as mainName; a distinct value also auto-enables
+        // the tvOS target. Reaches TvNativeBuilder via request.getArg("tvMain").
+        {
+            String cn1TvMain = props.getProperty("codename1.tvMain");
+            if (cn1TvMain != null && cn1TvMain.trim().length() > 0) {
+                r.putArgument("tvMain", cn1TvMain.trim());
+            }
+        }
         r.setVersion(props.getProperty("codename1.version"));
         String iconPath = props.getProperty("codename1.icon");
         File iconFile = new File(iconPath);
@@ -1156,6 +1304,29 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
         r.setDisplayName(props.getProperty("codename1.displayName"));
         r.setPackageName(props.getProperty("codename1.packageName"));
         r.setMainClass(props.getProperty("codename1.mainName"));
+        // watchMain: optional separate lifecycle entry point for the Apple Watch
+        // / Wear OS slice, declared next to codename1.mainName in
+        // codenameone_settings.properties as codename1.watchMain. May legally
+        // point at the same class as mainName, but a distinct entry point lets
+        // the watch slice tree-shake more aggressively. Passed as a build arg so
+        // it rides the extensible args map (no BuildRequest wire-format change)
+        // and reaches WatchNativeBuilder via request.getArg("watchMain").
+        {
+            String cn1WatchMain = props.getProperty("codename1.watchMain");
+            if (cn1WatchMain != null && cn1WatchMain.trim().length() > 0) {
+                r.putArgument("watchMain", cn1WatchMain.trim());
+            }
+        }
+        // tvMain: optional separate lifecycle entry point for the Apple TV
+        // (tvOS) slice, declared as codename1.tvMain. Like watchMain it may
+        // point at the same class as mainName; a distinct value also auto-enables
+        // the tvOS target. Reaches TvNativeBuilder via request.getArg("tvMain").
+        {
+            String cn1TvMain = props.getProperty("codename1.tvMain");
+            if (cn1TvMain != null && cn1TvMain.trim().length() > 0) {
+                r.putArgument("tvMain", cn1TvMain.trim());
+            }
+        }
         r.setVersion(props.getProperty("codename1.version"));
         r.setVendor(props.getProperty("codename1.vendor"));
         r.setType("windows");
@@ -1216,6 +1387,87 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
         }
     }
 
+    /**
+     * Local native Linux build via {@link LinuxNativeBuilder}: translates the app
+     * with ParparVM's linux target and compiles it with CMake/Ninja for the
+     * selected architecture ({@code linux.arch}). Mirrors the Windows local-build
+     * wiring. The native compile only succeeds on Linux with the GTK3 dev stack +
+     * pkg-config present (and, for musl targets, a {@code zig}/musl toolchain);
+     * elsewhere the builder fails fast with a clear message.
+     */
+    private void doLinuxNativeLocalBuild(File tmpProjectDir, Properties props, File distJar) throws MojoExecutionException {
+        File codenameOneJar = getJar("com.codenameone", "codenameone-core");
+        LinuxNativeBuilder e = new LinuxNativeBuilder();
+        e.setLogger(getLog());
+        File buildDirectory = new File(tmpProjectDir, "dist" + File.separator + "linux-build");
+        e.setBuildDirectory(buildDirectory);
+        e.setCodenameOneJar(codenameOneJar);
+
+        BuildRequest r = new BuildRequest();
+        r.setDisplayName(props.getProperty("codename1.displayName"));
+        r.setPackageName(props.getProperty("codename1.packageName"));
+        r.setMainClass(props.getProperty("codename1.mainName"));
+        // watchMain: optional separate lifecycle entry point for the Apple Watch
+        // / Wear OS slice, declared next to codename1.mainName in
+        // codenameone_settings.properties as codename1.watchMain. May legally
+        // point at the same class as mainName, but a distinct entry point lets
+        // the watch slice tree-shake more aggressively. Passed as a build arg so
+        // it rides the extensible args map (no BuildRequest wire-format change)
+        // and reaches WatchNativeBuilder via request.getArg("watchMain").
+        {
+            String cn1WatchMain = props.getProperty("codename1.watchMain");
+            if (cn1WatchMain != null && cn1WatchMain.trim().length() > 0) {
+                r.putArgument("watchMain", cn1WatchMain.trim());
+            }
+        }
+        // tvMain: optional separate lifecycle entry point for the Apple TV
+        // (tvOS) slice, declared as codename1.tvMain. Like watchMain it may
+        // point at the same class as mainName; a distinct value also auto-enables
+        // the tvOS target. Reaches TvNativeBuilder via request.getArg("tvMain").
+        {
+            String cn1TvMain = props.getProperty("codename1.tvMain");
+            if (cn1TvMain != null && cn1TvMain.trim().length() > 0) {
+                r.putArgument("tvMain", cn1TvMain.trim());
+            }
+        }
+        r.setVersion(props.getProperty("codename1.version"));
+        r.setVendor(props.getProperty("codename1.vendor"));
+        r.setType("linux");
+        for (Object k : props.keySet()) {
+            String key = (String) k;
+            if (key.startsWith("codename1.arg.")) {
+                String currentKey = key.substring("codename1.arg.".length());
+                if (currentKey.indexOf(' ') > -1) {
+                    throw new MojoExecutionException("The build argument contains a space in the key: '" + currentKey + "'");
+                }
+                r.putArgument(currentKey, props.getProperty(key));
+            }
+        }
+        r.setIncludeSource(true);
+
+        try {
+            boolean result = e.build(distJar, r);
+            if (!result) {
+                String builderLog = e.getErrorMessage();
+                if (builderLog != null && builderLog.trim().length() > 0) {
+                    getLog().error("Linux builder log:\n" + builderLog);
+                }
+                throw new MojoExecutionException("Linux native build failed");
+            }
+            if (e.getLinuxExecutable() != null) {
+                getLog().info("Built native Linux executable: " + e.getLinuxExecutable().getAbsolutePath());
+            }
+        } catch (org.apache.tools.ant.BuildException ex) {
+            String builderLog = e.getErrorMessage();
+            if (builderLog != null && builderLog.trim().length() > 0) {
+                getLog().error("Linux builder log:\n" + builderLog);
+            }
+            throw new MojoExecutionException("Failed to build Linux app", ex);
+        } finally {
+            e.cleanup();
+        }
+    }
+
     // Local ParparVM-backed JavaScript build target. Enterprise-gated; see
     // JavaScriptBuilder#checkUserLevel. Intentionally undocumented in the
     // archetype build scripts — discoverable via `mvn cn1:build
@@ -1234,6 +1486,29 @@ public class CN1BuildMojo extends AbstractCN1Mojo {
         r.setDisplayName(props.getProperty("codename1.displayName"));
         r.setPackageName(props.getProperty("codename1.packageName"));
         r.setMainClass(props.getProperty("codename1.mainName"));
+        // watchMain: optional separate lifecycle entry point for the Apple Watch
+        // / Wear OS slice, declared next to codename1.mainName in
+        // codenameone_settings.properties as codename1.watchMain. May legally
+        // point at the same class as mainName, but a distinct entry point lets
+        // the watch slice tree-shake more aggressively. Passed as a build arg so
+        // it rides the extensible args map (no BuildRequest wire-format change)
+        // and reaches WatchNativeBuilder via request.getArg("watchMain").
+        {
+            String cn1WatchMain = props.getProperty("codename1.watchMain");
+            if (cn1WatchMain != null && cn1WatchMain.trim().length() > 0) {
+                r.putArgument("watchMain", cn1WatchMain.trim());
+            }
+        }
+        // tvMain: optional separate lifecycle entry point for the Apple TV
+        // (tvOS) slice, declared as codename1.tvMain. Like watchMain it may
+        // point at the same class as mainName; a distinct value also auto-enables
+        // the tvOS target. Reaches TvNativeBuilder via request.getArg("tvMain").
+        {
+            String cn1TvMain = props.getProperty("codename1.tvMain");
+            if (cn1TvMain != null && cn1TvMain.trim().length() > 0) {
+                r.putArgument("tvMain", cn1TvMain.trim());
+            }
+        }
         r.setVersion(props.getProperty("codename1.version"));
         String iconPath = props.getProperty("codename1.icon");
         if (iconPath != null) {

@@ -154,8 +154,7 @@
 
         <dependency>
             <groupId>com.codenameone</groupId>
-            <artifactId>codenameone-cef</artifactId>
-            <version>84.4.1-M3</version>
+            <artifactId>cn1-binaries-javase</artifactId>
             <type>pom</type>
         </dependency>
 
@@ -245,6 +244,17 @@
         <dependency>
             <groupId>com.codenameone</groupId>
             <artifactId>codenameone-windows</artifactId>
+            <classifier>bundle</classifier>
+            <version>${project.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- LinuxPort 'bundle' (LinuxPort.jar + nativelinux.jar) supplies the native
+             Linux platform classes and C sources to LinuxNativeBuilder as classpath
+             resources, the same way the WindowsPort bundle does. -->
+        <dependency>
+            <groupId>com.codenameone</groupId>
+            <artifactId>codenameone-linux</artifactId>
             <classifier>bundle</classifier>
             <version>${project.version}</version>
             <scope>runtime</scope>

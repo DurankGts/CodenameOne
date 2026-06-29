@@ -32,14 +32,24 @@
 #import "ExecutableOp.h"
 #import "PaintOp.h"
 #import "GLUIImage.h"
+// MessageUI (mail/SMS composer) is unavailable on watchOS, and on tvOS it ships
+// only a link stub with no composer headers; the email/SMS native methods are
+// guarded the same way in IOSNative.m, and the matching delegate conformances
+// below are likewise dropped on those slices.
+#if !TARGET_OS_WATCH && !TARGET_OS_TV
 #import <MessageUI/MFMailComposeViewController.h>
 #import <MessageUI/MFMessageComposeViewController.h>
+#endif
 #import <CoreLocation/CoreLocation.h>
 //#define CN1_USE_STOREKIT
-#ifdef CN1_USE_STOREKIT
+//#define CN1_USE_APPREVIEW
+//#define CN1_USE_CODEMIRROR
+#if defined(CN1_USE_STOREKIT) || defined(CN1_USE_APPREVIEW)
 #import "StoreKit/StoreKit.h"
 #endif
+#if !TARGET_OS_WATCH
 #import <AudioToolbox/AudioServices.h>
+#endif
 #import <AVFoundation/AVFoundation.h>
 //#define CN1_BLOCK_SCREENSHOTS_ON_ENTER_BACKGROUND
 //#define ENABLE_WKWEBVIEW
@@ -90,6 +100,26 @@
 // only needs INCLUDE_CAMERA_USAGE) do NOT drag in the new AVFoundation-based
 // natives. Keep this independent of INCLUDE_CAMERA_USAGE on purpose.
 //#define INCLUDE_CN1_CAMERA
+// The AVFoundation capture stack (CN1Camera.{h,m} + IOSNative camera natives)
+// is unavailable on watchOS. IPhoneBuilder uncomments the define above for all
+// targets; undo it on the watch slice from this central header (included first
+// by every camera TU) so the whole camera path compiles out consistently.
+#if TARGET_OS_WATCH
+#undef INCLUDE_CN1_CAMERA
+#endif
+
+// CN1_USE_CARPLAY gates the Apple CarPlay native bridge
+// (CodenameOne_CarPlaySceneDelegate.{h,m} + the IOSNative carPlay* trampolines:
+// CarPlay.framework, the CPTemplate translation). IPhoneBuilder uncomments this
+// only when the classpath scanner saw com.codename1.car.*, so apps that never
+// build an in-car experience ship without any CarPlay symbols and need no
+// CarPlay entitlement. Lives in this central header (included first by every
+// CarPlay TU) so the define is visible across translation units.
+//#define CN1_USE_CARPLAY
+// CarPlay is unavailable on watchOS / tvOS; undo the define on those slices.
+#if TARGET_OS_WATCH || TARGET_OS_TV
+#undef CN1_USE_CARPLAY
+#endif
 
 // CN1_INCLUDE_OIDC gates the com.codename1.io.oidc native bridge
 // (AuthenticationServices.framework import, ASWebAuthenticationSession code
@@ -198,13 +228,67 @@
 
 #define EAGLVIEW [[CodenameOne_GLViewController instance] eaglView]
 
+// Launch placeholder shown over the GL/Metal view between makeKeyAndVisible
+// and the first EDT-painted frame; see CodenameOne_GLViewController.m. UIWindow
+// is unavailable on watchOS and the launch placeholder is iOS-only.
+#if !TARGET_OS_WATCH
+void CN1ShowLaunchPlaceholder(UIWindow *window);
+void CN1DismissLaunchPlaceholder(void);
+#endif
+
 //ADD_INCLUDE
 
-@interface CodenameOne_GLViewController : UIViewController<UIImagePickerControllerDelegate, MFMailComposeViewControllerDelegate, UIScrollViewDelegate,
-#ifdef CN1_USE_STOREKIT
-SKProductsRequestDelegate, SKPaymentTransactionObserver, 
+#if TARGET_OS_WATCH
+// watchOS has no UIViewController/UIView/CADisplayLink (the SDK marks them
+// API_UNAVAILABLE(watchos)). The watch slice replaces the GL view controller
+// with a plain NSObject render-driver (CN1WatchViewController.m) that owns the
+// same ExecutableOp queue and drives drawFrame into the Core Graphics surface
+// (CN1WatchRenderingView). Same class name so the ~10 callers + the translated
+// runtime resolve unchanged.
+@interface CodenameOne_GLViewController : NSObject {
+@private
+    GLUIImage* currentMutableImage;
+    NSMutableArray* currentTarget;
+    NSMutableArray* upcomingTarget;
+    BOOL painted;
+}
+@property (nonatomic) NSInteger animationFrameInterval;
+@property (readwrite, assign) GLUIImage* currentMutableImage;
++(CodenameOne_GLViewController*)instance;
+-(id)eaglView;
+-(id)view;
+-(void)startAnimation;
+-(void)stopAnimation;
++(BOOL)isDrawTextureSupported;
+-(void)initVars;
++(void)upcoming:(ExecutableOp*)op;
+-(void)upcomingAdd:(ExecutableOp*)op;
+-(void)upcomingAddClip:(ExecutableOp*)op;
+-(BOOL)isPaintFinished;
+-(void)flushBuffer:(UIImage *)buff x:(int)x y:(int)y width:(int)width height:(int)height;
+-(void)drawString:(int)color alpha:(int)alpha font:(UIFont*)font str:(NSString*)str x:(int)x y:(int)y;
+-(void)drawScreen;
+-(void)drawFrame:(CGRect)rect;
+@end
+#else
+@interface CodenameOne_GLViewController : UIViewController<
+#if !TARGET_OS_TV
+UIImagePickerControllerDelegate,
 #endif
-MFMessageComposeViewControllerDelegate, CLLocationManagerDelegate, AVAudioRecorderDelegate, UIActionSheetDelegate, UIPopoverControllerDelegate, UIPickerViewDelegate, UIDocumentInteractionControllerDelegate
+#if !TARGET_OS_WATCH && !TARGET_OS_TV
+MFMailComposeViewControllerDelegate,
+#endif
+UIScrollViewDelegate,
+#ifdef CN1_USE_STOREKIT
+SKProductsRequestDelegate, SKPaymentTransactionObserver,
+#endif
+#if !TARGET_OS_WATCH && !TARGET_OS_TV
+MFMessageComposeViewControllerDelegate, UIActionSheetDelegate, UIPopoverControllerDelegate,
+#endif
+CLLocationManagerDelegate, AVAudioRecorderDelegate
+#if !TARGET_OS_TV
+, UIPickerViewDelegate, UIDocumentInteractionControllerDelegate
+#endif
 #ifdef INCLUDE_ZOOZ
         ,ZooZPaymentCallbackDelegate
 #endif
@@ -284,7 +368,9 @@ MFMessageComposeViewControllerDelegate, CLLocationManagerDelegate, AVAudioRecord
 -(void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event;
 -(void)touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event;
 
+#if !TARGET_OS_TV
 - (void)datePickerChangeDate:(UIDatePicker *)sender;
+#endif
 -(void)datePickerDismiss;
 -(void)datePickerCancel;
 
@@ -298,3 +384,4 @@ MFMessageComposeViewControllerDelegate, CLLocationManagerDelegate, AVAudioRecord
 +(CGAffineTransform) currentMutableTransform;
 -(void)updateCanvas:(BOOL)animated;
 @end
+#endif // TARGET_OS_WATCH (GL view controller interface variant)

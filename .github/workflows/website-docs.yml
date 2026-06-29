@@ -107,27 +107,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Set up Java 17 for Skin Designer screenshots
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up xvfb for headless simulator
+      # The Initializr/Playground/Skin Designer JavaScript bundles are built by
+      # scripts/website/build.sh through xvfb-run: the Codename One Maven
+      # plugin's CSS/theme compile instantiates JavaSEPort, which needs a
+      # display on the headless runner. (xvfb formerly also served the Skin
+      # Designer screenshot generation step, which has been removed -- the
+      # screenshots are now committed under docs/developer-guide/img/skin-designer.)
+      - name: Set up xvfb for headless JavaScript bundle builds
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb
-
-      - name: Bootstrap Codename One tooling for screenshots
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.codenameone"
-          cp maven/CodeNameOneBuildClient.jar "$HOME/.codenameone/CodeNameOneBuildClient.jar"
-          touch "$HOME/.codenameone/guibuilder.jar"
-
-      - name: Generate Skin Designer screenshots
-        run: ./scripts/skindesigner/screenshots/take-screenshots.sh
 
       - name: Set up Java 25 for website build
         uses: actions/setup-java@v5
@@ -144,6 +134,11 @@ jobs:
           WEBSITE_INCLUDE_DEVGUIDE: "true"
           WEBSITE_INCLUDE_INITIALIZR: "auto"
           WEBSITE_INCLUDE_PLAYGROUND: "auto"
+          # The Initializr's JavaScript app is built with the local ParparVM
+          # target, whose builder lives in the repo (8.0-SNAPSHOT) plugin rather
+          # than the pinned release. Bootstrap the local snapshot artifacts so
+          # the initializr (and the other site apps) build against repo HEAD.
+          WEBSITE_BOOTSTRAP_CN1_SNAPSHOTS: "true"
           # PR previews build with future-dated posts visible so reviewers
           # can read posts staged for later in the week. Production deploys
           # (push to master) keep the default so future posts only appear

@@ -50,6 +50,18 @@ public final class WindowsNative {
      */
     public static native boolean faultSelfTestEnabled();
 
+    /* ----------------------------------------- crash protection */
+    // Pairs with cn1_windows_crash_protection.c. crashProtectionInstall is
+    // idempotent; SetUnhandledExceptionFilter catches every SEH-raised
+    // fault (access violation, stack overflow, divide-by-zero, illegal
+    // instruction) and signal() catches the abort()/raise() paths the
+    // CRT exposes. Stderr is spliced into a 32 KB ring buffer so the
+    // OutputDebugString / fprintf chatter leading up to the crash makes
+    // it into the GitHub issue body.
+    public static native void crashProtectionInstall();
+    public static native String crashProtectionLogSnapshot();
+    public static native String crashProtectionConsumePending();
+
     /* ----------------------------------------- BrowserComponent (WebView2) */
 
     /** True when WebView2 is compiled in (the SDK was present at build time). */
@@ -411,6 +423,55 @@ public final class WindowsNative {
 
     public static native String clipboardGetText();
 
+    /* ----------------------------------------------------- shell / launch */
+
+    /**
+     * Hands a URI or path to the Windows shell ({@code ShellExecuteW "open"}):
+     * {@code http(s):} opens the browser, {@code tel:} the dialer, {@code sms:}
+     * the Messaging app, {@code mailto:} the mail client, a filesystem path its
+     * registered program. Returns {@code true} only when the shell accepted it
+     * (no handler registered reports {@code false} rather than fabricating
+     * success).
+     */
+    public static native boolean shellOpen(String target);
+
+    /* ----------------------------------------------------- secure storage */
+
+    /**
+     * Encrypts {@code data} with the Windows Data Protection API
+     * ({@code CryptProtectData}) so the ciphertext is decryptable only by the
+     * current Windows user on this machine. Returns the encrypted bytes, or
+     * {@code null} on failure. Backs {@link WindowsSecureStorage}.
+     */
+    public static native byte[] dpapiProtect(byte[] data);
+
+    /** Inverse of {@link #dpapiProtect}: decrypts a DPAPI blob, or {@code null}. */
+    public static native byte[] dpapiUnprotect(byte[] data);
+
+    /* --------------------------------------------------- local notifications */
+
+    /**
+     * Displays a local-notification balloon ({@code Shell_NotifyIcon}) with the
+     * given title/body, remembering {@code id} so a click can be routed back. The
+     * call is marshaled to the window-owning pump thread. No-op in headless mode.
+     */
+    public static native void showNotification(String id, String title, String body);
+
+    /**
+     * Returns (and clears) the id of a clicked notification balloon, or
+     * {@code null} when none was clicked since the last poll. Drained by the EDT.
+     */
+    public static native String notificationPollClicked();
+
+    /**
+     * Shows a modal native file dialog and returns the chosen path, or
+     * {@code null} on cancel (or in headless mode). {@code type} mirrors the
+     * Display gallery types (0 image, 1 video, 2 all) and selects the file
+     * filter. The dialog runs on the window-owning pump thread; the caller
+     * blocks until the user chooses.
+     */
+    public static native String fileDialog(boolean save, int type, String title);
+
     /* ----------------------------------------------------------- media */
 
     /** Creates a Media Foundation player from the given bytes (spooled to a temp
@@ -438,4 +499,202 @@ public final class WindowsNative {
 
     /** Stops playback, frees the engine and deletes the temp file. */
     public static native void mediaDestroy(long peer);
+
+    /* ------------------------------------------------------ audio recording */
+
+    /**
+     * Starts recording from the default microphone (waveIn) into a PCM WAV file
+     * at {@code path}. {@code sampleRate}/{@code channels} use sensible defaults
+     * when &lt;= 0. Returns an opaque peer, or 0 on failure (no mic / open error).
+     */
+    public static native long audioRecStart(String path, int sampleRate, int channels);
+
+    /** Stops recording, finalizes the WAV header and frees the peer. */
+    public static native void audioRecStop(long peer);
+
+    /* ------------------------------------------- biometric (Windows Hello) */
+
+    /**
+     * Windows Hello availability via {@code UserConsentVerifier}: 0 Available,
+     * 1 DeviceNotPresent, 2 NotConfiguredForUser, 3 DisabledByPolicy,
+     * 4 DeviceBusy. Returns 1 when WinRT is unavailable (stub build).
+     */
+    public static native int biometricAvailability();
+
+    /**
+     * Shows the Windows Hello consent prompt with {@code message}; returns true
+     * when the user is verified. Blocks (call off the EDT). Returns false in the
+     * stub build.
+     */
+    public static native boolean biometricAuthenticate(String message);
+
+    /* -------------------------------------------------- location (WinRT) */
+
+    /**
+     * Fills {@code out} with the current fix [latitude, longitude, accuracy(m),
+     * altitude(m), direction(deg), velocity(m/s)] from the WinRT Geolocator and
+     * returns true; false when location is disabled/unavailable. Blocks (call off
+     * the EDT).
+     */
+    public static native boolean locationGetCurrent(double[] out);
+
+    /* -------------------------------------------------- contacts (WinRT) */
+
+    /**
+     * Reads the user's contacts via the WinRT {@code ContactStore} and returns
+     * them as a single blob: records separated by {@code 0x1E}, fields (id, name,
+     * phone, email) by {@code 0x1F}. {@code null} when the store is inaccessible
+     * (no WinRT / access denied); empty string when there are simply no contacts.
+     * Blocks (call off the EDT).
+     */
+    public static native String contactsGetAll();
+
+    /* ----------------------------------------------------- share (WinRT) */
+
+    /**
+     * Shows the Windows share UI (WinRT {@code DataTransferManager}) for the given
+     * text + title, marshaled to the window thread. Returns false in headless /
+     * WinRT-less builds.
+     */
+    public static native boolean shareText(String text, String title);
+
+    /* --------------------------------------------------------------- printing */
+
+    /**
+     * Prints a document file through the Win32 printing system: shows the modal
+     * system print dialog ({@code PrintDlgW}, run on the window-owning pump
+     * thread like {@link #fileDialog}), then rasterizes the document and spools
+     * it to the chosen printer's device context. {@code mimeType} selects the
+     * renderer -- {@code image/*} decodes through the port's WIC helper,
+     * {@code application/pdf} rasterizes each page via WinRT Windows.Data.Pdf
+     * at the printer's DPI. Blocks for the whole flow (call off the EDT).
+     * Returns 0 once the job was handed to the print spooler, 1 when the user
+     * cancelled the dialog, 2 on failure ({@link #printLastError()} carries a
+     * short description).
+     */
+    public static native int printDocument(String path, String mimeType, String jobName);
+
+    /**
+     * Short description of the most recent {@link #printDocument} failure, or
+     * {@code null} when the last request did not fail.
+     */
+    public static native String printLastError();
+
+    /* ----------------------------------------------------------- camera */
+
+    /**
+     * Grabs a single frame from the default webcam via Media Foundation and
+     * returns it as a CN1 ARGB {@code int[]} (length width*height), filling
+     * {@code outDims[0]=width, [1]=height}. Returns {@code null} when there is no
+     * camera or capture fails. Blocks briefly (call off the EDT).
+     */
+    public static native int[] cameraCaptureFrame(int[] outDims);
+
+    /**
+     * Friendly names of the connected video capture devices, packed as
+     * {@code "name|external|0|0;name|external|0|0;..."} (the format
+     * {@link WindowsCameraImpl} parses into {@code CameraInfo}). Empty string when
+     * none / Media Foundation is unavailable.
+     */
+    public static native String cameraEnumerate();
+
+    /**
+     * Starts a continuous capture session on the given device index (a worker
+     * thread runs a Media Foundation source-reader loop, keeping the latest frame).
+     * {@code reqW/reqH} are preferred preview dimensions (best-effort). Returns an
+     * opaque session handle, or 0 if no camera / startup failed.
+     */
+    public static native long cameraSessionStart(int deviceIndex, int reqW, int reqH);
+
+    /** Stops the capture session, joins its worker thread and frees it. */
+    public static native void cameraSessionStop(long handle);
+
+    /** Pauses / resumes frame grabbing without tearing down the session. */
+    public static native void cameraSessionSetPaused(long handle, boolean paused);
+
+    /**
+     * Returns a copy of the most recent captured frame as a CN1 ARGB {@code int[]}
+     * (length width*height), filling {@code outDims[0]=width, [1]=height}.
+     * {@code null} until the first frame has arrived. The preview peer and the
+     * frame listener poll this.
+     */
+    public static native int[] cameraSessionLatestFrame(long handle, int[] outDims);
+
+    // ----------------------------------------------------------- native peers
+
+    /**
+     * Generic native-peer placement (implemented in cn1_windows_peer.cpp). The
+     * {@code peer} is an app-provided child HWND (boxed as a long) returned from a
+     * {@code @NativeInterface}; these reparent it onto the host window and
+     * move/size/show it to track the lightweight {@link com.codename1.ui.PeerComponent}.
+     */
+    public static native void peerInitialized(long peer, int x, int y, int w, int h);
+
+    /** Repositions / resizes the peer HWND to the component's absolute bounds. */
+    public static native void peerSetBounds(long peer, int x, int y, int w, int h);
+
+    /** Shows / hides the peer HWND (transition lightweight mode). */
+    public static native void peerSetVisible(long peer, boolean visible);
+
+    /** Hides and detaches the peer HWND (the app still owns its lifetime). */
+    public static native void peerDeinitialized(long peer);
+
+    /** Fills {@code out[0]=w, [1]=h} with the peer HWND's current size (0 if none). */
+    public static native void peerCalcPreferredSize(long peer, int dispW, int dispH, int[] out);
+
+    /**
+     * Captures the peer HWND to CN1 ARGB pixels via {@code PrintWindow} (length
+     * width*height), filling {@code outDims[0]=w, [1]=h}, for the offscreen
+     * screenshot / transition peer image. {@code null} on failure.
+     */
+    public static native int[] peerCaptureArgb(long peer, int[] outDims);
+
+    // ---------------------------------------------------------------------
+    // 3D / Direct3D 11 backend (com.codename1.gpu). Implemented in
+    // nativeSources/cn1_windows_d3d.cpp. Every peer is an opaque long (a D3D
+    // object pointer cast to long); 0 means none / unsupported. The render model
+    // is offscreen: the device renders one frame into an off-screen render target
+    // and gl3dCaptureFrame reads it back as a PNG for the peer-image path.
+    // ---------------------------------------------------------------------
+
+    /** Creates the D3D11 context (device + offscreen render target manager); 0 if Direct3D is unavailable. */
+    public static native long gl3dCreateContext();
+    /** Destroys the context and all GPU objects it still owns. */
+    public static native void gl3dDestroyContext(long contextPeer);
+    /** (Re)sizes the offscreen render target to width x height and begins a frame. */
+    public static native void gl3dBeginFrame(long contextPeer, int width, int height);
+    /** Resolves the current frame's render target and returns it encoded as PNG bytes. */
+    public static native byte[] gl3dCaptureFrame(long contextPeer);
+    /** Writes the current frame to a PNG file (headless-screenshot convenience). */
+    public static native boolean gl3dCaptureToFile(long contextPeer, String path);
+
+    /** Uploads interleaved vertex floats into an immutable D3D vertex buffer. */
+    public static native long gl3dCreateFloatBuffer(float[] data, int floatCount);
+    public static native void gl3dUpdateFloatBuffer(long bufferPeer, float[] data, int floatCount);
+    /** Uploads 16-bit indices into a D3D index buffer. */
+    public static native long gl3dCreateShortBuffer(short[] data, int indexCount);
+    public static native void gl3dUpdateShortBuffer(long bufferPeer, short[] data, int indexCount);
+    /** Uploads packed ARGB pixels into an RGBA D3D texture + SRV. */
+    public static native long gl3dCreateTexture(int[] argb, int width, int height);
+    public static native void gl3dDisposeBuffer(long bufferPeer);
+    public static native void gl3dDisposeTexture(long texturePeer);
+    public static native void gl3dDisposePipeline(long pipelinePeer);
+
+    /**
+     * Compiles the supplied HLSL source (D3DCompile vs_4_0 / ps_4_0) once and
+     * builds the input layout + blend/rasterizer/depth state for the given render
+     * state. Returns the pipeline handle or 0.
+     */
+    public static native long gl3dGetOrCreatePipeline(long contextPeer, String key, String hlslSource,
+            int blendMode, int cullMode, int depthTest, int depthWrite);
+
+    public static native void gl3dClear(long contextPeer, int argbColor, boolean clearColor, boolean clearDepth);
+    public static native void gl3dSetViewport(long contextPeer, int x, int y, int width, int height);
+
+    public static native void gl3dDrawIndexed(long contextPeer, long pipelinePeer, long vboPeer, int strideBytes,
+            long iboPeer, int indexCount, int primitive, float[] uniforms, int uniformFloats,
+            long texturePeer, int texFilter, int texWrap);
+    public static native void gl3dDrawArrays(long contextPeer, long pipelinePeer, long vboPeer, int strideBytes,
+            int vertexCount, int primitive, float[] uniforms, int uniformFloats,
+            long texturePeer, int texFilter, int texWrap);
 }

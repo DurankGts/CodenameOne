@@ -38,6 +38,14 @@ import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.analysis.Analyzer;
+import org.objectweb.asm.tree.analysis.BasicInterpreter;
+import org.objectweb.asm.tree.analysis.BasicValue;
+import org.objectweb.asm.tree.analysis.Frame;
+import com.codename1.tools.translator.bytecodes.BasicInstruction;
+import com.codename1.tools.translator.bytecodes.Instruction;
 import org.objectweb.asm.TypePath;
 import org.objectweb.asm.commons.JSRInlinerAdapter;
 
@@ -62,6 +70,12 @@ public class Parser extends ClassVisitor {
     public static void cleanup() {
         nativeSources = null;
         classes.clear();
+        // classes is cleared in place (same List reference), so the name index's
+        // (reference, size) guard cannot detect a subsequent same-size refill across
+        // translation runs in the same JVM (e.g. the unit tests). Invalidate it here.
+        classIndexMap = null;
+        classIndexSource = null;
+        classIndexSize = -1;
         dependencyGraph.clear();
         BytecodeMethod.setDependencyGraph(null);
         ByteCodeClass.cleanup();
@@ -86,13 +100,7 @@ public class Parser extends ClassVisitor {
     }
     
     private static ByteCodeClass getClassByName(String name) {
-        name = name.replace('/', '_').replace('$', '_');
-        for(ByteCodeClass bc : classes) {
-            if(bc.getClsName().equals(name)) {
-                return bc;
-            }
-        }
-        return null;
+        return classIndex().get(name.replace('/', '_').replace('$', '_'));
     }
 
     /**
@@ -285,15 +293,50 @@ public class Parser extends ClassVisitor {
         }
     }
 
+    // Inverted index over the native sources for O(1) "is this symbol referenced
+    // by native code" queries (see NativeSymbolIndex). Built lazily and cached
+    // against the nativeSources array identity, mirroring the per-method memo in
+    // BytecodeMethod.isMethodUsedByNative.
+    private static NativeSymbolIndex nativeSymbolIndex;
+    private static String[] nativeSymbolIndexSources;
+    public static NativeSymbolIndex getNativeSymbolIndex(String[] nativeSources) {
+        if (nativeSymbolIndex == null || nativeSymbolIndexSources != nativeSources) {
+            nativeSymbolIndex = new NativeSymbolIndex(nativeSources);
+            nativeSymbolIndexSources = nativeSources;
+        }
+        return nativeSymbolIndex;
+    }
+
     private static final ArrayList<String> constantPool = new ArrayList<>();
     
-    public static ByteCodeClass getClassObject(String name) {
-        for(ByteCodeClass cls : classes) {
-            if(cls.getClsName().equals(name)) {
-                return cls;
+    // Name -> class index, replacing the O(N) linear scans that getClassObject /
+    // getClassByName / ByteCodeClass.findClass used to do. Those run per dependency
+    // per class during the dead-code cull, so the scans were O(N^2) per pass.
+    // Rebuilt lazily when `classes` changes. `classes` is only ever reassigned (new
+    // reference) or grown in place via add()/cleared -- it is never mutated to a
+    // same-reference, same-size, different-content state -- so the (reference, size)
+    // pair uniquely identifies its state and makes this self-correcting.
+    private static HashMap<String, ByteCodeClass> classIndexMap;
+    private static List<ByteCodeClass> classIndexSource;
+    private static int classIndexSize;
+    private static HashMap<String, ByteCodeClass> classIndex() {
+        if (classIndexMap == null || classIndexSource != classes || classIndexSize != classes.size()) {
+            HashMap<String, ByteCodeClass> m = new HashMap<String, ByteCodeClass>(classes.size() * 2);
+            for (ByteCodeClass cls : classes) {
+                // first-wins, matching the old "return the first match" linear scan
+                if (!m.containsKey(cls.getClsName())) {
+                    m.put(cls.getClsName(), cls);
+                }
             }
+            classIndexMap = m;
+            classIndexSource = classes;
+            classIndexSize = classes.size();
         }
-        return null;
+        return classIndexMap;
+    }
+
+    public static ByteCodeClass getClassObject(String name) {
+        return classIndex().get(name);
     }
     
     /**
@@ -679,6 +722,15 @@ public class Parser extends ClassVisitor {
             if(t instanceof Exception) {
                 throw (Exception)t;
             }
+            // Errors (notably OutOfMemoryError while emitting a very large
+            // bundle) previously fell through here, so the translator exited
+            // 0 with a half-written dist (e.g. parparvm_runtime.js but no
+            // worker.js / translated_app.js). Rethrow so the caller fails
+            // loudly instead of shipping a truncated app bundle.
+            if(t instanceof Error) {
+                throw (Error)t;
+            }
+            throw new RuntimeException(t);
         }
         finally { cleanup(); }
     }
@@ -891,7 +943,115 @@ public class Parser extends ClassVisitor {
     public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {
         BytecodeMethod mtd = new BytecodeMethod(clsName, access, name, desc, signature, exceptions);
         cls.addMethod(mtd);
-        return new JSRInlinerAdapter(new MethodVisitorWrapper(super.visitMethod(access, name, desc, signature, exceptions), mtd), access, name, desc, signature, exceptions);
+        // Tee the (post-JSR-inlined) bytecode into a MethodNode so visitEnd can run
+        // ASM frame analysis to resolve category-2-aware DUP/POP2 forms. The wrapper
+        // sits INSIDE the JSRInlinerAdapter, so the MethodNode it feeds matches the
+        // instruction stream BytecodeMethod is built from. Parser's own ClassVisitor
+        // has no delegate writer (super.visitMethod returns null), so routing the
+        // MethodNode as the wrapper's delegate loses nothing.
+        MethodNode analysisNode = new MethodNode(Opcodes.ASM9, access, name, desc, signature, exceptions);
+        MethodVisitorWrapper wrapper = new MethodVisitorWrapper(analysisNode, mtd);
+        wrapper.dupAnalysisOwner = clsName;
+        wrapper.dupAnalysisNode = analysisNode;
+        return new JSRInlinerAdapter(wrapper, access, name, desc, signature, exceptions);
+    }
+
+    // Category-sensitive stack opcodes: their correct operand-stack-ENTRY shuffle
+    // depends on whether the operands are category-2 (long/double), because the JS
+    // backend models a long/double as ONE entry while the JVM defines these in slots.
+    private static boolean isCategorySensitiveStackOp(int op) {
+        return op == Opcodes.DUP2 || op == Opcodes.DUP2_X1 || op == Opcodes.DUP2_X2
+                || op == Opcodes.DUP_X2 || op == Opcodes.POP2;
+    }
+
+    /**
+     * Runs ASM frame analysis over the parsed MethodNode and stamps each
+     * category-sensitive DUP/POP2 ``BasicInstruction`` with its resolved
+     * entry-form (see {@link BasicInstruction#setDupForm}). On any analysis
+     * failure the forms are left unset and the emitter uses its legacy
+     * (category-1-assuming) path -- i.e. no worse than before.
+     */
+    private static void resolveDupForms(String owner, MethodNode mn, BytecodeMethod mtd) {
+        if (owner == null || mn == null || mn.instructions == null || mn.instructions.size() == 0) {
+            return;
+        }
+        Frame<BasicValue>[] frames;
+        try {
+            frames = new Analyzer<BasicValue>(new BasicInterpreter()).analyze(owner, mn);
+        } catch (Throwable t) {
+            return;
+        }
+        // Decisions for category-sensitive ops, in linear (parse) order.
+        List<int[]> decisions = new ArrayList<int[]>();
+        AbstractInsnNode[] insns = mn.instructions.toArray();
+        for (int i = 0; i < insns.length; i++) {
+            int op = insns[i].getOpcode();
+            if (!isCategorySensitiveStackOp(op)) {
+                continue;
+            }
+            decisions.add(dupForm(op, frames[i]));
+        }
+        // Stamp the matching ParparVM BasicInstructions, in the same linear order.
+        // The dup/pop2 sequence is identical between the ASM node and the
+        // BytecodeMethod (both built from the same post-JSR stream), so they zip
+        // 1:1. Stamping the instruction object (not a positional queue) keeps the
+        // form correct even though the structured emitter later reorders blocks.
+        int di = 0;
+        for (Instruction instr : mtd.getInstructions()) {
+            if (!(instr instanceof BasicInstruction) || !isCategorySensitiveStackOp(instr.getOpcode())) {
+                continue;
+            }
+            if (di >= decisions.size()) {
+                break;
+            }
+            int[] form = decisions.get(di++);
+            if (form != null) {
+                ((BasicInstruction) instr).setDupForm(form[0], form[1]);
+            }
+        }
+    }
+
+    /**
+     * Resolves a category-sensitive stack opcode into entry terms given the frame
+     * BEFORE it. Returns {nDup, nSkip} for the DUP family (duplicate the top nDup
+     * entries, reinsert beneath the next nSkip), or {entriesToPop, -1} for POP2.
+     * Returns null when the frame is unavailable (unreachable code).
+     * ASM analysis frames model a long/double as ONE stack entry with size 2.
+     */
+    private static int[] dupForm(int op, Frame<BasicValue> f) {
+        if (f == null) {
+            return null;
+        }
+        int sp = f.getStackSize();
+        if (sp < 1) {
+            return null;
+        }
+        boolean topWide = f.getStack(sp - 1).getSize() == 2;
+        switch (op) {
+            case Opcodes.POP2:
+                return new int[]{ topWide ? 1 : 2, -1 };
+            case Opcodes.DUP2:
+                return topWide ? new int[]{1, 0} : new int[]{2, 0};
+            case Opcodes.DUP2_X1:
+                return topWide ? new int[]{1, 1} : new int[]{2, 1};
+            case Opcodes.DUP_X2: {
+                // Top is category-1; skip one entry if the value below is category-2.
+                boolean belowWide = sp >= 2 && f.getStack(sp - 2).getSize() == 2;
+                return belowWide ? new int[]{1, 1} : new int[]{1, 2};
+            }
+            case Opcodes.DUP2_X2:
+                if (topWide) {
+                    boolean belowWide = sp >= 2 && f.getStack(sp - 2).getSize() == 2;
+                    return belowWide ? new int[]{1, 1} : new int[]{1, 2};
+                } else {
+                    // Top two entries are category-1; skip one entry if the value
+                    // beneath them is category-2.
+                    boolean belowWide = sp >= 3 && f.getStack(sp - 3).getSize() == 2;
+                    return belowWide ? new int[]{2, 1} : new int[]{2, 2};
+                }
+            default:
+                return null;
+        }
     }
 
     @Override
@@ -925,6 +1085,7 @@ public class Parser extends ClassVisitor {
             return new AnnotationVisitorWrapper(super.visitAnnotation(desc, visible)) {
                 private String defaultConcrete;
                 private String winConcrete;
+                private String linuxConcrete;
 
                 @Override
                 public void visit(String name, Object value) {
@@ -932,6 +1093,8 @@ public class Parser extends ClassVisitor {
                         defaultConcrete = (String) value;
                     } else if ("win".equals(name) && value instanceof String) {
                         winConcrete = (String) value;
+                    } else if ("linux".equals(name) && value instanceof String) {
+                        linuxConcrete = (String) value;
                     }
                     super.visit(name, value);
                 }
@@ -939,14 +1102,22 @@ public class Parser extends ClassVisitor {
                 @Override
                 public void visitEnd() {
                     // Pick the concrete implementation for the active translation
-                    // target: the native Windows build uses @Concrete.win(), every
-                    // other target uses @Concrete.name() (the iOS pipeline). When
-                    // building Windows and no win() is given (e.g. IOSSimd, which
-                    // has only an iOS specialization), leave the concrete unset so
-                    // the portable base class is translated instead of pulling in
-                    // the absent iOS class.
-                    String concrete = "win".equals(ByteCodeClass.getConcreteTarget())
-                            ? winConcrete : defaultConcrete;
+                    // target: the native Windows build uses @Concrete.win(), the
+                    // native Linux build uses @Concrete.linux(), every other target
+                    // uses @Concrete.name() (the iOS pipeline). When building
+                    // Windows/Linux and no win()/linux() is given (e.g. IOSSimd,
+                    // which has only an iOS specialization), leave the concrete
+                    // unset so the portable base class is translated instead of
+                    // pulling in the absent iOS class.
+                    String target = ByteCodeClass.getConcreteTarget();
+                    String concrete;
+                    if ("win".equals(target)) {
+                        concrete = winConcrete;
+                    } else if ("linux".equals(target)) {
+                        concrete = linuxConcrete;
+                    } else {
+                        concrete = defaultConcrete;
+                    }
                     if (concrete != null && concrete.length() > 0) {
                         cls.setConcreteClass(concrete.replace('.', '/'));
                     }
@@ -999,6 +1170,8 @@ public class Parser extends ClassVisitor {
     
     class MethodVisitorWrapper extends MethodVisitor {
         private final BytecodeMethod mtd;
+        String dupAnalysisOwner;
+        MethodNode dupAnalysisNode;
         public MethodVisitorWrapper(MethodVisitor mv, BytecodeMethod mtd) {
             super(Opcodes.ASM9, mv);
             this.mtd = mtd;
@@ -1006,7 +1179,8 @@ public class Parser extends ClassVisitor {
 
         @Override
         public void visitEnd() {
-            super.visitEnd(); 
+            super.visitEnd();
+            resolveDupForms(dupAnalysisOwner, dupAnalysisNode, mtd);
         }
 
         @Override

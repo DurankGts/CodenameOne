@@ -65,6 +65,7 @@ TeaVM
 teavm
 teavmdbg
 LWUIT
+Leanback
 GUIBuilder
 UIBuilder
 UDID
@@ -105,6 +106,8 @@ andlib
 dumbing
 handcoded
 navigatable
+popover
+popovers
 
 # -----------------------------------------------------------------------------
 # Acronyms and product / framework names
@@ -566,3 +569,92 @@ Winsock
 # SSL.com's cloud code-signing service, named alongside Azure Trusted Signing
 # and DigiCert KeyLocker in the native Windows code-signing section.
 eSigner
+
+# 3D graphics / shader chapter (com.codename1.gpu). "Phong" is the
+# standard name of the Phong/Blinn-Phong lighting model. "Khronos" is the
+# standards body behind glTF/OpenGL, "BoomBox" is the Khronos glTF sample
+# model used in the model test, and "JOGL" is the OpenGL binding the desktop
+# simulator renders through. "Direct3D" and "HLSL" are the native Windows GPU
+# backend and its shader language, "Catalyst" is Apple's Mac Catalyst target,
+# and "texels" are texture pixels (the standard graphics term).
+[Pp]hong
+Khronos
+BoomBox
+JOGL
+Direct3D
+HLSL
+Catalyst
+texels
+billboarded
+Bezier
+subpath
+subpaths
+
+# Native Linux port chapter (Working-With-Linux). The standard names of the
+# GTK3/Cairo native stack and the libc/toolchain terms: "Pango" is the text
+# layout engine, "musl" and "glibc" are the two C libraries, "libc" is the C
+# library itself, "libcurl"/"libsecret"/"libnotify" are the HTTP/keyring/
+# notification libraries, "sonames" are ELF shared-object version names, and a
+# "syscall" is a system call.
+Pango
+musl
+glibc
+libc
+libcurl
+libsecret
+libnotify
+sonames
+syscall
+
+# The POSIX dynamic-loader call used by the Linux port to load optional libs.
+dlopen
+# The zig toolchain (zig cc), used to pin an old glibc for the Linux port.
+zig
+transcoder
+
+# Crash protection terminology.
+# "Symbolicated" / "symbolicate" is the term of art for resolving raw
+# stack frame addresses back to file:line via a build's symbols. Used
+# throughout the Crash Protection chapter and standard in the field.
+[Ss]ymbolicated
+[Ss]ymbolicate
+[Ss]ymbolication
+# Short for "deduplication" -- "dedup the same crash" is how everyone
+# in the crash-reporting space talks. Shows up in CrashReportPayload
+# field descriptions.
+dedup
+# Analytics chapter: analytics vendors / APIs and privacy-law acronyms.
+Matomo
+GA4
+CCPA
+SPI
+pseudonymous
+Plausible
+PostHog
+Piwik
+
+# Maps chapter: vector-map terminology. "basemap"/"basemaps" is the standard
+# one-word cartography term for the background reference map, and "Mapbox" is
+# the vendor whose Mapbox Vector Tiles (MVT) format the engine decodes.
+[Bb]asemaps?
+Mapbox
+# Vector tile providers / formats referenced in the maps chapter.
+OpenFreeMap
+MapTiler
+Protomaps
+TileServer
+TileJSON
+
+# Security chapter: device-integrity / RASP terminology and vendor / tool names.
+# RASP = Runtime Application Self-Protection; MTD = Mobile Threat Defense.
+RASP
+MTD
+RootBeer
+Magisk
+Cydia
+MobileSubstrate
+FridaGadget
+dylibs?
+Zimperium
+Promon
+DeviceCheck

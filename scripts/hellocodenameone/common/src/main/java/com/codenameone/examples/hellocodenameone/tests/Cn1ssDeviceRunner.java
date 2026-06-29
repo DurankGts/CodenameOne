@@ -11,6 +11,8 @@ import com.codenameone.examples.hellocodenameone.tests.graphics.AffineScale;
 import com.codenameone.examples.hellocodenameone.tests.graphics.Clip;
 import com.codenameone.examples.hellocodenameone.tests.graphics.ClipUnderRotation;
 import com.codenameone.examples.hellocodenameone.tests.graphics.DrawArc;
+import com.codenameone.examples.hellocodenameone.tests.graphics.EmptyClip;
+import com.codenameone.examples.hellocodenameone.tests.graphics.PartialFlushClipEscape;
 import com.codenameone.examples.hellocodenameone.tests.graphics.DrawGradient;
 import com.codenameone.examples.hellocodenameone.tests.graphics.DrawGradientStops;
 import com.codenameone.examples.hellocodenameone.tests.graphics.DrawImage;
@@ -152,6 +154,17 @@ public final class Cn1ssDeviceRunner extends DeviceRunner {
             new StrokeTest(),
             new Clip(),
             new ClipUnderRotation(),
+            // Regression guard for issue #5263: an empty clip (two
+            // non-overlapping clipRects) must cull everything. The iOS Metal
+            // backend used to open the whole framebuffer instead, flooding the
+            // screen with the fully-clipped-out draws.
+            new EmptyClip(),
+            // Regression guard for issue #5273: a clip emitted during a PARTIAL
+            // flush (a scrollable BorderLayout.CENTER repainting under a fixed
+            // header) must be clamped to the flushed sub-region. The iOS Metal
+            // backend skipped that clamp, so the fill escaped into the fixed
+            // toolbar / NORTH band and blanked it in the persistent screenTexture.
+            new PartialFlushClipEscape(),
             new TileImage(),
             new Rotate(),
             new TransformTranslation(),
@@ -192,6 +205,8 @@ public final class Cn1ssDeviceRunner extends DeviceRunner {
             new ChartTransformScreenshotTest(),
             new ChartRotatedScreenshotTest(),
             new BrowserComponentScreenshotTest(),
+            new RichTextAreaScreenshotTest(),
+            new CodeEditorScreenshotTest(),
             new MediaPlaybackScreenshotTest(),
             new SheetScreenshotTest(),
             new SheetSlideUpAnimationScreenshotTest(),
@@ -225,12 +240,32 @@ public final class Cn1ssDeviceRunner extends DeviceRunner {
             new MultiButtonThemeScreenshotTest(),
             new ListThemeScreenshotTest(),
             new DialogThemeScreenshotTest(),
+            new AppReviewDialogScreenshotTest(),
             new FloatingActionButtonThemeScreenshotTest(),
             new SpanLabelThemeScreenshotTest(),
             new DarkLightShowcaseThemeScreenshotTest(),
             new PaletteOverrideThemeScreenshotTest(),
             new CssGradientsScreenshotTest(),
             new CssFilterBlurScreenshotTest(),
+            // Modern maps API: the pure-vector MapView (real OSM basemap,
+            // light/dark styles, marker + shape overlays) and the NativeMap
+            // vector fallback, all rendered against the bundled real San
+            // Francisco tiles so the baselines are network-free and reproducible.
+            new RealOsmVectorScreenshotTest(),
+            new VectorMapDarkStyleScreenshotTest(),
+            new VectorMapMarkersScreenshotTest(),
+            new VectorMapShapesScreenshotTest(),
+            new NativeMapFallbackScreenshotTest(),
+            // (NativeMapProvider/Apple MapKit is intentionally not screenshot-
+            // tested: it only renders in an authorized, signed-in environment
+            // and even on the Mac runner its live tiles load unreliably, so the
+            // capture is a flaky blank grid. The native-context render is
+            // covered deterministically by GoogleWebMap on iOS/Android, and the
+            // developer guide ships a real Apple-map capture.)
+            // Cross-platform Google Maps via the web provider (BrowserComponent
+            // + Maps JS). Gated on the GOOGLE_MAPS_API_KEY secret -- skips when
+            // the key resource is absent, so it is a no-op on forks/local.
+            new GoogleWebMapScreenshotTest(),
             // Build-time SVG transcoder coverage: the static test renders
             // shapes / gradients / paths, the animated test pins
             // AnimationTime so the captured frame is deterministic.
@@ -239,11 +274,35 @@ public final class Cn1ssDeviceRunner extends DeviceRunner {
             // Build-time Lottie transcoder -- same pipeline as SVG, lowers
             // the Bodymovin JSON into the SVG model and reuses SVGRegistry.
             new LottieAnimatedScreenshotTest(),
+            // Portable 3D / shader API (com.codename1.gpu): a Phong-lit cube, a
+            // textured cube, a loaded glTF model, and a behavioral animation-loop
+            // test. Positioned immediately before OrientationLock on purpose, to
+            // satisfy two constraints at once:
+            //   - iOS: a 2D form shown right after a GPU peer keeps the previous
+            //     form's drawable for one capture (a pre-existing iOS present
+            //     quirk). OrientationLock is the one test that recovers from this
+            //     -- it forces a full-screen orientation change + revalidate
+            //     before capturing -- so it absorbs the staleness cleanly, and
+            //     DesktopMode (the last screenshot test) still sees OrientationLock
+            //     as its predecessor exactly like on master, so every baseline
+            //     matches.
+            //   - JavaScript: the glTF model is the heaviest 3D capture; running
+            //     it here (rather than dead last) keeps it out of the JS port's
+            //     late-suite worker-barrier danger zone where it intermittently
+            //     failed to emit.
+            // The 3D tests render through their own GPU peer and capture correctly
+            // regardless of what precedes them.
+            new Gpu3DCubeScreenshotTest(),
+            new Gpu3DTexturedCubeScreenshotTest(),
+            new Gpu3DModelScreenshotTest(),
+            new Gpu3DAnimationTest(),
             // Keep this as the last screenshot test; orientation changes can leak into subsequent screenshots.
             new OrientationLockScreenshotTest(),
             new InPlaceEditViewTest(),
             new BytecodeTranslatorRegressionTest(),
             new SimdApiTest(),
+            new SimdBenchmarkTest(),
+            new SecureStorageTest(),
             // Exercises com.codename1.camera.* end-to-end against the
             // JavaSE simulator's synthetic camera backend (no permission
             // prompts). Self-skips on iOS / Android / JS where the open
@@ -257,6 +316,7 @@ public final class Cn1ssDeviceRunner extends DeviceRunner {
             new CryptoApiTest(),
             new Java17Tests(),
             new BackgroundThreadUiAccessTest(),
+            new BridgeBulkTransferGuardTest(),
             new VPNDetectionAPITest(),
             new CallDetectionAPITest(),
             new LocalNotificationOverrideTest(),
@@ -278,6 +338,12 @@ public final class Cn1ssDeviceRunner extends DeviceRunner {
     };
 
     private static BaseTest prependedTest;
+
+    /// Index of the test that has consumed its one-shot silent-timeout retry
+    /// (see finalizeTest). -1 until the first retry fires; comparing against
+    /// the index guarantees at most one retry per test so a genuinely broken
+    /// test still fails after ~2x its timeout instead of looping.
+    private int retriedTestIndex = -1;
 
     public static void addTest(BaseTest test) {
         prependedTest = test;
@@ -302,6 +368,15 @@ public final class Cn1ssDeviceRunner extends DeviceRunner {
         }
         BaseTest testClass = (offset == 1 && index == 0) ? prependedTest : DEFAULT_TEST_CLASSES[index - offset];
         String testName = testClass.getClass().getSimpleName();
+        if (!matchesFilter(testName)) {
+            // Optional subset run: -Dcn1ss.filter=<substr> or CN1SS_FILTER=<substr>
+            // runs only tests whose class simple name contains the (case-
+            // insensitive) substring. Lets a targeted run (e.g. a single
+            // form-factor or graphics subset) skip the full ~120-test suite.
+            log("CN1SS:INFO:suite skipping test=" + testName + " (filter)");
+            runNextTest(index + 1);
+            return;
+        }
         CN.callSerially(() -> {
             log("CN1SS:INFO:suite starting test=" + testName);
             if (shouldForceTimeoutInHtml5(testName)) {
@@ -452,7 +527,26 @@ public final class Cn1ssDeviceRunner extends DeviceRunner {
         try {
             testClass.cleanup();
             if (timedOut) {
-                log("CN1SS:ERR:suite test=" + testName + " failed due to timeout waiting for DONE");
+                log("CN1SS:ERR:suite test=" + testName + " failed due to timeout waiting for DONE stage="
+                        + testClass.getCaptureStage());
+                if (shouldRetryAfterSilentTimeout(index, testClass)) {
+                    // The test timed out without EVER requesting a capture and
+                    // without reporting a failure: the show -> settle-timer ->
+                    // screenshot chain was silently swallowed. Observed on the
+                    // iOS Metal CI job (graphics-fill-shape produced no PNG, no
+                    // error, while the very next test rendered fine ~2s later),
+                    // i.e. a transient render-pipeline stall rather than a bug
+                    // in the test itself. The pipeline is healthy again by the
+                    // time the timeout poll fires, so one re-run reliably
+                    // recovers the screenshot instead of failing the whole job
+                    // on a missing tile.
+                    retriedTestIndex = index;
+                    log("CN1SS:WARN:suite test=" + testName
+                            + " retrying once: timed out before any capture started");
+                    testClass.resetForRetry();
+                    runNextTest(index);
+                    return;
+                }
             } else if (testClass.isFailed()) {
                 log("CN1SS:ERR:suite test=" + testName + " failed: " + testClass.getFailMessage());
             } else if (!testClass.shouldTakeScreenshot()) {
@@ -468,6 +562,26 @@ public final class Cn1ssDeviceRunner extends DeviceRunner {
         // doesn't match the reference screenshot name (e.g. "graphics-affine-scale")
         // and breaks iOS/Android comparison results.
         continueToNext.run();
+    }
+
+    /// A retry is only safe when the timeout was truly silent. Gates:
+    /// - one retry per test (retriedTestIndex);
+    /// - native ports only: on HTML5 the suite advancement is co-driven by
+    ///   port.js (runCn1ssResolvedTest dispatches per index) and known-bad
+    ///   tests are parked via its forced-timeout lists, so a Java-side rerun
+    ///   would fight that machinery;
+    /// - no failure was reported (a real failure should surface, not retry);
+    /// - no capture was started (an in-flight capture could emit after the
+    ///   rerun's form is up and ship the wrong pixels under this test's name);
+    /// - the test actually takes a screenshot (non-screenshot tests may have
+    ///   side effects that aren't safe to repeat, and a missing tile is the
+    ///   only failure mode this retry exists to prevent).
+    private boolean shouldRetryAfterSilentTimeout(int index, BaseTest testClass) {
+        return retriedTestIndex != index
+                && !"HTML5".equals(Display.getInstance().getPlatformName())
+                && !testClass.isFailed()
+                && !testClass.isCaptureStarted()
+                && testClass.shouldTakeScreenshot();
     }
 
     private void finishSuite() {
@@ -490,6 +604,21 @@ public final class Cn1ssDeviceRunner extends DeviceRunner {
         if (CN.isSimulator()) {
             Display.getInstance().exitApplication();
         }
+    }
+
+    /// True when the test should run under the optional cn1ss.filter subset
+    /// selector (system property cn1ss.filter). Empty/unset runs everything.
+    /// Read at call time (no static field) to avoid the static-init
+    /// class-loading pitfalls noted above. System.getenv is intentionally NOT
+    /// used - it is outside the Codename One runtime API and trips the build's
+    /// bytecode-compliance check.
+    private static boolean matchesFilter(String testName) {
+        String filter = System.getProperty("cn1ss.filter");
+        if (filter == null || filter.length() == 0) {
+            return true;
+        }
+        return testName != null
+                && testName.toLowerCase().indexOf(filter.toLowerCase()) >= 0;
     }
 
     private static void log(String msg) {

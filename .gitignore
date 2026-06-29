@@ -121,3 +121,8 @@ package.json
 # Local diagnostic playwright scripts (sidemenu-test, initializr-test, etc.)
 /scripts/*-test.mjs
 
+.guest-scratch/
+
+# Google Maps JS API key injected by CI for the GoogleWebMap screenshot test
+# (from the GOOGLE_MAPS_API_KEY secret). A secret value, never committed.
+/scripts/hellocodenameone/common/src/main/resources/google-maps-key.txt

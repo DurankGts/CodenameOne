@@ -94,6 +94,176 @@ final class BuildHintSchemaDefaults {
                 + "hololight = Android Holo Light (API 14+). legacy = pre-Holo "
                 + "Android theme. (Deprecated alias: cn1.androidTheme; "
                 + "and.hololight=true is also accepted for back-compat.)");
+
+        // watchOS native build (Apple Watch). Adds a watchOS app target to the
+        // iOS Xcode project, rendering the CN1 UI via the Core Graphics backend.
+        set("{{@watchNative}}.label", "Apple Watch (watchOS)");
+        set("{{@watchNative}}.description",
+                "Builds an Apple Watch app from the same project, rendering the "
+                + "Codename One UI on watchOS via the Core Graphics backend. The "
+                + "watch app is a separate arm64_32 target; in the default "
+                + "companion mode it is embedded in the iOS .ipa and installs "
+                + "with the phone app.");
+
+        set("{{#watchNative#watchNative.enabled}}.label", "Enable watchOS target");
+        set("{{#watchNative#watchNative.enabled}}.type", "Select");
+        set("{{#watchNative#watchNative.enabled}}.values", "false,true");
+        set("{{#watchNative#watchNative.enabled}}.description",
+                "When true, adds an Apple Watch app target to the generated "
+                + "Xcode project. Also auto-enabled whenever codename1.watchMain "
+                + "is declared next to codename1.mainName in "
+                + "codenameone_settings.properties, so the double app is produced "
+                + "as part of the regular iPhone build. Requires the Ruby "
+                + "xcodeproj gem (bundled with CocoaPods).");
+
+        set("{{#watchNative#watchNative.mainClass}}.label", "Watch lifecycle class");
+        set("{{#watchNative#watchNative.mainClass}}.type", "String");
+        set("{{#watchNative#watchNative.mainClass}}.description",
+                "Fully-qualified watch entry/lifecycle class. Normally set via "
+                + "codename1.watchMain; this hint is an override. May equal the "
+                + "phone main class - a distinct class lets the watch slice "
+                + "tree-shake from its own root. Defaults to the phone main class "
+                + "when watchNative.enabled=true without a watch entry.");
+
+        set("{{#watchNative#watchNative.distribution}}.label", "Distribution");
+        set("{{#watchNative#watchNative.distribution}}.type", "Select");
+        set("{{#watchNative#watchNative.distribution}}.values", "companion,standalone");
+        set("{{#watchNative#watchNative.distribution}}.description",
+                "companion = the watch app is embedded in the iOS app and "
+                + "installs with it (WKCompanionAppBundleIdentifier pinned to "
+                + "the iOS bundle). standalone = an independent watch-only app.");
+
+        set("{{#watchNative#watchNative.bundleId}}.label", "Watch bundle identifier");
+        set("{{#watchNative#watchNative.bundleId}}.type", "String");
+        set("{{#watchNative#watchNative.bundleId}}.description",
+                "Bundle id of the watch app. Defaults to <package>.watchkitapp.");
+
+        set("{{#watchNative#watchNative.minDeploymentTarget}}.label", "Minimum watchOS version");
+        set("{{#watchNative#watchNative.minDeploymentTarget}}.type", "String");
+        set("{{#watchNative#watchNative.minDeploymentTarget}}.description",
+                "WATCHOS_DEPLOYMENT_TARGET for the watch target. Defaults to 10.0 "
+                + "(single-target WKApplication apps + WidgetKit complications).");
+
+        set("{{#watchNative#watchNative.teamId}}.label", "Apple team id");
+        set("{{#watchNative#watchNative.teamId}}.type", "String");
+        set("{{#watchNative#watchNative.teamId}}.description",
+                "Development team for signing the watch target. Defaults to the "
+                + "iOS team id (ios.teamId / ios.release.teamId).");
+
+        set("{{#watchNative#watchNative.displayName}}.label", "Watch app name");
+        set("{{#watchNative#watchNative.displayName}}.type", "String");
+        set("{{#watchNative#watchNative.displayName}}.description",
+                "Name shown under the watch app icon. Defaults to the app display "
+                + "name (codename1.displayName), then the main class name.");
+
+        set("{{#watchNative#watchNative.embedCompanion}}.label", "Embed in iOS app");
+        set("{{#watchNative#watchNative.embedCompanion}}.type", "Select");
+        set("{{#watchNative#watchNative.embedCompanion}}.values", "false,true");
+        set("{{#watchNative#watchNative.embedCompanion}}.description",
+                "When true (companion distribution), adds the watch app as a build "
+                + "dependency of the iOS app so the pair archives together. Off by "
+                + "default so the iOS build is unaffected; enable it for a packaged "
+                + "companion submission.");
+
+        // Apple TV native build (tvOS). tvOS has UIKit + Metal but no OpenGL ES,
+        // so it is handled like the Mac Catalyst slice: Metal renderer + GL stub
+        // headers + GL-only sources excluded, as a separate appletvos target.
+        set("{{@tvNative}}.label", "Apple TV (tvOS)");
+        set("{{@tvNative}}.description",
+                "Builds an Apple TV app from the same project. tvOS reuses the "
+                + "iOS UIKit entry and the Metal renderer (it lacks OpenGL ES), so "
+                + "the tvOS app is a separate appletvos target compiled from the "
+                + "same sources. CN.isTV() returns true at runtime.");
+
+        set("{{#tvNative#tvNative.enabled}}.label", "Enable tvOS target");
+        set("{{#tvNative#tvNative.enabled}}.type", "Select");
+        set("{{#tvNative#tvNative.enabled}}.values", "false,true");
+        set("{{#tvNative#tvNative.enabled}}.description",
+                "When true, adds an Apple TV app target to the generated Xcode "
+                + "project. Also auto-enabled whenever codename1.tvMain is declared "
+                + "in codenameone_settings.properties. Requires the Ruby xcodeproj "
+                + "gem (bundled with CocoaPods).");
+
+        set("{{#tvNative#tvNative.mainClass}}.label", "tvOS lifecycle class");
+        set("{{#tvNative#tvNative.mainClass}}.type", "String");
+        set("{{#tvNative#tvNative.mainClass}}.description",
+                "Fully-qualified tvOS entry/lifecycle class. Normally set via "
+                + "codename1.tvMain; this hint is an override. May equal the phone "
+                + "main class (the tvOS app reuses the shared UIApplicationMain "
+                + "entry). Defaults to the phone main class when tvNative.enabled=true.");
+
+        set("{{#tvNative#tvNative.bundleId}}.label", "tvOS bundle identifier");
+        set("{{#tvNative#tvNative.bundleId}}.type", "String");
+        set("{{#tvNative#tvNative.bundleId}}.description",
+                "Bundle id of the Apple TV app. Defaults to <package>.tvos.");
+
+        set("{{#tvNative#tvNative.minDeploymentTarget}}.label", "Minimum tvOS version");
+        set("{{#tvNative#tvNative.minDeploymentTarget}}.type", "String");
+        set("{{#tvNative#tvNative.minDeploymentTarget}}.description",
+                "TVOS_DEPLOYMENT_TARGET for the tvOS target. Defaults to 13.0.");
+
+        set("{{#tvNative#tvNative.teamId}}.label", "Apple team id");
+        set("{{#tvNative#tvNative.teamId}}.type", "String");
+        set("{{#tvNative#tvNative.teamId}}.description",
+                "Development team for signing the tvOS target. Defaults to the "
+                + "iOS team id (ios.teamId / ios.release.teamId).");
+
+        set("{{#tvNative#tvNative.displayName}}.label", "tvOS app name");
+        set("{{#tvNative#tvNative.displayName}}.type", "String");
+        set("{{#tvNative#tvNative.displayName}}.description",
+                "Name shown under the tvOS app icon. Defaults to the app display "
+                + "name (codename1.displayName), then the main class name.");
+
+        // Wear OS native build (Android). A Wear OS app is a regular Android app
+        // that declares the watch hardware feature; the CN1 UI renders through
+        // the normal Android pipeline (no separate backend, unlike watchOS).
+        set("{{@androidWear}}.label", "Wear OS (Android)");
+        set("{{@androidWear}}.description",
+                "Builds the Android app as a Wear OS app: declares the watch "
+                + "hardware feature, marks the app standalone (runs without a "
+                + "paired phone app) and raises the minimum SDK to the Wear OS 2.0 "
+                + "baseline (API 23). CN.isWatch() returns true at runtime via "
+                + "PackageManager.FEATURE_WATCH. Independent of the Apple Watch "
+                + "build; enable both to target both wearables.");
+
+        set("{{#androidWear#android.wear}}.label", "Enable Wear OS build");
+        set("{{#androidWear#android.wear}}.type", "Select");
+        set("{{#androidWear#android.wear}}.values", "false,true");
+        set("{{#androidWear#android.wear}}.description",
+                "When true, marks the Android build as a Wear OS app (manifest "
+                + "uses-feature android.hardware.type.watch, standalone meta-data, "
+                + "minimum SDK floor API 23). With the hint off the manifest is "
+                + "unchanged.");
+
+        set("{{#androidWear#android.wear.standalone}}.label", "Standalone Wear app");
+        set("{{#androidWear#android.wear.standalone}}.type", "Select");
+        set("{{#androidWear#android.wear.standalone}}.values", "true,false");
+        set("{{#androidWear#android.wear.standalone}}.description",
+                "Declares the Wear app standalone (com.google.android.wearable."
+                + "standalone), so it installs and runs directly on the watch "
+                + "without a companion phone app. Defaults to true. Only applies "
+                + "when android.wear=true.");
+
+        // Android TV / Google TV: the same APK plus manifest metadata (Leanback
+        // launcher category + leanback feature + optional touchscreen) and a
+        // generated 320x180 banner. CN.isTV() returns true at runtime.
+        set("{{@androidTv}}.label", "Android TV / Google TV");
+        set("{{@androidTv}}.description",
+                "Builds the Android app for Android TV / Google TV: adds the "
+                + "Leanback launcher category so the app appears on the TV home "
+                + "screen, declares the android.software.leanback feature, makes "
+                + "the touchscreen optional and generates a 320x180 launcher "
+                + "banner from the app icon. The same APK still runs on phones "
+                + "and tablets; CN.isTV() returns true at runtime.");
+
+        set("{{#androidTv#android.tv}}.label", "Enable Android TV build");
+        set("{{#androidTv#android.tv}}.type", "Select");
+        set("{{#androidTv#android.tv}}.values", "false,true");
+        set("{{#androidTv#android.tv}}.description",
+                "When true, adds Android TV manifest metadata (LEANBACK_LAUNCHER "
+                + "category, android.software.leanback uses-feature, touchscreen "
+                + "required=false) and a generated tv_banner drawable. With the "
+                + "hint off the manifest is unchanged.");
     }
 
     /** Idempotent setter: does not overwrite user / project-level hint metadata. */

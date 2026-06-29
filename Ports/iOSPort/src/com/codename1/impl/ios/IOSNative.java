@@ -152,6 +152,16 @@ public final class IOSNative {
     native boolean isIOS7();
     native boolean isRunningOnMac();
 
+    // Returns true when the binary is running on the watchOS slice. Implemented
+    // natively via the TARGET_OS_WATCH compile-time check so the iOS slice keeps
+    // returning false with zero runtime cost.
+    native boolean isRunningOnWatch();
+
+    // Returns true when the binary is running on the tvOS slice. Implemented
+    // natively via the TARGET_OS_TV compile-time check so the iOS slice keeps
+    // returning false with zero runtime cost.
+    native boolean isRunningOnTV();
+
     // Mac native (Catalyst): set the host window title bar text from the current form title.
     native void setWindowTitle(String title);
 
@@ -213,9 +223,25 @@ public final class IOSNative {
     native void cleanupAudio(long peer);
 
     native long createAudio(String uri, Runnable onCompletion);
-    
+
     native long createAudio(byte[] data, Runnable onCompletion);
-    
+
+    // ---- low latency game sound pool (com.codename1.gaming.SoundPool) ----
+    native long nativeCreateSoundPool(int maxStreams);
+    native long nativeLoadSound(long pool, byte[] data, int ringSize);
+    native int nativePlaySound(long pool, long sound, float volume, float pan, float rate, int loop);
+    native void nativeSetSoundVolume(long pool, int voiceId, float volume);
+    native void nativeSetSoundRate(long pool, int voiceId, float rate);
+    native void nativeSetSoundPan(long pool, int voiceId, float pan);
+    native void nativePauseSound(long pool, int voiceId);
+    native void nativeResumeSound(long pool, int voiceId);
+    native void nativeStopSound(long pool, int voiceId);
+    native void nativeStopAllSounds(long pool);
+    native void nativeAutoPauseSoundPool(long pool);
+    native void nativeAutoResumeSoundPool(long pool);
+    native void nativeUnloadSound(long pool, long sound);
+    native void nativeReleaseSoundPool(long pool);
+
     native float getVolume();
 
     native void setVolume(float vol);
@@ -253,6 +279,8 @@ public final class IOSNative {
     
     native void setBrowserUserAgent(long browserPeer, String ua);
     native void setBrowserFollowTargetBlank(long browserPeer, boolean follow);
+    // style: 0 = unspecified/auto (follow device), 1 = light, 2 = dark
+    native void setBrowserInterfaceStyle(long browserPeer, int style);
     
     native void browserBack(long browserPeer);
     native void browserStop(long browserPeer);
@@ -394,6 +422,11 @@ public final class IOSNative {
     native String getUDID();
     native String getOSVersion();
     native String getDeviceName();
+    // The hardware/marketing model identifier (e.g. "iPhone15,2"). Unlike
+    // getDeviceName() -- which returns the user-assigned device name and is
+    // therefore personally identifying -- this is safe to use for analytics
+    // device segmentation.
+    native String getDeviceHardwareModel();
 
     // Diagnostics for the status-bar tap-to-scroll-to-top path. Surfaced to
     // user code via Display.getProperty("cn1.iosStatusBarTap.*") in
@@ -448,6 +481,48 @@ public final class IOSNative {
     native void cn1CameraResume(long sessionPeer);
     native void cn1CameraClose(long sessionPeer);
 
+    // ---------------------------------------------------------------------
+    // Portable 3D API (com.codename1.gpu) Metal backend. Backed by CN1GL3D.m.
+    // Buffers are created over SIMD aligned Java arrays so Metal can wrap them
+    // with newBufferWithBytesNoCopy (zero copy) where possible. Handles are the
+    // corresponding Objective-C / Metal object pointers cast to long.
+    // ---------------------------------------------------------------------
+
+    // Creates the native Metal 3D context hosting an MTKView; returns a context
+    // handle (CN1GL3D pointer cast to long) or 0 if Metal is unavailable.
+    native long gl3dCreateContext();
+    // Returns the UIView peer handle for the context's MTKView, hosted as a
+    // NativeIPhoneView peer.
+    native long gl3dGetViewPeer(long contextPeer);
+    native void gl3dDestroyContext(long contextPeer);
+    native void gl3dSetContinuous(long contextPeer, boolean continuous);
+    native void gl3dRequestRender(long contextPeer);
+
+    // Resource creation / update. floatCount / indexCount are element counts.
+    native long gl3dCreateFloatBuffer(float[] data, int floatCount);
+    native void gl3dUpdateFloatBuffer(long bufferPeer, float[] data, int floatCount);
+    native long gl3dCreateShortBuffer(short[] data, int indexCount);
+    native void gl3dUpdateShortBuffer(long bufferPeer, short[] data, int indexCount);
+    native long gl3dCreateTexture(int[] argb, int width, int height);
+    native void gl3dDisposeBuffer(long bufferPeer);
+    native void gl3dDisposeTexture(long texturePeer);
+    native void gl3dDisposePipeline(long pipelinePeer);
+
+    // Compiles the supplied MSL source (once) and builds a MTLRenderPipelineState
+    // for the given blend/cull/depth state. Returns the pipeline handle or 0.
+    native long gl3dGetOrCreatePipeline(long contextPeer, String key, String mslSource,
+            int blendMode, int cullMode, int depthTest, int depthWrite);
+
+    native void gl3dClear(long contextPeer, int argbColor, boolean clearColor, boolean clearDepth);
+    native void gl3dSetViewport(long contextPeer, int x, int y, int width, int height);
+
+    native void gl3dDrawIndexed(long contextPeer, long pipelinePeer, long vboPeer, int strideBytes,
+            long iboPeer, int indexCount, int primitive, float[] uniforms, int uniformFloats,
+            long texturePeer, int texFilter, int texWrap);
+    native void gl3dDrawArrays(long contextPeer, long pipelinePeer, long vboPeer, int strideBytes,
+            int vertexCount, int primitive, float[] uniforms, int uniformFloats,
+            long texturePeer, int texFilter, int texWrap);
+
     native void destroyAudioUnit(long peer);
 
     native long createAudioUnit(String path, int audioChannels, float sampleRate, float[] f);
@@ -481,6 +556,7 @@ public final class IOSNative {
     native boolean deleteContact(int id);
     
     native void dial(String phone);
+    native void requestAppStoreReview();
     native void sendSMS(String phone, String text);
 
     native void registerPush();
@@ -564,7 +640,15 @@ public final class IOSNative {
     // IOSImplementation.socialShareCallback(int, String, String) using
     // the supplied callbackId. Status: 1=SHARED_TO, 2=DISMISSED, 3=FAILED.
     native void socialShareWithCallback(String text, long imagePeer, Rectangle sourceRect, int callbackId);
-    
+
+    // Printing via UIPrintInteractionController
+    native boolean isPrintingAvailable();
+
+    // Prints the document at path and reports the outcome via
+    // IOSImplementation.printDocumentCallback(int, int, String) using
+    // the supplied callbackId. Status: 1=COMPLETED, 2=CANCELLED, 3=FAILED.
+    native void printDocument(String path, String mimeType, int callbackId);
+
     // facebook connect
     public native void facebookLogin(Object callback);
     public native boolean isFacebookLoggedIn();
@@ -584,6 +668,18 @@ public final class IOSNative {
     public native String appleSignIn(String scopes, String nonce);
     public native boolean appleSignInIsLoggedIn();
     public native void appleSignInSignOut();
+
+    // Crash protection -- see nativeSources/CN1CrashProtection.m.
+    // crashProtectionInstall() is idempotent; hooks SIGSEGV/SIGABRT/
+    // SIGBUS/SIGILL/SIGFPE/SIGPIPE/SIGTRAP plus
+    // NSSetUncaughtExceptionHandler, writes a JSON record to the
+    // documents directory before the process dies.
+    // crashProtectionLogSnapshot() returns the recent stderr/NSLog
+    // ring buffer (~32 KB cap). crashProtectionConsumePending() reads
+    // and deletes the pending-crash JSON written on a prior launch.
+    public native void crashProtectionInstall();
+    public native String crashProtectionLogSnapshot();
+    public native String crashProtectionConsumePending();
 
     // WebAuthn / passkeys --
     // ASAuthorizationPlatformPublicKeyCredentialProvider (iOS 16+).
@@ -758,6 +854,31 @@ public final class IOSNative {
     /// shared App Group user defaults. Returns a JSON string or null if there is none.
     native String getPendingSharedContent(String appGroupId);
 
+    // --- Wallet issuer-provisioning extension (PassKit) ---------------------
+    // The App Group id is read natively from the CN1WalletAppGroup Info.plist
+    // key injected by the build when ios.wallet.extension is enabled.
+
+    /// True on iOS 14+ when the CN1WalletAppGroup Info.plist key is present.
+    native boolean isWalletExtensionSupported();
+
+    /// Removes all published pass entries from the iPhone (remote=false) or
+    /// Apple Watch (remote=true) list, including their card-art files.
+    native void walletExtensionClearPassEntries(boolean remote);
+
+    /// Appends one pass entry to the shared App Group suite and writes its
+    /// card art PNG into the group container.
+    native void walletExtensionAddPassEntry(boolean remote, String identifier, String title,
+            String cardholderName, String accountSuffix, String network, String description, byte[] artPng);
+
+    /// Sets the requires-authentication flag read by the extension's status callback.
+    native void walletExtensionSetRequiresAuthentication(boolean requiresAuthentication);
+
+    /// Stores the auth token forwarded to the issuer endpoint; null removes it.
+    native void walletExtensionSetAuthToken(String token);
+
+    /// Clears all wallet extension data from the App Group.
+    native void walletExtensionClear();
+
     // --- Biometrics (LocalAuthentication.framework) -------------------------
 
     /** True when LAContext.canEvaluatePolicy(deviceOwnerAuthenticationWithBiometrics) succeeds. */
@@ -779,6 +900,49 @@ public final class IOSNative {
 
     /** Invalidates the LAContext so the in-flight prompt resolves with LAErrorAppCancel. */
     native void stopBiometricAuthentication();
+
+    // --- App Attest (DeviceCheck.framework) ---------------------------------
+
+    /** True when {@code DCAppAttestService.sharedService.isSupported} on this device. */
+    native boolean isAppAttestSupported();
+
+    /**
+     * Generates/uses an App Attest hardware key and produces an attestation bound
+     * to the SHA-256 of {@code nonce}. Native code calls back into
+     * {@code IOSDeviceIntegrity.nativeAttestSuccess(int, String)} or
+     * {@code IOSDeviceIntegrity.nativeAttestError(int, String)} with the same
+     * requestId. The success token is {@code base64(keyId):base64(attestationObject)}
+     * for the backend to verify with Apple.
+     */
+    native void requestAppAttestToken(int requestId, String nonce);
+
+    // --- CarPlay (CarPlay.framework) ----------------------------------------
+    // All gated natively by CN1_USE_CARPLAY (the build flips it on when the app references
+    // com.codename1.car). When the define is off these compile to harmless stubs so the symbols
+    // always resolve. The Java side (IOSCarBridge) describes each CarTemplate as a compact JSON
+    // string; native (CodenameOne_CarPlaySceneDelegate) parses it and builds the CPTemplate tree.
+
+    /** True while a CarPlay head unit is connected and the interface controller is live. */
+    native boolean isCarPlayConnected();
+
+    /**
+     * Renders the supplied template description on the CarPlay interface controller. When
+     * {@code isRoot} is true it becomes the root template, otherwise it is pushed onto the stack.
+     * {@code screenId} ties native selection callbacks back to the originating CarScreen.
+     */
+    native void carPlaySetTemplate(int screenId, String json, boolean isRoot);
+
+    /** Pops the top CarPlay template (returns to the previous screen). */
+    native void carPlayPopTemplate();
+
+    /** Rebuilds the template for an already-pushed screen in place (CarScreen.invalidate()). */
+    native void carPlayUpdateTemplate(int screenId, String json);
+
+    /** Registers a PNG image referenced by {@code key} in a subsequent template JSON. */
+    native void carPlayRegisterImage(String key, byte[] png);
+
+    /** Shows a transient CarPlay alert/banner with the supplied message for {@code seconds}. */
+    native void carPlayShowToast(String message, int seconds);
 
     // --- Secure storage (Security.framework keychain) -----------------------
 

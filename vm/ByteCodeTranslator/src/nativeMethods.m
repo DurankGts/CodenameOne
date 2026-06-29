@@ -808,7 +808,14 @@ JAVA_VOID java_lang_System_arraycopy___java_lang_Object_int_java_lang_Object_int
     }
     struct clazz* cls = (*srcArr).__codenameOneParentClsReference;
     int byteSize = byteSizeForArray(cls);
-    memcpy( (*dstArr).data + (dstOffset * byteSize), (*srcArr).data  + (srcOffset * byteSize), length * byteSize);
+    /* java.lang.System.arraycopy is contractually overlap-safe (the spec defines
+     * it as if copying via a temporary), and callers such as ArrayList.remove
+     * shift elements within a single array (overlapping src/dst). memcpy is
+     * undefined behaviour on overlap: x86-64's implementation happens to tolerate
+     * the downward shift, but AArch64's optimized memcpy corrupts it (observed as
+     * heap corruption on the arm64 clean target). memmove is the correct,
+     * overlap-safe primitive. */
+    memmove( (*dstArr).data + (dstOffset * byteSize), (*srcArr).data  + (srcOffset * byteSize), length * byteSize);
 }
 
 JAVA_LONG java_lang_System_currentTimeMillis___R_long(CODENAME_ONE_THREAD_STATE) {
@@ -902,10 +909,13 @@ JAVA_OBJECT java_lang_Double_toStringImpl___double_boolean_R_java_lang_String(CO
     // No leading zeroes in positive exponents.
     // No trailing zeroes in decimal portion.
     int j=0;
-    int i=32;
+    // Process only the actual formatted length, not the uninitialized buffer tail
+    // (see the matching note in the Float variant below): walking the garbage past
+    // the snprintf'd string can push `j` past the end of s2[32] and smash the stack.
+    int i = (int) strlen(s);
     char s2[32];
     BOOL inside=NO;
-    while (i-->0 && j < 32){
+    while (i-->0 && j < 30){
         if (inside){
             if (s[i]=='.'){
                 s2[j++]='0';
@@ -914,7 +924,7 @@ JAVA_OBJECT java_lang_Double_toStringImpl___double_boolean_R_java_lang_String(CO
                 inside=NO;
                 s2[j++]=s[i];
             }
-            
+
         } else {
             if (s[i]=='E'){
                 inside=YES;
@@ -923,7 +933,7 @@ JAVA_OBJECT java_lang_Double_toStringImpl___double_boolean_R_java_lang_String(CO
                 // If a positive exponent, we don't need leading zeroes in
                 // the exponent
                 while (s2[--j]=='0'){
-                    
+
                 }
                 j++;
                 continue;
@@ -947,19 +957,27 @@ JAVA_OBJECT java_lang_Double_toStringImpl___double_boolean_R_java_lang_String(CO
 JAVA_OBJECT java_lang_Float_toStringImpl___float_boolean_R_java_lang_String(CODENAME_ONE_THREAD_STATE, JAVA_FLOAT d, JAVA_BOOLEAN b) {
     char s[32];
     if ( !b ){
-        sprintf(s, "%f", d);
+        snprintf(s, 32, "%f", d);
     } else {
-        sprintf(s, "%1.20E", d);
+        snprintf(s, 32, "%1.20E", d);
     }
     // We need to match the format of Java spec.  That includes:
     // No "+" for positive exponent.
     // No leading zeroes in positive exponents.
     // No trailing zeroes in decimal portion.
     int j=0;
-    int i=32;
+    // Start the reversal at the actual formatted length, NOT the full 32-byte
+    // buffer: the bytes past the snprintf'd string are uninitialized stack, and
+    // walking them feeds garbage into the loop below -- each iteration can do up to
+    // two `s2[j++]` writes, so a non-'0' tail pushes `j` past the end of s2[32] and
+    // smashes the stack (a top-of-loop `j < 32` guard cannot stop a 2-wide write).
+    // glibc/musl don't zero this region, so on the Linux clean target this
+    // overflowed reliably (formatting a derived font size). Processing only strlen(s)
+    // is both safe and what the algorithm always intended.
+    int i = (int) strlen(s);
     char s2[32];
     BOOL inside=NO;
-    while (i-->0){
+    while (i-->0 && j < 30){
         if (inside){
             if (s[i]=='.'){
                 s2[j++]='0';
@@ -1444,38 +1462,47 @@ JAVA_VOID java_lang_System_exit___int(CODENAME_ONE_THREAD_STATE, JAVA_INT i) {
 
 JAVA_VOID monitorEnter(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT obj) {
     int err = 0;
-    // we need to synchronize the mutex initialization since there might be a race condition here
-    if(!obj->__codenameOneThreadData) {
-        // double locking to avoid race condition and improve performance
+    // Double-checked locking for the lazily allocated per-object monitor. The fast-path
+    // read MUST be an acquire load and the publishing store (inside the critical section)
+    // MUST be a release store: otherwise a second thread can observe the
+    // __codenameOneThreadData pointer the instant malloc() returns -- before
+    // pthread_mutex_init() has run on it -- and then pthread_mutex_lock() an
+    // uninitialized mutex. On ARM's weak memory model that hangs forever (observed as the
+    // EDT wedged in monitorEnter while logging an exception, which freezes the whole app).
+    // Build the struct fully, init its mutex/condition, and only then publish the pointer.
+    struct CN1ThreadData* data = (struct CN1ThreadData*)__atomic_load_n(&obj->__codenameOneThreadData, __ATOMIC_ACQUIRE);
+    if(!data) {
         lockCriticalSection();
-        if(!obj->__codenameOneThreadData) {
-            obj->__codenameOneThreadData = malloc(sizeof(struct CN1ThreadData));
-            memset(obj->__codenameOneThreadData, 0, sizeof(struct CN1ThreadData));
-            pthread_mutex_init(&((struct CN1ThreadData*)obj->__codenameOneThreadData)->__codenameOneMutex, NULL);
-            pthread_cond_init(&((struct CN1ThreadData*)obj->__codenameOneThreadData)->__codenameOneCondition, NULL);
+        data = (struct CN1ThreadData*)obj->__codenameOneThreadData;
+        if(!data) {
+            data = malloc(sizeof(struct CN1ThreadData));
+            memset(data, 0, sizeof(struct CN1ThreadData));
+            pthread_mutex_init(&data->__codenameOneMutex, NULL);
+            pthread_cond_init(&data->__codenameOneCondition, NULL);
+            __atomic_store_n(&obj->__codenameOneThreadData, data, __ATOMIC_RELEASE);
         }
         unlockCriticalSection();
-        err = pthread_mutex_lock(&((struct CN1ThreadData*)obj->__codenameOneThreadData)->__codenameOneMutex);
-        ((struct CN1ThreadData*)obj->__codenameOneThreadData)->ownerThread = threadStateData->threadId;
-        ((struct CN1ThreadData*)obj->__codenameOneThreadData)->counter++;
+        err = pthread_mutex_lock(&data->__codenameOneMutex);
+        data->ownerThread = threadStateData->threadId;
+        data->counter++;
     } else {
         JAVA_LONG own = threadStateData->threadId;
-        JAVA_LONG currentlyHeldBy = ((struct CN1ThreadData*)obj->__codenameOneThreadData)->ownerThread;
-        
+        JAVA_LONG currentlyHeldBy = data->ownerThread;
+
         // we already own the lock...
         if(currentlyHeldBy == own) {
-            ((struct CN1ThreadData*)obj->__codenameOneThreadData)->counter++;
+            data->counter++;
             return;
         }
         threadStateData->threadActive = JAVA_FALSE;
-        err = pthread_mutex_lock(&((struct CN1ThreadData*)obj->__codenameOneThreadData)->__codenameOneMutex);
-        ((struct CN1ThreadData*)obj->__codenameOneThreadData)->counter++;
-        ((struct CN1ThreadData*)obj->__codenameOneThreadData)->ownerThread = own;
+        err = pthread_mutex_lock(&data->__codenameOneMutex);
+        data->counter++;
+        data->ownerThread = own;
         while (threadStateData->threadBlockedByGC) {
             usleep(100);
         }
         threadStateData->threadActive = JAVA_TRUE;
-        
+
 
     }
     //printf("Locking mutex %i started from %@", (int)obj->__codenameOneMutex, [NSThread callStackSymbols]);
@@ -1690,6 +1717,14 @@ JAVA_VOID java_lang_Thread_start__(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT th) {
 	// fixes the "error 35" problem that occurred after a 
 	// finite number of threads. [ddyer 5/2017]
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+#if defined(__linux__) && !defined(__ANDROID__)
+    // musl's default thread stack is only 128KB (glibc defaults to 8MB). ParparVM's
+    // recursive C interpreter painting a deep component tree (e.g. a Replace/Fade
+    // transition) easily overflows 128KB, corrupting the thread stack and crashing
+    // at a varying site. Pin a JVM-sized 16MB stack so CN1 threads behave the same
+    // as on every other port regardless of the linked libc.
+    pthread_attr_setstacksize(&attr, 16 * 1024 * 1024);
+#endif
     int rc = pthread_create(&pt, &attr, threadRunner, (void *)th);
     if (rc != 0) {
         printf("ERROR creating thread. Return code: %i", rc);

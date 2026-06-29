@@ -49,7 +49,12 @@
 #import "RadialGradientPaint.h"
 #import "CN1UITextView.h"
 #import "CN1UITextField.h"
+#if !TARGET_OS_WATCH
 #import <AudioToolbox/AudioToolbox.h>
+#else
+#import "CN1WatchHost.h"
+#import "CN1WatchRenderingView.h"
+#endif
 #import "DrawGradientTextureCache.h"
 #import "DrawStringTextureCache.h"
 #import <CoreLocation/CoreLocation.h>
@@ -81,6 +86,112 @@
 
 
 //#define CN1_USE_SPLASH_SCREEN
+//#define CN1_DISABLE_LAUNCH_PLACEHOLDER
+
+// Launch placeholder: covers the GL/Metal layer from the moment the window
+// becomes key until the EDT presents its first content frame. The window's
+// first Core Animation commit happens long before Display.init and the first
+// form paint, so without this the system launch screen is replaced by a black
+// surface for a noticeable moment (issue #5210). The placeholder mirrors the
+// default launch storyboard -- Launch.Foreground.png centered at natural
+// size -- over a background that tracks light/dark mode, then fades out when
+// drawFrame presents the first frame that actually executed draw ops.
+// Opt out with the ios.launchPlaceholder=false build hint.
+#if !TARGET_OS_WATCH
+static UIView *cn1LaunchPlaceholderView = nil;
+static BOOL cn1LaunchPlaceholderDone = NO;
+
+void CN1DismissLaunchPlaceholder(void) {
+    cn1LaunchPlaceholderDone = YES;
+    if (cn1LaunchPlaceholderView == nil) {
+        return;
+    }
+    UIView *placeholder = cn1LaunchPlaceholderView;
+    cn1LaunchPlaceholderView = nil;
+    [UIView animateWithDuration:0.15 animations:^{
+        placeholder.alpha = 0;
+    } completion:^(BOOL finished) {
+        [placeholder removeFromSuperview];
+#ifndef CN1_USE_ARC
+        [placeholder release];
+#endif
+    }];
+}
+#else
+void CN1DismissLaunchPlaceholder(void) {
+}
+#endif
+
+#if !TARGET_OS_WATCH
+void CN1ShowLaunchPlaceholder(UIWindow *window) {
+#if defined(CN1_DISABLE_LAUNCH_PLACEHOLDER) || defined(CN1_USE_SPLASH_SCREEN) || TARGET_OS_MACCATALYST
+    // A Mac window appears instantly, and CN1_USE_SPLASH_SCREEN draws its own
+    // splash directly into the GL surface; in both cases the placeholder
+    // would only hide content.
+#else
+    if (cn1LaunchPlaceholderDone || cn1LaunchPlaceholderView != nil || window == nil) {
+        return;
+    }
+    UIView *placeholder = [[UIView alloc] initWithFrame:window.bounds];
+    placeholder.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    placeholder.userInteractionEnabled = NO;
+    if (@available(iOS 13.0, *)) {
+#if TARGET_OS_TV
+        placeholder.backgroundColor = [UIColor whiteColor];
+#else
+        placeholder.backgroundColor = [UIColor systemBackgroundColor];
+#endif
+    } else {
+        placeholder.backgroundColor = [UIColor whiteColor];
+    }
+    // Prefer the image the launch storyboard shows, rendered the same way
+    // (centered at natural size, matching its contentMode=center image view)
+    // so the handoff from the system launch screen is seamless. Fall back to
+    // the primary app icon when it isn't bundled, e.g. a custom storyboard.
+    UIImage *icon = [UIImage imageNamed:@"Launch.Foreground.png"];
+    BOOL isRawIcon = NO;
+    if (icon == nil) {
+        NSDictionary *icons = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleIcons"];
+        NSArray *iconFiles = [[icons objectForKey:@"CFBundlePrimaryIcon"] objectForKey:@"CFBundleIconFiles"];
+        if ([iconFiles isKindOfClass:[NSArray class]] && [iconFiles count] > 0) {
+            icon = [UIImage imageNamed:(NSString*)[iconFiles lastObject]];
+        }
+        isRawIcon = YES;
+    }
+    if (icon != nil) {
+        UIImageView *iconView = [[UIImageView alloc] initWithImage:icon];
+        if (isRawIcon) {
+            // Bundle icons are square PNGs without the home-screen mask;
+            // round them so the placeholder reads as "the app icon".
+            CGFloat side = MIN(icon.size.width, icon.size.height);
+            side = MIN(side, (CGFloat)152);
+            iconView.frame = CGRectMake(0, 0, side, side);
+            iconView.contentMode = UIViewContentModeScaleAspectFill;
+            iconView.layer.cornerRadius = side * 0.2237f;
+            iconView.layer.masksToBounds = YES;
+            if (@available(iOS 13.0, *)) {
+                iconView.layer.cornerCurve = kCACornerCurveContinuous;
+            }
+        }
+        iconView.center = CGPointMake(CGRectGetMidX(placeholder.bounds), CGRectGetMidY(placeholder.bounds));
+        iconView.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin
+                | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
+        [placeholder addSubview:iconView];
+#ifndef CN1_USE_ARC
+        [iconView release];
+#endif
+    }
+    [window addSubview:placeholder];
+    // the static keeps ownership; released when the dismissal fade completes
+    cn1LaunchPlaceholderView = placeholder;
+    // Safety net: if the first frame never presents (EDT wedged before the
+    // first paint) drop the placeholder rather than masking the app forever.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        CN1DismissLaunchPlaceholder();
+    });
+#endif
+}
+#endif
 
 // Last touch positions.  Helpful to know on the iPad when some popover stuff
 // needs a source rect that the java API doesn't pass through.
@@ -149,6 +260,7 @@ JAVA_INT getSafeTop() {
     return safeTop;
 }
 
+#if !TARGET_OS_WATCH
 UIView *editingComponent;
 
 // Currently used only for datepicker but could be used for
@@ -156,6 +268,7 @@ UIView *editingComponent;
 // so that it can be resized and manipulated as necessary
 // on things like orientation changes.
 UIView *currentActionSheet;
+#endif
 
 float editCompoentX, editCompoentY, editCompoentW, editCompoentH;
 int editComponentPadTop, editComponentPadLeft;
@@ -164,6 +277,7 @@ BOOL retinaBug;
 float scaleValue = 1;
 extern BOOL isAppSuspended;
 
+#if !TARGET_OS_WATCH
 static void updateDisplayMetricsFromView(UIView *view) {
     if (view == nil) {
         return;
@@ -171,6 +285,7 @@ static void updateDisplayMetricsFromView(UIView *view) {
     displayWidth = (int)(view.bounds.size.width * scaleValue);
     displayHeight = (int)(view.bounds.size.height * scaleValue);
 }
+#endif
 
 // On iPad with UIScene, view.bounds (and even window.bounds) can transiently
 // be in the snapshot orientation between sceneDidEnterBackground and the
@@ -179,14 +294,12 @@ static void updateDisplayMetricsFromView(UIView *view) {
 // swap the dimensions if they contradict it. Without this, sampling bounds
 // during the foreground transition publishes a swapped-dimension
 // screenSizeChanged event between stop and start (issue #4767).
+#if !TARGET_OS_WATCH
 static CGSize cn1OrientationCorrectSize(UIView *view) {
     CGSize size = view.bounds.size;
-#if TARGET_OS_MACCATALYST
+#if TARGET_OS_MACCATALYST || TARGET_OS_TV
     // Mac Catalyst windows are user-resizable and don't have a true device
-    // orientation; the scene's interfaceOrientation is hard-coded to portrait
-    // even when the window is landscape, which would trip the swap logic
-    // below and publish the swapped size to the EDT. Trust the view bounds
-    // as-is on Mac.
+    // orientation; tvOS likewise has no device orientation. Trust the view bounds.
     return size;
 #else
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 130000
@@ -207,6 +320,7 @@ static CGSize cn1OrientationCorrectSize(UIView *view) {
     return size;
 #endif
 }
+#endif
 BOOL forceSlideUpField;
 
 // UIScrollView subclass used solely to receive the status-bar tap
@@ -225,6 +339,7 @@ BOOL forceSlideUpField;
 // layoutSubviews keeps contentSize one point larger than the bounds so the
 // "must be scrollable" check passes regardless of how the strip resizes
 // on rotation / safe-area changes.
+#if !TARGET_OS_WATCH
 @interface CN1StatusBarTapProxyView : UIScrollView
 @end
 @implementation CN1StatusBarTapProxyView
@@ -239,8 +354,13 @@ BOOL forceSlideUpField;
     }
 }
 @end
+#endif
 
+#if !TARGET_OS_WATCH
 static CN1StatusBarTapProxyView *cn1StatusBarTapProxy = nil;
+#else
+static id cn1StatusBarTapProxy = nil;
+#endif
 
 // Diagnostic counters for the status-bar tap-to-scroll-to-top path. Exposed
 // to Java via Display.getProperty("cn1.iosStatusBarTap.*") so users can
@@ -257,7 +377,11 @@ double cn1GetStatusBarTapLastEpochMillis() { return cn1StatusBarTapLastEpochMill
 int cn1GetStatusBarTapLastX() { return cn1StatusBarTapLastX; }
 int cn1GetStatusBarTapLastY() { return cn1StatusBarTapLastY; }
 BOOL cn1IsStatusBarTapProxyInstalled() {
+#if TARGET_OS_WATCH
+    return NO;
+#else
     return cn1StatusBarTapProxy != nil && cn1StatusBarTapProxy.superview != nil;
+#endif
 }
 
 // Forward declarations -- the actual definitions of pointerPressedC and
@@ -282,6 +406,7 @@ void cn1FireStatusBarTap() {
     // Toolbar.initTitleBarStatus creates, so its pointer-released listener
     // (which scrolls the form to top) actually fires.
     CGFloat statusBarPoints = 22.0;
+#if !TARGET_OS_WATCH
     if (cn1StatusBarTapProxy != nil && cn1StatusBarTapProxy.window != nil) {
         if (@available(iOS 11.0, *)) {
             CGFloat top = cn1StatusBarTapProxy.window.safeAreaInsets.top;
@@ -290,6 +415,7 @@ void cn1FireStatusBarTap() {
             }
         }
     }
+#endif
     // scaleValue is the device pixel scale (1, 2, 3 on iOS); displayWidth
     // is already in native pixels, so multiply points by scaleValue to
     // stay in the same coordinate system.
@@ -312,11 +438,13 @@ void cn1FireStatusBarTap() {
     // viewDidAppear re-pins it -- the "scroll-to-top only works once per Form"
     // bug (#5163). Bouncing the reset to the next main-queue turn lets UIKit
     // finish the gesture first so the (0,1) re-arm actually sticks.
+#if !TARGET_OS_WATCH
     dispatch_async(dispatch_get_main_queue(), ^{
         if (cn1StatusBarTapProxy != nil) {
             cn1StatusBarTapProxy.contentOffset = CGPointMake(0, 1);
         }
     });
+#endif
 }
 
 
@@ -385,6 +513,7 @@ extern void pointerHoverReleasedNative(int x, int y);
 // Translate a UIKey from a hardware keyboard into the integer the framework
 // expects: a negative sentinel for non-printable keys, a unicode codepoint for
 // printable characters, or 0 if we don't recognize the key.
+#if !TARGET_OS_WATCH
 static int cn1MapUIKeyToKeyCode(UIKey *key) API_AVAILABLE(ios(13.4)) {
     switch (key.keyCode) {
         case UIKeyboardHIDUsageKeyboardReturnOrEnter:
@@ -443,6 +572,7 @@ static int cn1MapUIKeyToKeyCode(UIKey *key) API_AVAILABLE(ios(13.4)) {
         }
     }
 }
+#endif
 
 void pointerPressedC(int* x, int* y, int length) {
     //CN1Log(@"pointerPressedC started");
@@ -494,10 +624,18 @@ void Java_com_codename1_impl_ios_IOSImplementation_setImageName(void* nativeImag
 }
 
 int isIPad() {
+#if TARGET_OS_WATCH
+    return 0;
+#else
     return UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad;
+#endif
 }
 
+#if TARGET_OS_WATCH
+#define SYSTEM_VERSION_LESS_THAN(v)                 (NO)
+#else
 #define SYSTEM_VERSION_LESS_THAN(v)                 ([[[UIDevice currentDevice] systemVersion] compare:v options:NSNumericSearch] == NSOrderedAscending)
+#endif
 
 int cn1IsIOS8 = -1;
 int cn1IsIOS8_2 = -1;
@@ -526,16 +664,20 @@ BOOL isVKBAlwaysOpen() {
     if(vkbAlwaysOpen) {
         if(isIOS8() && !isIPad() && displayWidth > displayHeight) {
             return NO;
-        } else if (!isIOS8() && !isIPad() && ([[UIApplication sharedApplication] statusBarOrientation] == UIInterfaceOrientationLandscapeLeft || [[UIApplication sharedApplication] statusBarOrientation] == UIInterfaceOrientationLandscapeRight)) {
+        }
+#if !TARGET_OS_WATCH && !TARGET_OS_TV
+        else if (!isIOS8() && !isIPad() && ([[UIApplication sharedApplication] statusBarOrientation] == UIInterfaceOrientationLandscapeLeft || [[UIApplication sharedApplication] statusBarOrientation] == UIInterfaceOrientationLandscapeRight)) {
             // iOS 7 needs a more specific check to find out if we are in landscape mode
             return NO;
         }
+#endif
         return YES;
     }
     return NO;
 }
 
 
+#if !TARGET_OS_WATCH
 void cn1_setStyleDoneButton(CN1_THREAD_STATE_MULTI_ARG UIBarButtonItem* btn) {
     enteringNativeAllocations();
     JAVA_OBJECT d = com_codename1_ui_Display_getInstance__(threadStateData);
@@ -548,12 +690,14 @@ void cn1_setStyleDoneButton(CN1_THREAD_STATE_MULTI_ARG UIBarButtonItem* btn) {
     }
     finishedNativeAllocations();
 }
+#endif
 
 
 void Java_com_codename1_impl_ios_IOSImplementation_editStringAtImpl
 (CN1_THREAD_STATE_MULTI_ARG int x, int y, int w, int h, void* font, int isSingleLine, int rows, int maxSize,
  int constraint, const char* str, int len, BOOL forceSlideUp,
  int color, JAVA_LONG imagePeer, int padTop, int padBottom, int padLeft, int padRight, NSString* hintString, int hintColor, BOOL showToolbar, BOOL blockCopyPaste, int alignment, int verticalAlignment, BOOL returnExitsEditing) {
+#if !TARGET_OS_WATCH
     // don't show toolbar in iOS 8 in landscape since there is just no room for that...
     if(isIOS8() && displayHeight < displayWidth) {
         showToolbar = NO;
@@ -719,6 +863,7 @@ void Java_com_codename1_impl_ios_IOSImplementation_editStringAtImpl
                  || utf.keyboardType == UIKeyboardTypeNumberPad
                  || (utf.returnKeyType == UIReturnKeyNext && isVKBAlwaysOpen())) && !isIPad()) {
                 //add navigation toolbar to the top of the keyboard
+#if !TARGET_OS_TV
                 if(showToolbar) {
 #ifndef CN1_USE_ARC
                     UIToolbar *toolbar = [[[UIToolbar alloc] init] autorelease];
@@ -790,6 +935,7 @@ void Java_com_codename1_impl_ios_IOSImplementation_editStringAtImpl
                     [toolbar setItems:itemsArray];
                     [utf setInputAccessoryView:toolbar];
                 }
+#endif
             }
         } else {
             CN1UITextView* utv = [[CN1UITextView alloc] initWithFrame:rect];
@@ -800,7 +946,11 @@ void Java_com_codename1_impl_ios_IOSImplementation_editStringAtImpl
             // scrollViewShouldScrollToTop: when exactly one scroll view has
             // scrollsToTop=YES, and UITextView's internal scroll view defaults
             // to YES.
+            #if !TARGET_OS_TV
+            #if !TARGET_OS_TV
             utv.scrollsToTop = NO;
+            #endif
+            #endif
             [utv setBackgroundColor:[UIColor clearColor]];
             [utv.layer setBorderColor:[[UIColor clearColor] CGColor]];
             [utv.layer setBorderWidth:0];
@@ -897,6 +1047,7 @@ void Java_com_codename1_impl_ios_IOSImplementation_editStringAtImpl
                 }
             }
             
+#if !TARGET_OS_TV
             if(showToolbar) {
                 //add navigation toolbar to the top of the keyboard
 #ifndef CN1_USE_ARC
@@ -950,6 +1101,7 @@ void Java_com_codename1_impl_ios_IOSImplementation_editStringAtImpl
                 [toolbar setItems:itemsArray];
                 [utv setInputAccessoryView:toolbar];
             }
+#endif
         }
         editingComponent.opaque = NO;
         [[CodenameOne_GLViewController instance].view addSubview:editingComponent];
@@ -958,19 +1110,28 @@ void Java_com_codename1_impl_ios_IOSImplementation_editStringAtImpl
         [editingComponent setNeedsDisplay];
         
     });
+#endif
     //CN1Log(@"Java_com_codename1_impl_ios_IOSImplementation_editStringAtImpl finished");
 }
 
 
 BOOL isRetinaBug() {
+#if TARGET_OS_WATCH
+    return NO;
+#else
     return isIPad() && [[UIScreen mainScreen] scale] == 2 && SYSTEM_VERSION_LESS_THAN(@"6.0");
+#endif
 }
 
 BOOL isRetina() {
+#if TARGET_OS_WATCH
+    return YES;
+#else
     if([[UIScreen mainScreen] scale] > 1) {
         return !isRetinaBug();
     }
     return NO;
+#endif
 }
 
 BOOL isIOS7() {
@@ -1489,6 +1650,7 @@ void com_codename1_impl_ios_IOSImplementation_nativeSetTransformMutableImpl___fl
         a2, b2, c2, d2,
         a3, b3, c3, d3
     } };
+#if !TARGET_OS_WATCH
     CATransform3D output;
     GLfloat glMatrix[16];
     CGFloat caMatrix[16];
@@ -1503,6 +1665,18 @@ void com_codename1_impl_ios_IOSImplementation_nativeSetTransformMutableImpl___fl
         currentMutableTransform = affine;
         currentMutableTransformSet = YES;
     }
+#else
+    // watchOS: build the 2D affine submatrix directly (same components
+    // CATransform3DGetAffineTransform would extract: a=m11,b=m12,c=m21,d=m22,
+    // tx=m41,ty=m42 of the column-major matrix). Without this the mutable-image
+    // transform was never applied on watch -> rotate/translate/perspective did
+    // nothing on the "image" graphics variants.
+    CGAffineTransform affine = CGAffineTransformMake(a0, b0, a1, b1, a3, b3);
+    if (!CGAffineTransformIsIdentity(affine)) {
+        currentMutableTransform = affine;
+        currentMutableTransformSet = YES;
+    }
+#endif
     POOL_END();
 #endif
 }
@@ -1727,14 +1901,25 @@ int Java_com_codename1_impl_ios_IOSImplementation_stringWidthNativeImpl
     //CN1Log(@"String is %@", s);
     //CN1Log(@"Font is %i", (int)f);
     //CN1Log(@"Java_com_codename1_impl_ios_IOSImplementation_stringWidthNativeImpl finished");
+#if TARGET_OS_WATCH || TARGET_OS_TV
+    if (s == nil) { return 0; }
+    if (f == nil) { f = [UIFont systemFontOfSize:16.0]; }
+    return (int)[s sizeWithAttributes:@{NSFontAttributeName: f}].width;
+#else
     return (int)[s sizeWithFont:f].width;
+#endif
 }
 
 
 int Java_com_codename1_impl_ios_IOSImplementation_charWidthNativeImpl
 (void* peer, int chr) {
     UIFont* f = (BRIDGE_CAST UIFont*)peer;
+#if TARGET_OS_WATCH || TARGET_OS_TV
+    if (f == nil) { f = [UIFont systemFontOfSize:16.0]; }
+    return [[NSString stringWithCharacters:((const unichar *)&chr) length:1] sizeWithAttributes:@{NSFontAttributeName: f}].width;
+#else
     return [[NSString stringWithCharacters:((const unichar *)&chr) length:1] sizeWithFont:f].width;
+#endif
 }
 
 
@@ -1757,7 +1942,9 @@ int Java_com_codename1_impl_ios_IOSImplementation_getFontDescentNativeImpl
 }
 
 void vibrateDevice() {
+#if !TARGET_OS_WATCH
     AudioServicesPlayAlertSound(kSystemSoundID_Vibrate);
+#endif
 }
 
 void* Java_com_codename1_impl_ios_IOSImplementation_createSystemFontImpl
@@ -1811,6 +1998,14 @@ void* Java_com_codename1_impl_ios_IOSImplementation_createSystemFontImpl
  * Signature: ()I
  */
 int Java_com_codename1_impl_ios_IOSImplementation_getDisplayWidthImpl() {
+#if TARGET_OS_WATCH
+    // No UIView metrics on watchOS; the CG surface is the source of truth.
+    // scaleValue is 1 on the watch slice, so logical points == CN1 pixels.
+    CN1WatchRenderingView *v = [CN1WatchHost sharedHost].renderingView;
+    if (v != nil && [v logicalWidth] > 0) {
+        return [v logicalWidth];
+    }
+#endif
     return displayWidth;
 }
 
@@ -1822,6 +2017,12 @@ int Java_com_codename1_impl_ios_IOSImplementation_getDisplayWidthImpl() {
 int
 Java_com_codename1_impl_ios_IOSImplementation_getDisplayHeightImpl() {
     //GET_DIPLAY_HEIGHT_MARKER
+#if TARGET_OS_WATCH
+    CN1WatchRenderingView *v = [CN1WatchHost sharedHost].renderingView;
+    if (v != nil && [v logicalHeight] > 0) {
+        return [v logicalHeight];
+    }
+#endif
     return displayHeight;
 }
 
@@ -2157,7 +2358,34 @@ void Java_com_codename1_impl_ios_IOSImplementation_nativeDrawStringMutableImpl
     }
 #endif
     //CN1Log(@"Java_com_codename1_impl_ios_IOSImplementation_nativeDrawStringMutableImpl started");
+#if TARGET_OS_WATCH
+    // On watch the instance's drawString enqueues a SCREEN op; for the mutable
+    // image we must draw straight into the active UIGraphics image context
+    // (set up by startDrawingOnImageImpl) or the text never lands in the image.
+    {
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        if (context == NULL) { return; }
+        UIFont *f = (BRIDGE_CAST UIFont*)fontPeer;
+        if (f == nil) { f = [UIFont systemFontOfSize:16.0]; }
+        if (str == nil) { return; }
+        CGContextSaveGState(context);
+        if (currentMutableTransformSet) {
+            CGContextConcatCTM(context, currentMutableTransform);
+        }
+        CGFloat rr = ((color >> 16) & 0xff) / 255.0;
+        CGFloat gg = ((color >> 8) & 0xff) / 255.0;
+        CGFloat bb = (color & 0xff) / 255.0;
+        NSDictionary *attrs = @{
+            NSFontAttributeName : f,
+            NSForegroundColorAttributeName : [UIColor colorWithRed:rr green:gg blue:bb alpha:alpha / 255.0]
+        };
+        [str drawAtPoint:CGPointMake(x, y) withAttributes:attrs];
+        CGContextRestoreGState(context);
+    }
+    return;
+#else
     [[CodenameOne_GLViewController instance] drawString:color alpha:alpha font:(BRIDGE_CAST UIFont*)fontPeer str:str x:x y:y];
+#endif
     //CN1Log(@"Java_com_codename1_impl_ios_IOSImplementation_nativeDrawStringMutableImpl finished");
 }
 
@@ -2428,6 +2656,7 @@ enum {
     NUM_ATTRIBUTES
 };
 
+#if !TARGET_OS_WATCH
 @interface CodenameOne_GLViewController ()
 @property (nonatomic, retain) EAGLContext *context;
 @property (nonatomic, assign) CADisplayLink *displayLink;
@@ -2453,8 +2682,10 @@ static CodenameOne_GLViewController *sharedSingleton;
     return currentMutableTransform;
 }
 
-#if defined(CN1_USE_METAL) && TARGET_OS_MACCATALYST
+#if defined(CN1_USE_METAL) && (TARGET_OS_MACCATALYST || TARGET_OS_TV)
 // On Mac Catalyst the iOS XIB never compiles (IBAgent-macOS-UIKit crashes
+// on it under Xcode 26) and on tvOS the iOS XIBs are excluded from the bundle
+// entirely (TvNativeBuilder), so both pass nil to initWithNibName: and the
 // on it under Xcode 26), so CodenameOne_GLAppDelegate.m passes nil to
 // initWithNibName: and the default loadView would hand us a plain
 // UIView. The rendering pipeline expects [eaglView] to find a METALView
@@ -2594,7 +2825,11 @@ static CodenameOne_GLViewController *sharedSingleton;
     cn1StatusBarTapProxy = [[CN1StatusBarTapProxyView alloc] initWithFrame:window.bounds];
     cn1StatusBarTapProxy.delegate = self;
     cn1StatusBarTapProxy.backgroundColor = [UIColor clearColor];
+    #if !TARGET_OS_TV
+    #if !TARGET_OS_TV
     cn1StatusBarTapProxy.scrollsToTop = YES;
+    #endif
+    #endif
     // userInteractionEnabled must remain YES; iOS skips the
     // scrollViewShouldScrollToTop: dispatch for views that have it disabled.
     // Touches in the rest of the screen pass through naturally because the
@@ -2642,7 +2877,11 @@ static CodenameOne_GLViewController *sharedSingleton;
     if (statusBarHeight <= 0) {
         // Pre-iOS 11, or safe-area insets not yet populated, fall back to
         // the legacy status-bar frame.
+        #if TARGET_OS_TV
+        statusBarHeight = 0;
+        #else
         statusBarHeight = [UIApplication sharedApplication].statusBarFrame.size.height;
+        #endif
     }
     // Floor of 1pt keeps the proxy non-empty so iOS still routes
     // UIStatusBarTapAction to it when the status bar is hidden. Cap at 80pt
@@ -2904,6 +3143,7 @@ bool lockDrawing;
 // once viewDidLoad has run; only attaches on iOS 13.0+ where
 // UIHoverGestureRecognizer exists.
 - (void)cn1InstallHoverRecognizer {
+#if !TARGET_OS_TV
     if (@available(iOS 13.0, *)) {
         UIHoverGestureRecognizer *hover = [[UIHoverGestureRecognizer alloc]
                                            initWithTarget:self
@@ -2920,9 +3160,10 @@ bool lockDrawing;
         [hover release];
 #endif
     }
+#endif
 }
 
-- (void)cn1HandleHover:(UIHoverGestureRecognizer *)recognizer API_AVAILABLE(ios(13.0)) {
+- (void)cn1HandleHover:(UIGestureRecognizer *)recognizer API_AVAILABLE(ios(13.0)) {
     CGPoint p = [recognizer locationInView:self.view];
     int x = (int)(p.x * scaleValue);
     int y = (int)(p.y * scaleValue);
@@ -2950,6 +3191,7 @@ extern BOOL cn1CompareMatrices(GLKMatrix4 m1, GLKMatrix4 m2);
 #endif
 
 -(UIImage*)createSplashImage {
+#if !TARGET_OS_TV
     UIInterfaceOrientation orientation = [[UIApplication sharedApplication] statusBarOrientation];
     bool isPortrait = (orientation == UIInterfaceOrientationPortrait || orientation == UIInterfaceOrientationPortraitUpsideDown);
     
@@ -3017,6 +3259,9 @@ extern BOOL cn1CompareMatrices(GLKMatrix4 m1, GLKMatrix4 m2);
         }
     }
     return img;
+#else
+    return nil;
+#endif
 }
 
 EAGLView* lastFoundEaglView;
@@ -3142,6 +3387,8 @@ EAGLView* lastFoundEaglView;
 #endif
     //CN1Log(@"Draw texture extension %i", (int)drawTextureSupported);
     
+#if !TARGET_OS_TV
+#if !TARGET_OS_TV
     // register for keyboard notifications
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(keyboardWillShow:)
@@ -3152,17 +3399,23 @@ EAGLView* lastFoundEaglView;
                                              selector:@selector(keyboardWillHide:)
                                                  name:UIKeyboardWillHideNotification
                                                object:self.view.window];
+#endif
     
     //detect orientation by statusBarOrientation
     UIInterfaceOrientation orientation = [[UIApplication sharedApplication] statusBarOrientation];
     bool isPortrait = (orientation == UIInterfaceOrientationPortrait || orientation == UIInterfaceOrientationPortraitUpsideDown);
+#else
+    bool isPortrait = NO;
+#endif
 #ifdef CN1_USE_SPLASH_SCREEN
     UIImage *img = [self createSplashImage];
 #else
     UIImage* img = nil;
 #endif
     
+    #if !TARGET_OS_TV
     [self.view setMultipleTouchEnabled:YES];
+    #endif
     if(img != nil) {
         float scale = scaleValue;
         DrawImage* dr;
@@ -3319,7 +3572,9 @@ int keyboardHeight;
 #ifdef __IPHONE_7_0
         if (isIOS7()) {
             prefersStatusBarHidden = NO;
+            #if !TARGET_OS_TV
             [self setNeedsStatusBarAppearanceUpdate];
+            #endif
         }
 #endif
         [UIView beginAnimations:nil context:NULL];
@@ -3355,7 +3610,9 @@ BOOL prefersStatusBarHidden = NO;
     
     // get the size of the keyboard
     CGRect keyboardEndFrame;
+    #if !TARGET_OS_TV
     [[userInfo objectForKey:UIKeyboardFrameEndUserInfoKey] getValue:&keyboardEndFrame];
+    #endif
     CGRect keyboardFrame = [self.view convertRect:keyboardEndFrame fromView:nil];
     
     keyboardHeight = keyboardFrame.size.height;
@@ -3392,7 +3649,9 @@ BOOL prefersStatusBarHidden = NO;
 #ifdef __IPHONE_7_0
             if (isIOS7()) {
                 prefersStatusBarHidden = YES;
+                #if !TARGET_OS_TV
                 [self setNeedsStatusBarAppearanceUpdate];
+                #endif
             }
 #endif
             viewFrame = setOriginY(keyboardSlideOffset, viewFrame);
@@ -3782,6 +4041,7 @@ BOOL prefersStatusBarHidden = NO;
 #endif
     [[self eaglView] setFramebuffer];
     GLErrorLog;
+    BOOL drewContentOps = NO;
     if(currentTarget != nil) {
         if([currentTarget count] > 0) {
             [ClipRect setDrawRect:rect];
@@ -3838,11 +4098,17 @@ BOOL prefersStatusBarHidden = NO;
                 if (opTarget != nil && !mutableEncoderOpen) continue;
                 [ex executeWithClipping];
                 GLErrorLog;
+                if (opTarget == nil) {
+                    // Screen-targeted op: this present puts real content on
+                    // the GL layer (a drain of only mutable-image ops doesn't).
+                    drewContentOps = YES;
+                }
             }
             if (mutableEncoderOpen) {
                 CN1MetalEndMutableImageDraw(currentDrainTarget);
             }
 #else
+            drewContentOps = YES;
             for(ExecutableOp* ex in cp) {
                 [ex executeWithClipping];
                 //[ex executeWithLog];
@@ -3919,9 +4185,14 @@ BOOL prefersStatusBarHidden = NO;
         }
     }
     GLErrorLog;
-    
+
     [[self eaglView] presentFramebuffer];
     GLErrorLog;
+    if (drewContentOps && !cn1LaunchPlaceholderDone) {
+        // First frame with real content is on screen -- fade out the launch
+        // placeholder installed by cn1InstallRootViewControllerIntoWindow.
+        CN1DismissLaunchPlaceholder();
+    }
 }
 
 
@@ -4158,7 +4429,11 @@ BOOL prefersStatusBarHidden = NO;
         CGContextSaveGState(context);
         CGContextConcatCTM(context, currentMutableTransform);
     }
+#if TARGET_OS_TV
+	[str drawAtPoint:CGPointMake(x, y) withAttributes:@{NSFontAttributeName: font}];
+#else
 	[str drawAtPoint:CGPointMake(x, y) withFont:font];
+#endif
     if (currentMutableTransformSet) {
         CGContextRestoreGState(context);
     }
@@ -4400,7 +4675,11 @@ BOOL prefersStatusBarHidden = NO;
     com_codename1_impl_ios_IOSImplementation_onGeofenceExit___java_lang_String(CN1_THREAD_GET_STATE_PASS_ARG fromNSString(CN1_THREAD_GET_STATE_PASS_ARG [region identifier]));
 }
 
+#if TARGET_OS_TV
+extern id popoverController;
+#else
 extern UIPopoverController* popoverController;
+#endif
 extern int popoverSupported();
 
 #ifdef INCLUDE_PHOTOLIBRARY_USAGE
@@ -4612,6 +4891,7 @@ void cn1_addSelectedImagePath(NSString* path) {
 #endif
 #endif
 
+#if !TARGET_OS_TV
 -(void)imagePickerControllerDidCancel:(UIImagePickerController *)picker {
     //[self dismissModalViewControllerAnimated:YES];
     com_codename1_impl_ios_IOSImplementation_capturePictureResult___java_lang_String(CN1_THREAD_GET_STATE_PASS_ARG nil);
@@ -4682,6 +4962,8 @@ void cn1_addSelectedImagePath(NSString* path) {
 
 }
 
+#if !TARGET_OS_WATCH && !TARGET_OS_TV
+#endif // !TARGET_OS_TV (UIImagePickerController delegates)
 -(void) mailComposeController:(MFMailComposeViewController*)controller didFinishWithResult:(MFMailComposeResult)result error:(NSError*)error {
 	[self dismissModalViewControllerAnimated:YES];
 }
@@ -4689,6 +4971,7 @@ void cn1_addSelectedImagePath(NSString* path) {
 -(void) messageComposeViewController:(MFMessageComposeViewController*)controller didFinishWithResult:(MessageComposeResult)result {
 	[self dismissModalViewControllerAnimated:YES];
 }
+#endif // !TARGET_OS_WATCH && !TARGET_OS_TV (MessageUI delegates)
 
 extern JAVA_OBJECT productsArrayPending;
 
@@ -4849,7 +5132,11 @@ extern SKPayment *paymentInstance;
 #endif
 
 
+#if TARGET_OS_TV
+- (void) popoverControllerDidDismissPopover:(id) popoverController {
+#else
 - (void) popoverControllerDidDismissPopover:(UIPopoverController *) popoverController {
+#endif
     if(datepickerPopover) {
         if(currentDatePickerDate != nil) {
 #ifndef CN1_USE_ARC
@@ -4868,6 +5155,12 @@ extern SKPayment *paymentInstance;
     }
 }
 
+// These picker-state globals are defined (unguarded) in IOSNative.m; declare
+// them above the tvOS guard so the non-guarded picker-dismiss code still links.
+extern int stringPickerSelection;
+extern JAVA_OBJECT pickerStringArray;
+extern JAVA_LONG defaultDatePickerDate;
+#if !TARGET_OS_TV
 - (void)datePickerChangeDate:(UIDatePicker *)sender {
     if (sender.datePickerMode == UIDatePickerModeCountDownTimer) {
         currentDatePickerDuration = sender.countDownDuration * 1000;
@@ -4990,8 +5283,13 @@ extern JAVA_LONG defaultDatePickerDate;
         currentDatePickerDate = nil;
     }
 }
+#endif // !TARGET_OS_TV (UIDatePicker / UIActionSheet)
 
+#if TARGET_OS_TV
+id popoverControllerInstance;
+#else
 UIPopoverController* popoverControllerInstance;
+#endif
 - (void)pickerComponentDismiss {
     if(popoverControllerInstance != nil) {
         [popoverControllerInstance dismissPopoverAnimated:YES];
@@ -5031,6 +5329,7 @@ UIPopoverController* popoverControllerInstance;
 //-(void)actionSheetCancel:(UIActionSheet *)actionSheet {
 //}
 
+#if !TARGET_OS_TV
 - (void)pickerView:(UIPickerView *)pickerView didSelectRow: (NSInteger)row inComponent:(NSInteger)component {
     stringPickerSelection = row;
 }
@@ -5082,4 +5381,6 @@ UIPopoverController* popoverControllerInstance;
 }
 
 
+#endif // !TARGET_OS_TV (UIPickerView / UIDocumentInteractionController)
 @end
+#endif

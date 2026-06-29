@@ -229,10 +229,9 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     public static final Thread.UncaughtExceptionHandler exceptionHandler = new Thread.UncaughtExceptionHandler() {
         @Override
         public void uncaughtException(Thread t, Throwable e) {
-            if(com.codename1.io.Log.isCrashBound()) {
-                com.codename1.io.Log.p("Uncaught exception in thread " + t.getName());
-                com.codename1.io.Log.e(e);
-                com.codename1.io.Log.sendLog();
+            try {
+                com.codename1.crash.CrashProtection.capture(e);
+            } catch (Throwable ignore) {
             }
         }
     };
@@ -3268,6 +3267,12 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         if("DeviceName".equals(key)) {
             return "" + android.os.Build.MODEL;
         }
+        if("DeviceHardwareModel".equals(key)) {
+            return "" + android.os.Build.MODEL;
+        }
+        if("DeviceManufacturer".equals(key)) {
+            return "" + android.os.Build.MANUFACTURER;
+        }
         if("Emulator".equals(key)) {
             return "" + isEmulator();
         }
@@ -4078,6 +4083,19 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     }
 
     @Override
+    public boolean isSoundPoolSupported() {
+        return getContext() != null;
+    }
+
+    @Override
+    public com.codename1.media.SoundPoolPeer createSoundPool(int maxStreams) {
+        if (getContext() == null) {
+            return null;
+        }
+        return new com.codename1.media.GameSoundPool(this, maxStreams);
+    }
+
+    @Override
     public Media createMediaRecorder(MediaRecorderBuilder builder) throws IOException {
         return createMediaRecorder(builder.getPath(), builder.getMimeType(), builder.getSamplingRate(), builder.getBitRate(), builder.getAudioChannels(), 0, builder.isRedirectToAudioBuffer());
     }
@@ -4351,6 +4369,81 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
             throw new IllegalArgumentException(nativeComponent.getClass().getName());
         }
         return new AndroidImplementation.AndroidPeer((View) nativeComponent);
+    }
+
+    private final java.util.Map<PeerComponent, AndroidGLSurface> glSurfaces =
+            new java.util.IdentityHashMap<PeerComponent, AndroidGLSurface>();
+
+    private final com.codename1.impl.gpu.GpuImplementation gpuImpl =
+            new com.codename1.impl.gpu.GpuImplementation() {
+        @Override
+        public PeerComponent createPeer(final com.codename1.gpu.RenderView view) {
+            final CodenameOneActivity a = getActivity();
+            if (a == null) {
+                return null;
+            }
+            // The GLSurfaceView must be constructed on the UI thread; block until
+            // it exists so we can wrap and return its peer to the caller.
+            final AndroidGLSurface[] holder = new AndroidGLSurface[1];
+            final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+            a.runOnUiThread(new Runnable() {
+                public void run() {
+                    try {
+                        holder[0] = new AndroidGLSurface(a, view);
+                    } catch (Throwable t) {
+                        t.printStackTrace();
+                    } finally {
+                        latch.countDown();
+                    }
+                }
+            });
+            try {
+                latch.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            AndroidGLSurface surface = holder[0];
+            if (surface == null) {
+                return null;
+            }
+            PeerComponent peer = createNativePeer(surface);
+            if (peer != null) {
+                glSurfaces.put(peer, surface);
+            }
+            return peer;
+        }
+
+        @Override
+        public void setContinuous(PeerComponent peer, final boolean continuous) {
+            final AndroidGLSurface surface = glSurfaces.get(peer);
+            if (surface == null) {
+                return;
+            }
+            final CodenameOneActivity a = getActivity();
+            if (a == null) {
+                return;
+            }
+            a.runOnUiThread(new Runnable() {
+                public void run() {
+                    surface.setRenderMode(continuous
+                            ? android.opengl.GLSurfaceView.RENDERMODE_CONTINUOUSLY
+                            : android.opengl.GLSurfaceView.RENDERMODE_WHEN_DIRTY);
+                }
+            });
+        }
+
+        @Override
+        public void requestRender(PeerComponent peer) {
+            AndroidGLSurface surface = glSurfaces.get(peer);
+            if (surface != null) {
+                surface.requestRender();
+            }
+        }
+    };
+
+    @Override
+    public com.codename1.impl.gpu.GpuImplementation getGpuImplementation() {
+        return gpuImpl;
     }
 
     private void blockNativeFocusAll(boolean block) {
@@ -5580,6 +5673,58 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         return (getContext().getResources().getConfiguration().screenLayout
                 & Configuration.SCREENLAYOUT_SIZE_MASK)
                 >= Configuration.SCREENLAYOUT_SIZE_LARGE;
+    }
+
+    private Boolean watchCache;
+
+    @Override
+    public boolean isWatch() {
+        if(watchCache == null) {
+            // PackageManager.FEATURE_WATCH ("android.hardware.type.watch") is
+            // the canonical Wear OS marker; use the string literal so this
+            // compiles regardless of the configured minimum SDK level.
+            watchCache = getContext().getPackageManager()
+                    .hasSystemFeature("android.hardware.type.watch");
+        }
+        return watchCache;
+    }
+
+    private Boolean tvCache;
+
+    @Override
+    public boolean isTV() {
+        if(tvCache == null) {
+            // PackageManager.FEATURE_TELEVISION ("android.hardware.type.television")
+            // and FEATURE_LEANBACK ("android.software.leanback") are the canonical
+            // Android TV / Google TV markers; use the string literals so this
+            // compiles regardless of the configured minimum SDK level.
+            android.content.pm.PackageManager pm = getContext().getPackageManager();
+            boolean tv = pm.hasSystemFeature("android.hardware.type.television")
+                    || pm.hasSystemFeature("android.software.leanback");
+            if(!tv) {
+                // Fall back to the runtime UI mode (covers emulators/devices that
+                // expose the TV ui-mode without declaring the hardware feature).
+                android.app.UiModeManager um = (android.app.UiModeManager)
+                        getContext().getSystemService(Context.UI_MODE_SERVICE);
+                tv = um != null && um.getCurrentModeType()
+                        == Configuration.UI_MODE_TYPE_TELEVISION;
+            }
+            tvCache = tv;
+        }
+        return tvCache;
+    }
+
+    @Override
+    public com.codename1.car.spi.CarBridge getCarBridge() {
+        // The Android Auto glue (injected by the builder only when the app references
+        // com.codename1.car) registers its bridge here; null otherwise so the API no-ops.
+        return AndroidCarSupport.getBridge();
+    }
+
+    @Override
+    public boolean isCarConnected() {
+        com.codename1.car.spi.CarBridge b = AndroidCarSupport.getBridge();
+        return b != null && b.isConnected();
     }
 
     /**
@@ -7740,6 +7885,29 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     }
 
     @Override
+    public boolean isNativeInAppReviewSupported() {
+        // True only when the Play In-App Review library was bundled, which the
+        // AndroidGradleBuilder does when the app references the app-review API.
+        return getActivity() != null && AppReviewSupport.isSupported();
+    }
+
+    @Override
+    public void requestNativeInAppReview(final SuccessCallback<Boolean> done) {
+        final CodenameOneActivity activity = getActivity();
+        if (activity == null || !AppReviewSupport.isSupported()) {
+            if (done != null) {
+                done.onSucess(Boolean.FALSE);
+            }
+            return;
+        }
+        activity.runOnUiThread(new Runnable() {
+            public void run() {
+                AppReviewSupport.requestReview(activity, done);
+            }
+        });
+    }
+
+    @Override
     public void share(String text, String image, String mimeType, Rectangle sourceRect){
         share(text, image, mimeType, sourceRect, null);
     }
@@ -7840,6 +8008,295 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
         return Intent.createChooser(shareIntent, "Share with...", pendingIntent.getIntentSender());
     }
 
+    /// Printing uses the Android print framework which requires API 19
+    /// and a foreground activity to host the print dialog.
+    @Override
+    public boolean isPrintingSupported() {
+        return android.os.Build.VERSION.SDK_INT >= 19 && getActivity() != null;
+    }
+
+    /// Print through the Android print framework. PDF files are streamed
+    /// verbatim into a `android.print.PrintDocumentAdapter`; images go
+    /// through the support library `PrintHelper` which scales them to the
+    /// page.
+    ///
+    /// Outcome reporting is best effort: the PDF path polls the returned
+    /// `android.print.PrintJob` and treats a queued/started job as
+    /// completed since Android offers no callback for the terminal job
+    /// state once it was handed to the print service. The image path
+    /// reports completed when `PrintHelper` finishes because it can't
+    /// distinguish a dismissed dialog from a printed page.
+    @Override
+    public void print(final String filePath, final String mimeType, final com.codename1.printing.PrintResultListener listener) {
+        final PrintResultDispatcher dispatcher = new PrintResultDispatcher(listener);
+        if (!isPrintingSupported()) {
+            dispatcher.fire(com.codename1.printing.PrintResult.failed(
+                    "Printing requires Android 4.4 or newer and a foreground activity"));
+            return;
+        }
+        if (filePath == null) {
+            dispatcher.fire(com.codename1.printing.PrintResult.failed("No file to print"));
+            return;
+        }
+        final File file = new File(removeFilePrefix(filePath));
+        if (!file.exists()) {
+            dispatcher.fire(com.codename1.printing.PrintResult.failed("File not found: " + filePath));
+            return;
+        }
+        getActivity().runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    // PrintSupport touches android.print which only exists
+                    // on API 19+; the isPrintingSupported() gate above keeps
+                    // the class from loading on older devices.
+                    PrintSupport.startPrint(getActivity(), file, mimeType, dispatcher);
+                } catch (Throwable t) {
+                    dispatcher.fire(com.codename1.printing.PrintResult.failed(
+                            "Failed to start print job: " + t));
+                }
+            }
+        });
+    }
+
+    /// Delivers a [com.codename1.printing.PrintResult] to the listener at
+    /// most once. The listener may be null and results may arrive from any
+    /// thread; `Display` moves the callback onto the EDT.
+    private static final class PrintResultDispatcher {
+        private final com.codename1.printing.PrintResultListener listener;
+        private boolean fired;
+
+        PrintResultDispatcher(com.codename1.printing.PrintResultListener listener) {
+            this.listener = listener;
+        }
+
+        void fire(com.codename1.printing.PrintResult result) {
+            synchronized (this) {
+                if (fired) {
+                    return;
+                }
+                fired = true;
+            }
+            if (listener != null) {
+                listener.onResult(result);
+            }
+        }
+    }
+
+    /// All android.print framework access lives in this class so the
+    /// classes it references are only loaded behind the API 19 check in
+    /// [#print].
+    @TargetApi(19)
+    private static final class PrintSupport {
+
+        private static final int JOB_PENDING = 0;
+        private static final int JOB_COMPLETED = 1;
+        private static final int JOB_CANCELLED = 2;
+        private static final int JOB_FAILED = 3;
+
+        /// How long the poller waits for the print dialog/job to reach a
+        /// terminal state before giving up.
+        private static final long POLL_TIMEOUT = 15 * 60 * 1000L;
+        private static final long POLL_INTERVAL = 500;
+
+        /// Must run on the UI thread: `PrintManager.print` and
+        /// `PrintHelper.printBitmap` both require it.
+        static void startPrint(Activity activity, File file, String mimeType, PrintResultDispatcher dispatcher) {
+            String jobName = file.getName();
+            if ("application/pdf".equalsIgnoreCase(mimeType)) {
+                android.print.PrintManager printManager =
+                        (android.print.PrintManager) activity.getSystemService(Context.PRINT_SERVICE);
+                if (printManager == null) {
+                    dispatcher.fire(com.codename1.printing.PrintResult.failed("Print service unavailable"));
+                    return;
+                }
+                android.print.PrintJob job = printManager.print(jobName,
+                        new PdfFilePrintAdapter(jobName, file), null);
+                pollPrintJob(activity, job, dispatcher);
+            } else if (mimeType != null && mimeType.startsWith("image/")) {
+                printImage(activity, file, jobName, dispatcher);
+            } else {
+                dispatcher.fire(com.codename1.printing.PrintResult.failed(
+                        "Unsupported print document type: " + mimeType));
+            }
+        }
+
+        private static void printImage(Activity activity, File file, String jobName,
+                final PrintResultDispatcher dispatcher) {
+            Bitmap bitmap = BitmapFactory.decodeFile(file.getAbsolutePath());
+            if (bitmap == null) {
+                dispatcher.fire(com.codename1.printing.PrintResult.failed(
+                        "Unable to decode image for printing"));
+                return;
+            }
+            android.support.v4.print.PrintHelper helper = new android.support.v4.print.PrintHelper(activity);
+            helper.setScaleMode(android.support.v4.print.PrintHelper.SCALE_MODE_FIT);
+            helper.printBitmap(jobName, bitmap, new android.support.v4.print.PrintHelper.OnPrintFinishCallback() {
+                @Override
+                public void onFinish() {
+                    // PrintHelper fires onFinish when the print flow ends
+                    // without exposing whether the user printed or
+                    // dismissed the dialog; report completed best effort.
+                    dispatcher.fire(com.codename1.printing.PrintResult.completed());
+                }
+            });
+        }
+
+        /// Watches the print job from a background thread and reports the
+        /// first terminal state. The job object must only be queried on
+        /// the UI thread, so every tick bounces through `runOnUiThread`.
+        private static void pollPrintJob(final Activity activity, final android.print.PrintJob job,
+                final PrintResultDispatcher dispatcher) {
+            Thread poller = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    long deadline = System.currentTimeMillis() + POLL_TIMEOUT;
+                    while (System.currentTimeMillis() < deadline) {
+                        try {
+                            Thread.sleep(POLL_INTERVAL);
+                        } catch (InterruptedException ignore) {
+                        }
+                        final int[] state = new int[]{JOB_PENDING};
+                        final boolean[] done = new boolean[1];
+                        final Object lock = new Object();
+                        activity.runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                int s = JOB_PENDING;
+                                try {
+                                    if (job.isCancelled()) {
+                                        s = JOB_CANCELLED;
+                                    } else if (job.isFailed()) {
+                                        s = JOB_FAILED;
+                                    } else if (job.isCompleted()) {
+                                        s = JOB_COMPLETED;
+                                    } else if (job.isQueued() || job.isStarted() || job.isBlocked()) {
+                                        // The dialog phase is over and the
+                                        // job belongs to the print service;
+                                        // that is as "completed" as Android
+                                        // lets us observe reliably.
+                                        s = JOB_COMPLETED;
+                                    }
+                                } catch (Throwable t) {
+                                    s = JOB_FAILED;
+                                }
+                                synchronized (lock) {
+                                    state[0] = s;
+                                    done[0] = true;
+                                    lock.notifyAll();
+                                }
+                            }
+                        });
+                        synchronized (lock) {
+                            long waitUntil = System.currentTimeMillis() + 5000;
+                            while (!done[0] && System.currentTimeMillis() < waitUntil) {
+                                try {
+                                    lock.wait(POLL_INTERVAL);
+                                } catch (InterruptedException ignore) {
+                                }
+                            }
+                            if (!done[0]) {
+                                // UI thread didn't get to us; try again on
+                                // the next tick until the deadline passes.
+                                continue;
+                            }
+                        }
+                        switch (state[0]) {
+                            case JOB_COMPLETED:
+                                dispatcher.fire(com.codename1.printing.PrintResult.completed());
+                                return;
+                            case JOB_CANCELLED:
+                                dispatcher.fire(com.codename1.printing.PrintResult.cancelled());
+                                return;
+                            case JOB_FAILED:
+                                dispatcher.fire(com.codename1.printing.PrintResult.failed("Print job failed"));
+                                return;
+                            default:
+                                // still in the dialog phase, keep polling
+                        }
+                    }
+                    dispatcher.fire(com.codename1.printing.PrintResult.failed(
+                            "Timed out waiting for the print job status"));
+                }
+            }, "CN1PrintJobPoller");
+            poller.setDaemon(true);
+            poller.start();
+        }
+
+        /// Streams an existing PDF file into the print system unchanged.
+        /// Layout/write failures are routed through the framework
+        /// callbacks which fail the print job; the poller in
+        /// [#pollPrintJob] then reports the failure to the listener, so
+        /// the dispatcher still fires exactly once.
+        private static final class PdfFilePrintAdapter extends android.print.PrintDocumentAdapter {
+            private final String jobName;
+            private final File file;
+
+            PdfFilePrintAdapter(String jobName, File file) {
+                this.jobName = jobName;
+                this.file = file;
+            }
+
+            @Override
+            public void onLayout(android.print.PrintAttributes oldAttributes,
+                    android.print.PrintAttributes newAttributes,
+                    android.os.CancellationSignal cancellationSignal,
+                    LayoutResultCallback callback, Bundle extras) {
+                if (cancellationSignal != null && cancellationSignal.isCanceled()) {
+                    callback.onLayoutCancelled();
+                    return;
+                }
+                try {
+                    android.print.PrintDocumentInfo info = new android.print.PrintDocumentInfo.Builder(jobName)
+                            .setContentType(android.print.PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+                            .setPageCount(android.print.PrintDocumentInfo.PAGE_COUNT_UNKNOWN)
+                            .build();
+                    callback.onLayoutFinished(info, !newAttributes.equals(oldAttributes));
+                } catch (Throwable t) {
+                    callback.onLayoutFailed(t.toString());
+                }
+            }
+
+            @Override
+            public void onWrite(android.print.PageRange[] pages,
+                    android.os.ParcelFileDescriptor destination,
+                    android.os.CancellationSignal cancellationSignal,
+                    WriteResultCallback callback) {
+                FileInputStream in = null;
+                FileOutputStream out = null;
+                try {
+                    in = new FileInputStream(file);
+                    out = new FileOutputStream(destination.getFileDescriptor());
+                    byte[] buffer = new byte[8192];
+                    int count;
+                    while ((count = in.read(buffer)) > -1) {
+                        if (cancellationSignal != null && cancellationSignal.isCanceled()) {
+                            callback.onWriteCancelled();
+                            return;
+                        }
+                        out.write(buffer, 0, count);
+                    }
+                    callback.onWriteFinished(new android.print.PageRange[]{android.print.PageRange.ALL_PAGES});
+                } catch (Throwable t) {
+                    callback.onWriteFailed(t.toString());
+                } finally {
+                    if (in != null) {
+                        try {
+                            in.close();
+                        } catch (Throwable ignore) {
+                        }
+                    }
+                    if (out != null) {
+                        try {
+                            out.close();
+                        } catch (Throwable ignore) {
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /**
      * @inheritDoc
      */
@@ -7848,9 +8305,54 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
     }
 
     /**
+     * Snapshot of the recent process logcat for crash protection. Since
+     * Android 4.1 (API 16) apps can only read their own process log
+     * without the READ_LOGS permission, which is exactly what we want.
+     * Returns the last ~200 lines (capped at 32 KB).
+     */
+    @Override
+    public String getNativeLogSnapshot() {
+        java.io.BufferedReader reader = null;
+        Process proc = null;
+        try {
+            proc = Runtime.getRuntime().exec(new String[]{
+                "logcat", "-d", "-t", "200", "-v", "threadtime"});
+            reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(proc.getInputStream(), "UTF-8"));
+            StringBuilder sb = new StringBuilder(8192);
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line).append('\n');
+                if (sb.length() > 32 * 1024) {
+                    break;
+                }
+            }
+            return sb.length() == 0 ? null : sb.toString();
+        } catch (Throwable ignored) {
+            // logcat unavailable (very old Android, locked-down ROM,
+            // etc.) -- crash protection still works, just without the
+            // device log context.
+            return null;
+        } finally {
+            if (reader != null) {
+                try { reader.close(); } catch (java.io.IOException ignored) { }
+            }
+            if (proc != null) {
+                try { proc.destroy(); } catch (Throwable ignored) { }
+            }
+        }
+    }
+
+    /**
      * @inheritDoc
      */
     public String[] getPlatformOverrides() {
+        if (isWatch()) {
+            return new String[]{"watch", "android", "android-watch"};
+        }
+        if (isTV()) {
+            return new String[]{"tv", "android", "android-tv"};
+        }
         if (isTablet()) {
             return new String[]{"tablet", "android", "android-tab"};
         } else {
@@ -11965,6 +12467,196 @@ public class AndroidImplementation extends CodenameOneImplementation implements 
             com.codename1.io.Log.e(t);
         }
         return false;
+    }
+
+    @Override
+    public boolean isAttestationSupported() {
+        try {
+            Class.forName("com.google.android.play.core.integrity.IntegrityManagerFactory");
+            return true;
+        } catch(Throwable t) {
+            return false;
+        }
+    }
+
+    @Override
+    public AsyncResource<String> requestIntegrityToken(final String nonce) {
+        final AsyncResource<String> result = new AsyncResource<String>();
+        try {
+            Context context = getContext();
+            Class factory = Class.forName("com.google.android.play.core.integrity.IntegrityManagerFactory");
+            Object manager = factory.getMethod("create", Context.class).invoke(null, context);
+            Class requestClass = Class.forName("com.google.android.play.core.integrity.IntegrityTokenRequest");
+            Object builder = requestClass.getMethod("builder").invoke(null);
+            builder = builder.getClass().getMethod("setNonce", String.class).invoke(builder, nonce);
+            Object request = builder.getClass().getMethod("build").invoke(builder);
+            Class managerClass = Class.forName("com.google.android.play.core.integrity.IntegrityManager");
+            Object task = managerClass.getMethod("requestIntegrityToken", requestClass).invoke(manager, request);
+
+            Class taskClass = Class.forName("com.google.android.gms.tasks.Task");
+            Class onSuccessClass = Class.forName("com.google.android.gms.tasks.OnSuccessListener");
+            Class onFailureClass = Class.forName("com.google.android.gms.tasks.OnFailureListener");
+            final Class responseClass = Class.forName("com.google.android.play.core.integrity.IntegrityTokenResponse");
+
+            Object successListener = java.lang.reflect.Proxy.newProxyInstance(
+                    onSuccessClass.getClassLoader(), new Class[] { onSuccessClass },
+                    new java.lang.reflect.InvocationHandler() {
+                        public Object invoke(Object proxy, java.lang.reflect.Method method, Object[] args) {
+                            try {
+                                Object response = args[0];
+                                String token = (String) responseClass.getMethod("token").invoke(response);
+                                result.complete(token);
+                            } catch(Throwable t) {
+                                result.error(t);
+                            }
+                            return null;
+                        }
+                    });
+            Object failureListener = java.lang.reflect.Proxy.newProxyInstance(
+                    onFailureClass.getClassLoader(), new Class[] { onFailureClass },
+                    new java.lang.reflect.InvocationHandler() {
+                        public Object invoke(Object proxy, java.lang.reflect.Method method, Object[] args) {
+                            Throwable err = (args != null && args.length > 0 && args[0] instanceof Throwable)
+                                    ? (Throwable) args[0] : new RuntimeException("Play Integrity request failed");
+                            result.error(err);
+                            return null;
+                        }
+                    });
+            taskClass.getMethod("addOnSuccessListener", onSuccessClass).invoke(task, successListener);
+            taskClass.getMethod("addOnFailureListener", onFailureClass).invoke(task, failureListener);
+        } catch(ClassNotFoundException notBundled) {
+            result.error(new UnsupportedOperationException(
+                    "Google Play Integrity is not bundled. Enable the android.playIntegrity build hint."));
+        } catch(Throwable t) {
+            result.error(t);
+        }
+        return result;
+    }
+
+    @Override
+    public boolean isDeviceCompromised() {
+        return getCompromiseReasons().length > 0;
+    }
+
+    @Override
+    public String[] getCompromiseReasons() {
+        java.util.ArrayList<String> reasons = new java.util.ArrayList<String>();
+        if(isRootedViaRootBeer() || isJailbrokenDevice()) {
+            reasons.add("root");
+        }
+        try {
+            if(FridaDetectionUtil.isFridaDetected()) {
+                reasons.add("frida");
+            }
+        } catch(Throwable t) {
+            // detection must never crash the host app
+        }
+        if(isProbablyEmulator()) {
+            reasons.add("emulator");
+        }
+        return reasons.toArray(new String[reasons.size()]);
+    }
+
+    private boolean isRootedViaRootBeer() {
+        try {
+            Class rootBeerClass = Class.forName("com.scottyab.rootbeer.RootBeer");
+            Object rootBeer = rootBeerClass.getConstructor(Context.class).newInstance(getContext());
+            Object rooted = rootBeerClass.getMethod("isRooted").invoke(rootBeer);
+            return Boolean.TRUE.equals(rooted);
+        } catch(Throwable t) {
+            // RootBeer not bundled (android.rootCheck off) - caller falls back to the su probe
+            return false;
+        }
+    }
+
+    private boolean isProbablyEmulator() {
+        try {
+            String fingerprint = Build.FINGERPRINT;
+            if(fingerprint != null && (fingerprint.startsWith("generic") || fingerprint.startsWith("unknown")
+                    || fingerprint.contains("emulator"))) {
+                return true;
+            }
+            String model = Build.MODEL;
+            if(model != null && (model.contains("google_sdk") || model.contains("Emulator")
+                    || model.contains("Android SDK built for"))) {
+                return true;
+            }
+            String manufacturer = Build.MANUFACTURER;
+            if(manufacturer != null && manufacturer.contains("Genymotion")) {
+                return true;
+            }
+            String product = Build.PRODUCT;
+            if(product != null && (product.contains("sdk_gphone") || product.equals("google_sdk")
+                    || product.contains("emulator") || product.contains("simulator"))) {
+                return true;
+            }
+            String hardware = Build.HARDWARE;
+            if(hardware != null && (hardware.contains("goldfish") || hardware.contains("ranchu"))) {
+                return true;
+            }
+        } catch(Throwable t) {
+            // ignore
+        }
+        return false;
+    }
+
+    @Override
+    public String[] getEnabledAccessibilityServices() {
+        Context context = getContext();
+        if(context == null) {
+            return new String[0];
+        }
+        try {
+            AccessibilityManager am = (AccessibilityManager) context.getSystemService(Context.ACCESSIBILITY_SERVICE);
+            if(am != null) {
+                java.util.List<android.accessibilityservice.AccessibilityServiceInfo> list =
+                        am.getEnabledAccessibilityServiceList(
+                                android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK);
+                if(list != null && !list.isEmpty()) {
+                    java.util.ArrayList<String> ids = new java.util.ArrayList<String>();
+                    for(android.accessibilityservice.AccessibilityServiceInfo info : list) {
+                        String id = info.getId();
+                        if(id != null && id.length() > 0) {
+                            ids.add(id);
+                        }
+                    }
+                    return ids.toArray(new String[ids.size()]);
+                }
+            }
+        } catch(Throwable t) {
+            // fall through to the Settings.Secure based lookup below
+        }
+        try {
+            String enabled = Settings.Secure.getString(context.getContentResolver(),
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            if(enabled != null && enabled.length() > 0) {
+                return enabled.split(":");
+            }
+        } catch(Throwable t) {
+            com.codename1.io.Log.e(t);
+        }
+        return new String[0];
+    }
+
+    @Override
+    public void setSecureScreen(final boolean secure) {
+        final Activity act = getActivity();
+        if(act == null) {
+            return;
+        }
+        act.runOnUiThread(new Runnable() {
+            public void run() {
+                try {
+                    if(secure) {
+                        act.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+                    } else {
+                        act.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+                    }
+                } catch(Throwable t) {
+                    com.codename1.io.Log.e(t);
+                }
+            }
+        });
     }
 
     @Override

@@ -268,6 +268,18 @@
         <Bug pattern="ES_COMPARING_STRINGS_WITH_EQ" />
     </Match>
 
+    <!--
+    HttpTileSource's one-shot tile/TileJSON requests are short-lived
+    ConnectionRequest subclasses that add per-request fields (z/x/y/callback).
+    They are never compared or used as map keys, so overriding equals()/
+    hashCode() would add noise without changing behavior. This mirrors the
+    framework idiom of anonymous ConnectionRequest subclasses everywhere.
+    -->
+    <Match>
+        <Class name="~com\.codename1\.maps\.vector\.HttpTileSource(\$.*)?" />
+        <Bug pattern="EQ_DOESNT_OVERRIDE_EQUALS" />
+    </Match>
+
     <!-- The class has too many casts like this to go over -->
     <Match>
         <Class name="~com\.codename1\.facebook\.FaceBookAccess.*" />
@@ -346,5 +358,16 @@
     <!-- Deprecated classes that should be excluded from checks -->
     <Match>
         <Class name="~com\.codename1\.db\.ThreadSafeDatabase(\$.*)?" />
+    </Match>
+
+    <!--
+    The com.codename1.gaming.physics.box2d package is a vendored, lightly
+    adapted copy of JBox2D (BSD 2-Clause), third-party code whose style we
+    don't own. Exclude it from SpotBugs wholesale, the same way TarEntry and
+    the gzip classes are treated above. The idiomatic
+    com.codename1.gaming.physics wrapper around it is NOT excluded.
+    -->
+    <Match>
+        <Class name="~com\.codename1\.gaming\.physics\.box2d\..*" />
     </Match>
 </FindBugsFilter>

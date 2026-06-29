@@ -59,6 +59,8 @@ import com.codename1.notifications.NotificationPermissionRequest;
 import com.codename1.notifications.NotificationPermissionResult;
 import com.codename1.background.ForegroundService;
 import com.codename1.background.WorkRequest;
+import com.codename1.printing.PrintResult;
+import com.codename1.printing.PrintResultListener;
 import com.codename1.share.SharedContent;
 import com.codename1.share.ShareResult;
 import com.codename1.share.ShareResultListener;
@@ -128,7 +130,7 @@ import java.util.Vector;
 /// Display specifically for key, pointer events and screen resolution.
 ///
 /// @author Shai Almog
-@Concrete(name = "com.codename1.impl.ios.IOSImplementation", win = "com.codename1.impl.windows.WindowsImplementation")
+@Concrete(name = "com.codename1.impl.ios.IOSImplementation", win = "com.codename1.impl.windows.WindowsImplementation", linux = "com.codename1.impl.linux.LinuxImplementation")
 public abstract class CodenameOneImplementation {
     /// Indicates the range of "hard" RTL bidi characters in unicode
     private static final int RTL_RANGE_BEGIN = 0x590;
@@ -845,6 +847,10 @@ public abstract class CodenameOneImplementation {
                 paintQueueTemp[iter] = null;
                 wrapper.translate(-wrapper.getTranslateX(), -wrapper.getTranslateY());
                 wrapper.resetAffine();
+                // Reset the flush-region hint to the full screen before the
+                // full-screen clip below so neither it nor a previous
+                // component's tighter region wrongly clamps this reset (#5273).
+                setPaintDirtyRegionClip(0, 0, dwidth, dheight);
                 wrapper.setClip(0, 0, dwidth, dheight);
                 if (ani instanceof Component) {
                     Component cmp = (Component) ani;
@@ -854,7 +860,24 @@ public abstract class CodenameOneImplementation {
                         wrapper.setClip(dirty.getX(), dirty.getY(), d.getWidth(), d.getHeight());
                         cmp.setDirtyRegion(null);
                     }
+                    // Confine any clip this component sets while painting to its
+                    // flushed region on immediate-mode ports. Use the paintable
+                    // bounds -- the region retained ports clamp to via the
+                    // flushGraphics call below -- NOT the dirty region, which
+                    // repaint() nulls (Component.repaint), in which case it would
+                    // fall back to the full screen and the clip could still escape
+                    // (#5273). Computed before paintComponent (paint does not move
+                    // the component) so the clip set during paint can be clamped.
+                    getPaintableBounds(cmp, paintDirtyTmpRect);
+                    setPaintDirtyRegionClip(paintDirtyTmpRect.getX(), paintDirtyTmpRect.getY(),
+                            paintDirtyTmpRect.getWidth(), paintDirtyTmpRect.getHeight());
                     cmp.paintComponent(wrapper);
+                    // Recompute the paintable bounds AFTER paint for the flush
+                    // region below: paintComponent can lay the component out (its
+                    // bounds may change), and the retained ports clamp to / flush
+                    // exactly this rect, so it must match the pre-#5273 value to
+                    // the pixel (the before-paint value above is only the immediate
+                    // -mode clip hint).
                     getPaintableBounds(cmp, paintDirtyTmpRect);
                     int cmpAbsX = paintDirtyTmpRect.getX();
                     topX = Math.min(cmpAbsX, topX);
@@ -875,6 +898,25 @@ public abstract class CodenameOneImplementation {
             //Log.p("Flushing graphics : "+topX+","+topY+","+bottomX+","+bottomY);
             flushGraphics(topX, topY, bottomX - topX, bottomY - topY);
         }
+    }
+
+    /// Reports the clip region that bounds the current component's flush as
+    /// {@link #paintDirty()} is about to paint it -- its dirty region, or the
+    /// full screen for a full repaint. Immediate-mode native ports that draw
+    /// screen ops straight into a persistent surface (the Linux Cairo port)
+    /// override this to confine a clip set during that component's paint to the
+    /// flushed region, so an oversized clip cannot escape and corrupt pixels
+    /// outside it (issue #5273). Retained-mode ports (iOS) clamp at flush time
+    /// against their own flush rect instead, so the default here is a no-op and
+    /// every other port is unaffected.
+    ///
+    /// #### Parameters
+    ///
+    /// - `x`: left edge of the flush region in screen coordinates
+    /// - `y`: top edge of the flush region in screen coordinates
+    /// - `width`: width of the flush region
+    /// - `height`: height of the flush region
+    protected void setPaintDirtyRegionClip(int x, int y, int width, int height) {
     }
 
     /// This method is a callback from the edt before the edt enters to an idle
@@ -4509,6 +4551,22 @@ public abstract class CodenameOneImplementation {
         execute(url);
     }
 
+    /// Offers the given in-memory bytes to the user as a downloadable file,
+    /// bypassing local storage. Implemented by platforms (currently the
+    /// JavaScript port) where the storage-backed `execute(file:// URL)`
+    /// download path is unavailable. Returns `true` if the platform handled
+    /// the download (so callers can skip the storage fallback), `false` if
+    /// unsupported.
+    ///
+    /// #### Parameters
+    ///
+    /// - `fileName`: the suggested file name for the download
+    ///
+    /// - `bytes`: the file contents
+    public boolean downloadBytesAsFile(String fileName, byte[] bytes) {
+        return false;
+    }
+
     /// Returns one of the density variables appropriate for this device, notice that
     /// density doesn't always correspond to resolution and an implementation might
     /// decide to change the density based on DPI constraints.
@@ -4793,6 +4851,26 @@ public abstract class CodenameOneImplementation {
         return null;
     }
 
+    /// Indicates whether this platform provides a native low latency sound pool
+    /// (backing `com.codename1.gaming.SoundPool`). The default implementation
+    /// returns false, in which case the gaming layer falls back to a
+    /// `MediaManager` based pool. Ports with a purpose built low latency audio API
+    /// (Android `SoundPool`, iOS `AVAudioEngine`, the desktop `javax.sound.sampled`
+    /// mixer, WebAudio) override this and `#createSoundPool(int)`.
+    public boolean isSoundPoolSupported() {
+        return false;
+    }
+
+    /// Creates a native low latency sound pool peer, or returns null when this
+    /// platform does not provide one (the default).
+    ///
+    /// #### Parameters
+    ///
+    /// - `maxStreams`: the maximum number of simultaneously playing voices
+    public com.codename1.media.SoundPoolPeer createSoundPool(int maxStreams) {
+        return null;
+    }
+
     /// Creates media asynchronously.
     ///
     /// #### Parameters
@@ -5027,6 +5105,20 @@ public abstract class CodenameOneImplementation {
         return false;
     }
 
+    /// Returns the platform's GPU backend for the portable 3D API
+    /// (`com.codename1.gpu.RenderView`), or null on platforms without a 3D
+    /// backend. Returning a single backend object (rather than scattering
+    /// individual peer-lifecycle methods across the implementation) lets each
+    /// port keep all of its GPU wiring in one place. A non-null return is what
+    /// `Display.isGpuSupported()` reports.
+    ///
+    /// #### Returns
+    ///
+    /// the platform GPU backend, or null if the 3D GPU API is unsupported
+    public com.codename1.impl.gpu.GpuImplementation getGpuImplementation() {
+        return null;
+    }
+
     /// Some platforms require that you enable pinch to zoom explicitly. This method has no
     /// effect if pinch to zoom isn't supported by the platform
     ///
@@ -5059,6 +5151,59 @@ public abstract class CodenameOneImplementation {
     ///
     /// an instance of the native browser peer or null
     public PeerComponent createBrowserComponent(Object browserComponent) {
+        return null;
+    }
+
+    /// Creates a native peer for one of the visual editor components
+    /// (`com.codename1.ui.RichTextArea` / `com.codename1.ui.CodeEditor`).
+    ///
+    /// The default implementation returns null which makes the editor fall back to its 100% cross
+    /// platform `BrowserComponent` based backend. A platform port may override this to return a genuinely
+    /// native editing widget (e.g. a native rich text view or a native code editor) which is then driven
+    /// through `#editorPeerCommand(PeerComponent, String, String)` and
+    /// `#editorPeerQuery(PeerComponent, String, String)`. A native peer should deliver events back to the
+    /// owning editor by calling `editorComponent.fireEditorEvent(type, value)`.
+    ///
+    /// #### Parameters
+    ///
+    /// - `editorComponent`: the owning `AbstractEditorComponent` so native peers can fire events back
+    ///
+    /// - `editorType`: the editor flavor, currently `"richtext"` or `"code"`
+    ///
+    /// #### Returns
+    ///
+    /// a native editor peer, or null to use the cross platform fallback
+    public PeerComponent createNativeEditorPeer(Object editorComponent, String editorType) {
+        return null;
+    }
+
+    /// Sends a one way semantic command to a native editor peer created by
+    /// `#createNativeEditorPeer(Object, String)`. No-op by default.
+    ///
+    /// #### Parameters
+    ///
+    /// - `peer`: the native editor peer
+    ///
+    /// - `name`: the semantic command name (e.g. `"setHtml"`, `"bold"`, `"setText"`)
+    ///
+    /// - `arg`: an optional string argument, may be null
+    public void editorPeerCommand(PeerComponent peer, String name, String arg) {
+    }
+
+    /// Queries a native editor peer for a string value. Returns null by default.
+    ///
+    /// #### Parameters
+    ///
+    /// - `peer`: the native editor peer
+    ///
+    /// - `name`: the semantic query name (e.g. `"getHtml"`, `"getText"`)
+    ///
+    /// - `arg`: an optional string argument, may be null
+    ///
+    /// #### Returns
+    ///
+    /// the queried value or null
+    public String editorPeerQuery(PeerComponent peer, String name, String arg) {
         return null;
     }
 
@@ -5547,6 +5692,51 @@ public abstract class CodenameOneImplementation {
     /// true if this is a desktop application
     public boolean isDesktop() {
         return false;
+    }
+
+    /// Indicates whether the application is running on a smartwatch form factor
+    /// (Apple Watch / Wear OS). Notice that this is often a guess derived from
+    /// the device/skin metadata.
+    ///
+    /// #### Returns
+    ///
+    /// true if the device is assumed to be a smartwatch
+    public boolean isWatch() {
+        return false;
+    }
+
+    /// Indicates whether the application is running on a television form factor
+    /// (Apple TV / Android TV / Google TV). Notice that this is often a guess
+    /// derived from the device/skin metadata.
+    ///
+    /// #### Returns
+    ///
+    /// true if the device is assumed to be a TV
+    public boolean isTV() {
+        return false;
+    }
+
+    /// Returns the platform bridge that renders the portable `com.codename1.car` template tree onto
+    /// the connected head unit (Apple CarPlay / Google Android Auto), or null when in-car projection
+    /// is unsupported on this port (the base implementation). When null, the `com.codename1.car` API
+    /// degrades to a harmless no-op.
+    ///
+    /// #### Returns
+    ///
+    /// the car bridge, or null when unsupported
+    public com.codename1.car.spi.CarBridge getCarBridge() {
+        return null;
+    }
+
+    /// Returns true while a head unit (Apple CarPlay / Google Android Auto) is currently connected.
+    /// False on the base/unsupported implementation.
+    ///
+    /// #### Returns
+    ///
+    /// true if a car is connected
+    public boolean isCarConnected() {
+        com.codename1.car.spi.CarBridge b = getCarBridge();
+        return b != null && b.isConnected();
     }
 
     /// Returns true if the device has dialing capabilities
@@ -7409,6 +7599,65 @@ public abstract class CodenameOneImplementation {
         }
     }
 
+    /// Indicates whether the underlying platform exposes a native in-app
+    /// review/rating prompt (the OS-sanctioned "rate this app" sheet) that
+    /// can be triggered via [#requestNativeInAppReview]. When this returns
+    /// false the higher level API falls back to a Codename One drawn rating
+    /// widget.
+    ///
+    /// #### Returns
+    ///
+    /// true if the platform can present a native review prompt.
+    public boolean isNativeInAppReviewSupported() {
+        return false;
+    }
+
+    /// Requests the native in-app review prompt. This should only be invoked
+    /// when [#isNativeInAppReviewSupported] returns true. The platforms
+    /// deliberately hide whether the user actually submitted a rating and may
+    /// silently ignore the request based on their own quota/throttling
+    /// policies; `done` therefore reports whether the request was handed off
+    /// to the native review controller, not whether a review was written.
+    ///
+    /// #### Parameters
+    ///
+    /// - `done`: invoked with `true` once the native prompt was requested or
+    ///   `false` when the platform did not handle it (in which case the caller
+    ///   may show its own fallback). May be null.
+    public void requestNativeInAppReview(SuccessCallback<Boolean> done) {
+        if (done != null) {
+            done.onSucess(Boolean.FALSE);
+        }
+    }
+
+    /// Indicates if the underlying platform can print documents through
+    /// [#print(String,String,PrintResultListener)].
+    ///
+    /// #### Returns
+    ///
+    /// true if the underlying platform handles printing.
+    public boolean isPrintingSupported() {
+        return false;
+    }
+
+    /// Print a document file through the platform printing system,
+    /// typically showing the native print dialog. The default
+    /// implementation reports failure since this base class has no
+    /// printing capability. Ports that can print override this method.
+    ///
+    /// #### Parameters
+    ///
+    /// - `filePath`: path of the document in file system storage
+    ///
+    /// - `mimeType`: the document type, e.g. `application/pdf`, `image/png`
+    ///
+    /// - `listener`: callback for the print outcome. May be null.
+    public void print(String filePath, String mimeType, PrintResultListener listener) {
+        if (listener != null) {
+            listener.onResult(PrintResult.failed("Printing is not supported on this platform"));
+        }
+    }
+
     // BEGIN TRANSFORMATION METHODS---------------------------------------------------------
 
     /// Called before internal paint of component starts
@@ -8069,8 +8318,116 @@ public abstract class CodenameOneImplementation {
         t.setIdentity();
     }
 
+    /// True while a scroll-wheel gesture started by `#pointerWheelMoved` is still
+    /// animating. The framework uses this to tell a wheel scroll apart from a
+    /// finger drag (e.g. it suppresses opening the native text editor mid-scroll).
+    private boolean scrollWheeling;
+
     public boolean isScrollWheeling() {
-        return false;
+        return scrollWheeling;
+    }
+
+    /// Maps a physical scroll-wheel / trackpad scroll into a Codename One scroll
+    /// gesture. Ports call this from their native wheel callback instead of
+    /// fabricating raw pointer (or key) events of their own, so the mapping lives
+    /// in one place and behaves identically everywhere.
+    ///
+    /// The shared implementation replays the scroll as a synthetic
+    /// press/drag/release over the component under `(x, y)` -- spread across a few
+    /// EDT cycles so Codename One's own drag/tensile/deceleration logic animates
+    /// it like a real drag rather than a single jump -- and temporarily makes that
+    /// component non-focusable so the synthetic press is not registered as a
+    /// click. While it runs `#isScrollWheeling` reports `true`.
+    ///
+    /// #### Parameters
+    ///
+    /// - `x`: pointer x in display coordinates
+    ///
+    /// - `y`: pointer y in display coordinates
+    ///
+    /// - `scrollX`: horizontal scroll amount in pixels (already converted from the
+    /// native notch count by the port); a positive value reveals content to the
+    /// left, as if the finger were dragged right
+    ///
+    /// - `scrollY`: vertical scroll amount in pixels; a positive value reveals
+    /// content above, as if the finger were dragged down
+    public void pointerWheelMoved(final int x, final int y, final int scrollX, final int scrollY) {
+        if (scrollX == 0 && scrollY == 0) {
+            return;
+        }
+        final Display d = Display.getInstance();
+        // Quarter the gesture across four EDT cycles: a single press->drag(full)
+        // ->release would read as a fling and overshoot, whereas stepped drags let
+        // the scroll container settle the way a finger drag does.
+        d.callSerially(new Runnable() {
+            @Override
+            public void run() {
+                Form f = d.getCurrent();
+                if (f != null) {
+                    scrollWheeling = true;
+                    dragWheelStep(f, x, y, scrollX / 4, scrollY / 4, true, false);
+                }
+            }
+        });
+        d.callSerially(new Runnable() {
+            @Override
+            public void run() {
+                Form f = d.getCurrent();
+                if (f != null) {
+                    dragWheelStep(f, x, y, scrollX / 2, scrollY / 2, false, false);
+                }
+            }
+        });
+        d.callSerially(new Runnable() {
+            @Override
+            public void run() {
+                Form f = d.getCurrent();
+                if (f != null) {
+                    dragWheelStep(f, x, y, scrollX * 3 / 4, scrollY * 3 / 4, false, false);
+                }
+            }
+        });
+        d.callSerially(new Runnable() {
+            @Override
+            public void run() {
+                Form f = d.getCurrent();
+                if (f != null) {
+                    dragWheelStep(f, x, y, scrollX, scrollY, false, true);
+                }
+                scrollWheeling = false;
+            }
+        });
+    }
+
+    /// One synthetic step of a `#pointerWheelMoved` gesture, on the EDT: optionally
+    /// presses, drags to the accumulated `(dx, dy)` offset, and optionally
+    /// releases. The component under the cursor is made non-focusable around the
+    /// step so the synthetic press is not turned into a selection/click.
+    private void dragWheelStep(Form f, int x, int y, int dx, int dy, boolean press, boolean release) {
+        Component cmp;
+        try {
+            cmp = f.getComponentAt(x, y);
+        } catch (Throwable t) {
+            // getComponentAt can transiently fault while the UI is mutating off-EDT.
+            cmp = null;
+        }
+        boolean unfocus = cmp != null && cmp.isFocusable();
+        if (unfocus) {
+            cmp.setFocusable(false);
+        }
+        try {
+            if (press) {
+                f.pointerPressed(x, y);
+            }
+            f.pointerDragged(x + dx, y + dy);
+            if (release) {
+                f.pointerReleased(x + dx, y + dy);
+            }
+        } finally {
+            if (unfocus) {
+                cmp.setFocusable(true);
+            }
+        }
     }
 
     /// Blocks or enables copy and paste in the entire app.
@@ -10217,6 +10574,42 @@ public abstract class CodenameOneImplementation {
         return false;
     }
 
+    /// Returns true if the platform supports publishing data to a Wallet
+    /// issuer-provisioning extension (iOS only). Defaults to false.
+    public boolean isWalletExtensionSupported() {
+        return false;
+    }
+
+    /// Removes all published Wallet extension pass entries from one of the
+    /// two lists. No-op on platforms without Wallet extension support.
+    ///
+    /// #### Parameters
+    ///
+    /// - `remote`: true for the Apple Watch list, false for the iPhone list
+    public void walletExtensionClearPassEntries(boolean remote) {
+    }
+
+    /// Appends one pass entry to the published Wallet extension list. No-op
+    /// on platforms without Wallet extension support.
+    public void walletExtensionAddPassEntry(boolean remote, String identifier, String title,
+            String cardholderName, String accountSuffix, String network, String description, byte[] artPng) {
+    }
+
+    /// Sets the Wallet extension requires-authentication flag. No-op on
+    /// platforms without Wallet extension support.
+    public void walletExtensionSetRequiresAuthentication(boolean requiresAuthentication) {
+    }
+
+    /// Publishes the Wallet extension auth token, or removes it when null.
+    /// No-op on platforms without Wallet extension support.
+    public void walletExtensionSetAuthToken(String token) {
+    }
+
+    /// Clears all published Wallet extension data. No-op on platforms
+    /// without Wallet extension support.
+    public void walletExtensionClear() {
+    }
+
     /// Delivers shared content to the running application instance. onReceivedSharedContent
     /// is defined on com.codename1.system.Lifecycle, so apps that handle shared content
     /// extend Lifecycle; non-Lifecycle apps cannot override it and are skipped. The
@@ -10408,6 +10801,70 @@ public abstract class CodenameOneImplementation {
     /// true if this device is jailbroken or rooted, false if not or unknown.
     public boolean isJailbrokenDevice() {
         return false;
+    }
+
+    /// Requests a signed device-attestation token (Google Play Integrity on Android, Apple App Attest
+    /// on iOS) bound to the supplied server nonce. The returned token must be sent to and verified by
+    /// the application's backend -- an on-device check is meaningless on a compromised device. This base
+    /// implementation reports the platform as unsupported by completing the resource with an error.
+    ///
+    /// #### Parameters
+    ///
+    /// - `nonce`: a server supplied nonce/challenge bound into the attestation
+    ///
+    /// #### Returns
+    ///
+    /// an `AsyncResource` that completes with the opaque attestation token, or completes with an error
+    /// when attestation is unsupported
+    public AsyncResource<String> requestIntegrityToken(String nonce) {
+        AsyncResource<String> result = new AsyncResource<String>();
+        result.error(new UnsupportedOperationException(
+                "Device integrity attestation is not supported on this platform. On Android enable the "
+                + "android.playIntegrity build hint, on iOS enable the ios.appAttest build hint."));
+        return result;
+    }
+
+    /// Returns true if device-attestation (Play Integrity / App Attest) is available on this device and
+    /// was bundled into the build. False on the base/unsupported implementation.
+    public boolean isAttestationSupported() {
+        return false;
+    }
+
+    /// Non-exiting aggregate RASP check: returns true when the device shows signs of being rooted,
+    /// jailbroken, running under dynamic instrumentation or otherwise tampered. Unlike the launch-gate
+    /// build hints (android.rootCheck / ios.detectJailbreak) this does not terminate the app, so callers
+    /// can make granular runtime decisions (e.g. blocking a high value transaction). The base
+    /// implementation falls back to [#isJailbrokenDevice()].
+    public boolean isDeviceCompromised() {
+        return isJailbrokenDevice();
+    }
+
+    /// Returns the individual reasons behind [#isDeviceCompromised()] (e.g. "root", "frida", "emulator").
+    ///
+    /// #### Returns
+    ///
+    /// an array of machine readable reason codes, empty when the device appears clean
+    public String[] getCompromiseReasons() {
+        if (isDeviceCompromised()) {
+            return new String[] {"jailbreak"};
+        }
+        return new String[0];
+    }
+
+    /// Returns the component identifiers of the accessibility services currently enabled on the device.
+    /// Used to detect malware that abuses Android accessibility services for overlay/remote-control and
+    /// text extraction. Returns an empty array on platforms where this concept does not apply (e.g. iOS).
+    public String[] getEnabledAccessibilityServices() {
+        return new String[0];
+    }
+
+    /// Marks the current screen as secure, blocking OS screenshots, screen recording and accessibility
+    /// screen scraping while it is displayed (Android `FLAG_SECURE`). No-op where unsupported.
+    ///
+    /// #### Parameters
+    ///
+    /// - `secure`: true to mark the window secure, false to clear the flag
+    public void setSecureScreen(boolean secure) {
     }
 
     /// Returns the build hints for the simulator, this will only work in the debug environment and it's
@@ -10672,5 +11129,47 @@ public abstract class CodenameOneImplementation {
         byte[] out = new byte[bytes];
         secureRandomBytes(out);
         return out;
+    }
+
+    // -------------------------------------------------------------------
+    // Crash protection (com.codename1.crash.CrashProtection) -- platform
+    // hooks that let the framework attach native log context and
+    // off-EDT / native-layer crash data to uploaded crash reports.
+    // Default no-op implementations keep platforms that don't yet
+    // support a given hook completely silent.
+    // -------------------------------------------------------------------
+
+    /// Snapshot of recent platform-log output to attach to a crash
+    /// payload. Used by [com.codename1.crash.CrashProtection] when
+    /// building a report so the developer sees the device log around
+    /// the failure, not just the Java stack frame. Platforms without a
+    /// readable process log (`javase`, `javascript`) return `null`.
+    ///
+    /// Implementations should cap the returned string (e.g. ~32 KB),
+    /// strip sensitive prefixes, and never block.
+    public String getNativeLogSnapshot() {
+        return null;
+    }
+
+    /// Installs the platform native crash handler. On platforms where a
+    /// native crash (a signal, an uncaught Objective-C exception, a
+    /// segfault in JNI code) cannot reach the JVM error path,
+    /// implementations write a structured record to disk in a
+    /// signal-safe way before the process dies. The record is read
+    /// back on the next launch via [#consumePendingNativeCrash()].
+    ///
+    /// Must be idempotent. Default: no-op.
+    public void installNativeCrashHandler() {
+    }
+
+    /// Returns the captured native crash evidence (raw backtrace +
+    /// signal info as a text blob) from [#installNativeCrashHandler()],
+    /// or `null` if none. The implementation MUST delete the
+    /// underlying record before returning so the same crash isn't
+    /// replayed on every launch. The framework wraps the returned
+    /// string in a synthetic {@code NativeCrash} report and hands it
+    /// to the upload queue.
+    public String consumePendingNativeCrash() {
+        return null;
     }
 }

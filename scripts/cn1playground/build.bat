@@ -17,6 +17,10 @@ goto :EOF
 !MVNW! package -DskipTests -Dcodename1.platform^=javase -Dcodename1.buildTarget^=mac-os-x-desktop -U -e
 
 goto :EOF
+:mac_native
+!MVNW! package -DskipTests -Dcodename1.platform^=ios -Dcodename1.buildTarget^=mac-os-x-native -U -e
+
+goto :EOF
 :windows_desktop
 !MVNW! package -DskipTests -Dcodename1.platform^=javase -Dcodename1.buildTarget^=windows-desktop -U -e
 
@@ -31,8 +35,18 @@ call :windows_device _1_%~2 !_0_%~2!
 echo | set /p ^=!_1_%~2!
 
 goto :EOF
+:linux_device
+!MVNW! package -DskipTests -Dcodename1.platform^=linux -Dcodename1.buildTarget^=linux-device -U -e
+
+goto :EOF
 :javascript
-!MVNW! package -DskipTests -Dcodename1.platform^=javascript -Dcodename1.buildTarget^=javascript -U -e
+rem The Playground keeps nearly the whole Codename One API reachable via its
+rem bean-shell registry, so the ParparVM JS RTA tree-shaking pass runs for over
+rem an hour without pruning much. Disable it (parparvm.js.rta.off); the un-pruned
+rem bundle is large, so raise the translator heap above the 512m default to avoid
+rem an OutOfMemoryError mid-emit. See README.md "JavaScript Port".
+if not defined CN1_TRANSLATOR_OPTS set CN1_TRANSLATOR_OPTS=-Dparparvm.js.rta.off -Xmx6g
+!MVNW! package -DskipTests -Dcodename1.platform^=javascript -Dcodename1.buildTarget^=local-javascript -U -e
 
 goto :EOF
 :android
@@ -94,11 +108,15 @@ echo     Builds android app.
 echo   mac_desktop
 echo     Builds Mac OS desktop app.
 echo     *Mac OS Desktop builds are a Pro user feature.
+echo   mac_native
+echo     Builds a native Mac app ^(no JVM^).
 echo   windows_desktop
 echo     Builds Windows desktop app.
 echo     *Windows Desktop builds are a Pro user feature.
 echo   windows_device
 echo     Builds UWP Windows app.
+echo   linux_device
+echo     Builds a native Linux app ^(ELF^, no JVM^).
 echo   javascript
 echo     Builds as a web app.
 echo     *Javascript builds are an Enterprise user feature

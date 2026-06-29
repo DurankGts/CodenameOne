@@ -3,8 +3,12 @@ set -e
 MVNW="./mvnw"
 
 function mac_desktop {
-  
+
   "$MVNW" "package" "-DskipTests" "-Dcodename1.platform=javase" "-Dcodename1.buildTarget=mac-os-x-desktop" "-U" "-e"
+}
+function mac_native {
+
+  "$MVNW" "package" "-DskipTests" "-Dcodename1.platform=ios" "-Dcodename1.buildTarget=mac-os-x-native" "-U" "-e"
 }
 function windows_desktop {
   
@@ -15,12 +19,22 @@ function windows_device {
   "$MVNW" "package" "-DskipTests" "-Dcodename1.platform=win" "-Dcodename1.buildTarget=windows-device" "-U" "-e"
 }
 function uwp {
-  
-  "windows_device" 
+
+  "windows_device"
+}
+function linux_device {
+
+  "$MVNW" "package" "-DskipTests" "-Dcodename1.platform=linux" "-Dcodename1.buildTarget=linux-device" "-U" "-e"
 }
 function javascript {
-  
-  "$MVNW" "package" "-DskipTests" "-Dcodename1.platform=javascript" "-Dcodename1.buildTarget=javascript" "-U" "-e"
+  # The Playground's bean-shell registry keeps nearly the whole Codename One
+  # API reachable, so the ParparVM JS Rapid Type Analysis (RTA) tree-shaking
+  # pass cannot prune much yet runs for well over an hour. Disable RTA
+  # (parparvm.js.rta.off); the resulting un-pruned bundle is large, so give
+  # the translator a bigger heap than the 512m default to avoid an
+  # OutOfMemoryError mid-emit. See README.md "JavaScript Port".
+  CN1_TRANSLATOR_OPTS="${CN1_TRANSLATOR_OPTS:--Dparparvm.js.rta.off -Xmx6g}" \
+    "$MVNW" "package" "-DskipTests" "-Dcodename1.platform=javascript" "-Dcodename1.buildTarget=local-javascript" "-U" "-e"
 }
 function javascript_compare {
   "javascript"
@@ -96,11 +110,15 @@ function help {
   "echo" "-e" "  mac_desktop"
   "echo" "-e" "    Builds Mac OS desktop app."
   "echo" "-e" "    *Mac OS Desktop builds are a Pro user feature."
+  "echo" "-e" "  mac_native"
+  "echo" "-e" "    Builds a native Mac app (no JVM)."
   "echo" "-e" "  windows_desktop"
   "echo" "-e" "    Builds Windows desktop app."
   "echo" "-e" "    *Windows Desktop builds are a Pro user feature."
   "echo" "-e" "  windows_device"
   "echo" "-e" "    Builds UWP Windows app."
+  "echo" "-e" "  linux_device"
+  "echo" "-e" "    Builds a native Linux app (ELF, no JVM)."
   "echo" "-e" "  javascript"
   "echo" "-e" "    Builds as a web app."
   "echo" "-e" "    *Javascript builds are an Enterprise user feature"

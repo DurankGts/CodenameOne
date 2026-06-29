@@ -94,11 +94,9 @@ final class PlaygroundExamples {
                     Form form = new Form("Lifecycle Demo", BoxLayout.y());
                     status = new Label("Ready");
                     Button button = new Button("Tap me");
-                    button.addActionListener(new ActionListener() {
-                        public void actionPerformed(ActionEvent evt) {
-                            status.setText("Tapped at " + System.currentTimeMillis());
-                            status.getParent().revalidate();
-                        }
+                    button.addActionListener(evt -> {
+                        status.setText("Tapped at " + System.currentTimeMillis());
+                        status.getParent().revalidate();
                     });
                     form.addAll(new Label("Lifecycle-style scripts are the easiest place to test listeners."), button, status);
                     form.show();
@@ -260,22 +258,18 @@ final class PlaygroundExamples {
             SpanLabel output = new SpanLabel("Tap fetch to load https://www.codenameone.com/feed.xml");
             Button fetch = new Button("Fetch Feed XML");
             FontImage.setMaterialIcon(fetch, FontImage.MATERIAL_CLOUD_DOWNLOAD);
-            fetch.addActionListener(new ActionListener() {
-                public void actionPerformed(ActionEvent evt) {
-                    ConnectionRequest req = new ConnectionRequest();
-                    req.setUrl("https://www.codenameone.com/feed.xml");
-                    req.setHttpMethod("GET");
-                    req.addResponseListener(new ActionListener() {
-                        public void actionPerformed(ActionEvent event) {
-                            NetworkEvent ne = (NetworkEvent) event;
-                            byte[] data = ne.getConnectionRequest().getResponseData();
-                            String text = data == null ? "No data" : new String(data);
-                            output.setText(text.length() > 280 ? text.substring(0, 280) + "..." : text);
-                            output.getParent().revalidate();
-                        }
-                    });
-                    NetworkManager.getInstance().addToQueue(req);
-                }
+            fetch.addActionListener(evt -> {
+                ConnectionRequest req = new ConnectionRequest();
+                req.setUrl("https://www.codenameone.com/feed.xml");
+                req.setHttpMethod("GET");
+                req.addResponseListener(event -> {
+                    NetworkEvent ne = (NetworkEvent) event;
+                    byte[] data = ne.getConnectionRequest().getResponseData();
+                    String text = data == null ? "No data" : new String(data);
+                    output.setText(text.length() > 280 ? text.substring(0, 280) + "..." : text);
+                    output.getParent().revalidate();
+                });
+                NetworkManager.getInstance().addToQueue(req);
             });
             root.addAll(fetch, output);
             """;
@@ -306,36 +300,313 @@ final class PlaygroundExamples {
             """;
 
     static final String CAMERA_SCRIPT = """
-            import com.codename1.capture.Capture;
+            import com.codename1.camera.Camera;
+            import com.codename1.camera.CameraFacing;
+            import com.codename1.camera.CameraInfo;
+            import com.codename1.camera.CameraSession;
+            import com.codename1.camera.CameraSessionOptions;
+            import com.codename1.camera.CameraView;
+            import com.codename1.camera.CapturedPhoto;
             import com.codename1.components.*;
-            import com.codename1.ui.events.*;
             import com.codename1.ui.*;
             import com.codename1.ui.layouts.*;
 
-            Container root = new Container(BoxLayout.y());
-            root.setScrollableY(true);
-            Label status = new Label("Ready to use camera features");
-            root.add(new SpanLabel("Use this sample on device or simulator targets that support capture."));
-            Button photo = new Button("Capture Photo");
-            FontImage.setMaterialIcon(photo, FontImage.MATERIAL_PHOTO_CAMERA);
-            photo.addActionListener(new ActionListener() {
-                public void actionPerformed(ActionEvent evt) {
-                    String path = Capture.capturePhoto();
-                    status.setText(path == null ? "Photo capture cancelled" : path);
-                    root.add(new Label(Image.createImage(path)));
-                    root.revalidate();
+            // The new com.codename1.camera.Camera API opens a LIVE getUserMedia
+            // preview (not a file picker) and snaps a still. The browser prompts
+            // for camera permission; a secure context (HTTPS or localhost) is
+            // required. Camera.open() must originate from a tap.
+            Form form = new Form("Camera", new BorderLayout());
+            Label status = new Label("Tap 'Start Camera'");
+            Button start = new Button("Start Camera");
+            FontImage.setMaterialIcon(start, FontImage.MATERIAL_VIDEOCAM);
+            Button snap = new Button("Take Photo");
+            FontImage.setMaterialIcon(snap, FontImage.MATERIAL_PHOTO_CAMERA);
+            snap.setEnabled(false);
+            Container south = new Container(BoxLayout.y());
+            south.addAll(start, snap, status);
+            form.add(BorderLayout.SOUTH, south);
+
+            CameraSession[] sessionHolder = new CameraSession[1];
+
+            start.addActionListener(evt -> {
+                if (!Camera.isSupported()) {
+                    status.setText("Camera not supported on this device");
+                    status.getParent().revalidate();
+                    return;
                 }
-            });
-            Button audio = new Button("Record Audio");
-            FontImage.setMaterialIcon(audio, FontImage.MATERIAL_MIC);
-            audio.addActionListener(new ActionListener() {
-                public void actionPerformed(ActionEvent evt) {
-                    String path = Capture.captureAudio();
-                    status.setText(path == null ? "Audio capture cancelled" : path);
+                CameraInfo info = Camera.getDefault(CameraFacing.BACK);
+                if (info == null) {
+                    status.setText("No camera available");
+                    status.getParent().revalidate();
+                    return;
+                }
+                try {
+                    CameraSession session = Camera.open(info, new CameraSessionOptions());
+                    sessionHolder[0] = session;
+                    CameraView view = session.createView();
+                    form.add(BorderLayout.CENTER, view);
+                    start.setEnabled(false);
+                    snap.setEnabled(true);
+                    status.setText("Live preview running - tap 'Take Photo'");
+                    form.revalidate();
+                } catch (Exception ex) {
+                    status.setText("Camera open failed: " + ex.getMessage());
                     status.getParent().revalidate();
                 }
             });
-            root.addAll(photo, audio, status);
+
+            snap.addActionListener(evt -> {
+                CameraSession session = sessionHolder[0];
+                if (session == null) {
+                    return;
+                }
+                status.setText("Capturing...");
+                status.getParent().revalidate();
+                session.takePhoto().ready(photo -> {
+                    try {
+                        Image img = photo.toImage();
+                        status.setText("Captured " + photo.getWidth() + " x " + photo.getHeight());
+                        status.getParent().revalidate();
+                        Dialog dlg = new Dialog("Captured Photo");
+                        dlg.setLayout(new BorderLayout());
+                        dlg.add(BorderLayout.CENTER,
+                                new Label(img.scaledWidth(Display.getInstance().getDisplayWidth() - 80)));
+                        Button done = new Button("Close");
+                        done.addActionListener(e2 -> dlg.dispose());
+                        dlg.add(BorderLayout.SOUTH, done);
+                        dlg.show();
+                    } catch (Exception ex) {
+                        status.setText("Capture failed: " + ex.getMessage());
+                        status.getParent().revalidate();
+                    }
+                });
+            });
+
+            form.show();
+            """;
+
+    static final String PHYSICS_SCRIPT = """
+            import com.codename1.ui.*;
+            import com.codename1.ui.geom.*;
+            import com.codename1.ui.layouts.*;
+            import com.codename1.ui.util.*;
+
+            // A tiny game loop: balls fall under gravity and bounce off the
+            // walls and floor. Position / velocity live in parallel float[]
+            // arrays; the loop runs from a UITimer and the scene is drawn through
+            // GameScripting.canvas, which bridges a (Graphics, Component) lambda
+            // to a paintable Component (bsh can't subclass Component to override
+            // paint() on the ahead-of-time-compiled JavaScript port).
+            float[] x = { 40f, 78f, 116f, 154f, 192f, 230f, 268f };
+            float[] y = { 40f, 70f, 100f, 40f, 70f, 100f, 40f };
+            float[] vx = { 2.4f, -2.0f, 2.8f, -2.6f, 2.2f, -2.4f, 2.0f };
+            float[] vy = { 0f, 0f, 0f, 0f, 0f, 0f, 0f };
+            int[] col = { 0x5fd0d6, 0xf2b134, 0xe8615f, 0x9b8cf2, 0x6fcf6b, 0xf28cc8, 0x7aa7ff };
+
+            Component view = GameScripting.canvas(320, 480, g -> {
+                g.setColor(0x10182a);
+                g.fillRect(0, 0, 320, 480);
+                for (int i = 0; i < x.length; i++) {
+                    g.setColor(col[i]);
+                    g.fillArc((int) x[i] - 16, (int) y[i] - 16, 32, 32, 0, 360);
+                }
+            });
+
+            Form form = new Form("Bouncing Balls", new BorderLayout());
+            form.add(BorderLayout.CENTER, view);
+            UITimer.timer(16, true, form, () -> {
+                for (int i = 0; i < x.length; i++) {
+                    vy[i] += 0.45f;
+                    x[i] += vx[i];
+                    y[i] += vy[i];
+                    if (x[i] < 16f) { x[i] = 16f; vx[i] = -vx[i]; }
+                    if (x[i] > 304f) { x[i] = 304f; vx[i] = -vx[i]; }
+                    if (y[i] > 464f) { y[i] = 464f; vy[i] = -vy[i] * 0.78f; }
+                }
+                view.repaint();
+            });
+            form.show();
+            """;
+
+    static final String GPU_SCRIPT = """
+            import com.codename1.ui.*;
+            import com.codename1.ui.layouts.*;
+            import com.codename1.gpu.*;
+
+            // GPU 3D: a spinning cube rendered through the RenderView / gpu API.
+            // The two lambdas are the Renderer's onInit / onFrame callbacks
+            // (GpuScripting bridges them to the multi-method Renderer interface).
+            // Renders on GPU-capable targets (WebGL browsers, device builds).
+            Form form = new Form("3D / GPU", new BorderLayout());
+
+            Camera camera = new Camera()
+                    .setPerspective(60f, 0.1f, 100f)
+                    .setPosition(0f, 0f, 4f)
+                    .setTarget(0f, 0f, 0f);
+            Mesh[] cube = new Mesh[1];
+            Material[] material = new Material[1];
+            float[] angle = { 0f };
+
+            RenderView view = new RenderView(GpuScripting.renderer(
+                device -> {
+                    cube[0] = Primitives.cube(device, 1f);
+                    material[0] = new Material(Material.Type.PHONG).setColor(0xff3399ff);
+                },
+                device -> {
+                    angle[0] += 0.02f;
+                    device.clear(0xff10182a, true, true);
+                    device.setCamera(camera);
+                    device.draw(cube[0], material[0], Matrix4.rotation(angle[0], 0.4f, 1f, 0.2f));
+                }));
+            view.setContinuous(true);
+
+            form.add(BorderLayout.CENTER, view);
+            form.show();
+            """;
+
+    static final String CLIPBOARD_SCRIPT = """
+            import com.codename1.components.*;
+            import com.codename1.ui.*;
+            import com.codename1.ui.layouts.*;
+
+            // Copies text to the system clipboard via Display.copyToClipboard().
+            // On the web (JavaScript port) the write is performed on the browser's
+            // main thread through the Clipboard API / execCommand fallback.
+            Container root = new Container(BoxLayout.y());
+            root.setScrollableY(true);
+            root.add(new SpanLabel(
+                "Type something, tap Copy, then paste (Cmd/Ctrl+V) into another app to confirm the system clipboard received it."));
+
+            TextField input = new TextField("https://www.codenameone.com", "Text to copy");
+            Label status = new Label("Ready");
+
+            Button copy = new Button("Copy to Clipboard");
+            FontImage.setMaterialIcon(copy, FontImage.MATERIAL_CONTENT_COPY);
+            copy.addActionListener(evt -> {
+                Display.getInstance().copyToClipboard(input.getText());
+                status.setText("Copied: " + input.getText());
+                status.getParent().revalidate();
+                ctx.log("copyToClipboard called");
+            });
+
+            Button paste = new Button("Read Back");
+            FontImage.setMaterialIcon(paste, FontImage.MATERIAL_CONTENT_PASTE);
+            paste.addActionListener(evt -> {
+                Object data = Display.getInstance().getPasteDataFromClipboard();
+                status.setText("Clipboard: " + (data == null ? "<empty>" : data.toString()));
+                status.getParent().revalidate();
+            });
+
+            root.addAll(input, copy, paste, status);
+            """;
+
+    static final String SHARE_SCRIPT = """
+            import com.codename1.components.*;
+            import com.codename1.ui.*;
+            import com.codename1.ui.layouts.*;
+
+            // Invokes the native share sheet via Display.share(). On the web this
+            // uses the browser Web Share API (navigator.share), which requires an
+            // HTTPS origin and a user gesture; otherwise it falls back.
+            Container root = new Container(BoxLayout.y());
+            root.setScrollableY(true);
+            root.add(new SpanLabel(
+                "Shares text/links through the platform share dialog (navigator.share on the web)."));
+            root.add(new Label("Native share supported: " + Display.getInstance().isNativeShareSupported()));
+
+            TextField input = new TextField(
+                "Check out Codename One https://www.codenameone.com", "Text to share");
+            Label status = new Label("Ready");
+
+            Button share = new Button("Share");
+            FontImage.setMaterialIcon(share, FontImage.MATERIAL_SHARE);
+            share.addActionListener(evt -> {
+                Display.getInstance().share(input.getText());
+                status.setText("share() invoked");
+                status.getParent().revalidate();
+                ctx.log("share called");
+            });
+
+            root.addAll(input, share, status);
+            """;
+
+    static final String FULLSCREEN_SCRIPT = """
+            import com.codename1.components.*;
+            import com.codename1.ui.*;
+            import com.codename1.ui.layouts.*;
+
+            // Enters/exits browser fullscreen via CN.requestFullScreen() and
+            // CN.exitFullScreen(). Fullscreen requires a user gesture on the web.
+            Container root = new Container(BoxLayout.y());
+            root.setScrollableY(true);
+            root.add(new SpanLabel("Toggle the browser fullscreen mode."));
+
+            Label status = new Label("");
+
+            Button enter = new Button("Enter Fullscreen");
+            FontImage.setMaterialIcon(enter, FontImage.MATERIAL_FULLSCREEN);
+            enter.addActionListener(evt -> {
+                CN.requestFullScreen();
+                status.setText("Supported: " + CN.isFullScreenSupported()
+                    + "  In fullscreen: " + CN.isInFullScreenMode());
+                status.getParent().revalidate();
+            });
+
+            Button exit = new Button("Exit Fullscreen");
+            FontImage.setMaterialIcon(exit, FontImage.MATERIAL_FULLSCREEN_EXIT);
+            exit.addActionListener(evt -> {
+                CN.exitFullScreen();
+                status.setText("Supported: " + CN.isFullScreenSupported()
+                    + "  In fullscreen: " + CN.isInFullScreenMode());
+                status.getParent().revalidate();
+            });
+
+            status.setText("Supported: " + CN.isFullScreenSupported()
+                + "  In fullscreen: " + CN.isInFullScreenMode());
+            root.addAll(enter, exit, status);
+            """;
+
+    static final String PRINT_SCRIPT = """
+            import com.codename1.components.*;
+            import com.codename1.printing.*;
+            import com.codename1.ui.*;
+            import com.codename1.ui.layouts.*;
+
+            // Prints an image through Printer.printImage(). On the web this opens
+            // the browser print dialog for a generated PNG. The result listener
+            // is a lambda (PrintResultListener is in the lambda-adapter switch).
+            Container root = new Container(BoxLayout.y());
+            root.setScrollableY(true);
+            root.add(new SpanLabel("Generate an image and send it to the platform print dialog."));
+            root.add(new Label("Printing supported: " + Printer.isPrintingSupported()));
+
+            Label status = new Label("Ready");
+
+            Button print = new Button("Print Sample Image");
+            FontImage.setMaterialIcon(print, FontImage.MATERIAL_PRINT);
+            print.addActionListener(evt -> {
+                Image img = Image.createImage(400, 250, 0xffffffff);
+                Graphics g = img.getGraphics();
+                g.setColor(0x1565c0);
+                g.fillRect(0, 0, 400, 250);
+                g.setColor(0xffffff);
+                g.drawString("Codename One Playground", 40, 110);
+                status.setText("Printing...");
+                status.getParent().revalidate();
+                Printer.printImage(img, result -> {
+                    if (result.isCompleted()) {
+                        status.setText("Print dialog opened");
+                    } else if (result.isCancelled()) {
+                        status.setText("Print cancelled");
+                    } else {
+                        status.setText("Print failed: " + result.getError());
+                    }
+                    status.getParent().revalidate();
+                });
+                ctx.log("printImage called");
+            });
+
+            root.addAll(print, status);
             """;
 
     static final Sample[] SAMPLES = new Sample[]{
@@ -350,7 +621,13 @@ final class PlaygroundExamples {
             new Sample("BrowserComponent", BROWSER_SCRIPT),
             new Sample("Network Fetch", NETWORK_SCRIPT),
             new Sample("REST Request", REST_SCRIPT),
-            new Sample("Camera Capture", CAMERA_SCRIPT)
+            new Sample("Camera Capture", CAMERA_SCRIPT),
+            new Sample("Clipboard", CLIPBOARD_SCRIPT),
+            new Sample("Native Share", SHARE_SCRIPT),
+            new Sample("Fullscreen", FULLSCREEN_SCRIPT),
+            new Sample("Printing", PRINT_SCRIPT),
+            new Sample("Bouncing Balls", PHYSICS_SCRIPT),
+            new Sample("3D / GPU", GPU_SCRIPT)
     };
 
     private PlaygroundExamples() {

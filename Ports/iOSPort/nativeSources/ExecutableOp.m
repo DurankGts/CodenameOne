@@ -28,7 +28,7 @@
 
 
 extern void logGlErrorAt(const char *f, int l) {
-#ifdef CN1_USE_METAL
+#if defined(CN1_USE_METAL) || TARGET_OS_WATCH
     // No GL context on the Metal backend (and no GL symbols at all on
     // the Mac Catalyst slice). Callers still expand GLErrorLog macros
     // unconditionally; honour them with a no-op so the rendering ops
@@ -74,6 +74,9 @@ static BOOL blockDrawing = NO;
 
 #ifndef CN1_USE_ARC
 -(void)dealloc {
+#ifdef CN1_USE_METAL
+    [target release];
+#endif
 	[super dealloc];
 }
 #endif
@@ -134,6 +137,17 @@ static BOOL blockDrawing = NO;
     return target;
 }
 -(void)setTarget:(GLUIImage*)t {
+    // The drawFrame drain dereferences this on the main thread after the EDT
+    // queued the op. An unretained mutable image can be deallocated in between
+    // (Java-side GC finalizing the Image), leaving a dangling pointer that
+    // surfaced as unrecognized-selector / SIGSEGV mid-frame. Retain like the
+    // ops' image ivars (e.g. DrawImage.img).
+#ifndef CN1_USE_ARC
+    if (t != target) {
+        [t retain];
+        [target release];
+    }
+#endif
     target = t;
 }
 #endif

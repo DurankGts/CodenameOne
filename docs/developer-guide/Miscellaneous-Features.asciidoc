@@ -458,7 +458,11 @@ cn1_icon_<lang>[_<country>].png
 * `cn1_icon_en_GB.png`: British English
 * `cn1_icon_es_MX.png`: Mexican Spanish
 
-Supply a square source image at least 432×432 pixels (the largest size emitted for Android adaptive icons); the build resizes it to every target density. The default app icon continues to be controlled by your `codenameone_settings.properties` file and is used whenever the device locale doesn't match any of the localized variants. At runtime the builders look for a `<lang>_<COUNTRY>` match first, then fall back to a bare `<lang>` match. Providing both (for example `cn1_icon_en.png` plus `cn1_icon_en_GB.png`) lets you give British users a country-specific icon while every other English locale still receives the generic English icon.
+Supply a square source image at least 432×432 pixels (the largest size emitted for Android adaptive icons; 1024×1024 is recommended, matching the main app icon); the build resizes it to every target density. A smaller source would be upscaled and look blurry, so the build now fails with a clear error when it detects an undersized localized icon rather than shipping a soft one. The default app icon continues to be controlled by your `codenameone_settings.properties` file and is used whenever the device locale doesn't match any of the localized variants.
+
+NOTE: These icons live under `src/main/resources` and Maven copies them into `target/classes` incrementally — it *doesn't* delete the copy when you remove or rename the source file. If you replace a localized icon and still see the old (often blurry) one, run `mvn clean` to clear the stale resource from `target/classes` before rebuilding. The build also fails when it finds an undersized `cn1_icon_*.png` in the compiled output that's about to be bundled and sent to the build server.
+
+At runtime the builders look for a `<lang>_<COUNTRY>` match first, then fall back to a bare `<lang>` match. Providing both (for example `cn1_icon_en.png` plus `cn1_icon_en_GB.png`) lets you give British users a country-specific icon while every other English locale still receives the generic English icon.
 
 ===== Android behavior
 
@@ -1009,40 +1013,9 @@ The last value is the type of content picked which can be one of:
 
 === Analytics integration
 
-One of the features in Codename One is built-in support for analytic instrumentation. Codename One has built-in support for https://www.google.com/analytics/[Google Analytics], which provides reasonable enough statistics of application usage.
+Analytics now has its own chapter. It covers the provider SPI, consent and privacy handling, the built-in providers (the Codename One first-party service, Google Analytics 4, Matomo, Firebase and a logging provider), and how to write your own. See the <<analytics, Analytics>> chapter.
 
-Analytics is pretty seamless for the old GUI builder since navigation occurs through the Codename One API and can be logged without developer interaction. For example, to begin the instrumentation one needs to add the line:
-
-[source,java]
-----
-AnalyticsService.setAppsMode(true);
-AnalyticsService.init(agent, domain);
-----
-
-To get the value for the agent value create a Google Analytics account and add a domain, then copy and paste the string that looks something like UA-99999999-8 from the console to the agent string. Once this is in place you should start receiving statistic events for the application.
-
-If your application isn't a GUI builder application or you would like to send more detailed data you can use the `Analytics.visit()` method to show that you're entering a specific page.
-
-==== Application level analytics
-
-In 2013 Google introduced an improved application level analytics API that's specifically built for mobile apps. For example, it requires a slightly different API usage. You can activate this specific mode by invoking `setAppsMode(true)`.
-
-When using this mode you can also report errors and crashes to the Google Analytics server using the `sendCrashReport(Throwable, String message, boolean fatal)` method.
-
-You recommend using this mode and setting up an apps analytics account as the results are more refined.
-
-==== Overriding the analytics implementation
-
-The Analytics API can also be enhanced to support any other form of analytics solution of your own choosing by deriving the `AnalyticsService` class.
-
-This allows you to integrate with any 3rd party through native or otherwise by overriding methods in the `AnalyticsService` class then invoking:
-
-[source,java]
-----
-AnalyticsService.init(new MyAnalyticsServiceSubclass());
-----
-
-Notice that this removes the need to invoke the other `init` method or `setAppsMode(boolean)`.
+The `AnalyticsService` class documented here previously is deprecated but still works -- it delegates to the new API. The migration table at the end of the <<analytics, Analytics>> chapter maps each old call to its replacement.
 
 === Social sign-in (Facebook, Google, ...)
 
@@ -1422,7 +1395,7 @@ Still, if you want to keep an eye of every change in the resource file you can s
 
 That's useful as you can edit the files directly and keep track of every file in git. For example, this has two big drawbacks:
 
-- it's flaky - while this mode works it never reached the stability of the regular res file mode
+- It's flaky - while this mode works it never reached the stability of the regular res file mode
 - It conflicts - the simulator/device are oblivious to this mode. If you fetch an update you also need to update the res file and you might still have conflicts related to that file
 
 Both of these issues shouldn't be a deal-breaker. Even though this mode is a bit flaky it's better than the alternative as you can "see" the content of the resource file. You can revert and reapply your changes to the res file when merging from git, it's tedious but again not a deal-breaker.

@@ -43,6 +43,8 @@ import com.codename1.location.LocationManager;
 import com.codename1.media.Media;
 import com.codename1.media.MediaRecorderBuilder;
 import com.codename1.messaging.Message;
+import com.codename1.printing.PrintResult;
+import com.codename1.printing.PrintResultListener;
 import com.codename1.push.PushCallback;
 import com.codename1.teavm.ext.localforage.LocalForage;
 import com.codename1.teavm.ext.localforage.LocalForage.ItemSavedListener;
@@ -110,6 +112,7 @@ import java.util.Date;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.Locale;
@@ -160,6 +163,13 @@ public class HTML5Implementation extends CodenameOneImplementation {
     private static HTML5Implementation instance;
     private boolean shiftKeyDown;
     private BufferedGraphics graphics;
+
+    /// The display's buffered graphics. Exposed so a WebGL peer can blit its
+    /// offscreen frame into the display op stream during its own paint() (in
+    /// z-order), instead of compositing on top after the whole frame is painted.
+    BufferedGraphics displayGraphics() {
+        return graphics;
+    }
     Window window;
     // The document is a stable singleton for the life of the page. Resolve it
     // ONCE (at __init, with no concurrent barrier traffic) and reuse the cached
@@ -1232,7 +1242,16 @@ public class HTML5Implementation extends CodenameOneImplementation {
         document = window.getDocument();
         canvas = (HTMLCanvasElement)document.createElement("canvas");
         outputCanvas = (HTMLCanvasElement)document.getElementById("codenameone-canvas");
-        outputCanvas.getStyle().setProperty("pointer-events", "none");
+        // The canvas must be hit-testable from the start: it boots with no
+        // active peers, and the per-event listeners installed later only
+        // flip pointer-events to "none" when the point is over a native
+        // peer. Booting with "none" relied on the window-level restore
+        // listener flipping it back on the first event -- but that restore
+        // round-trips through the worker bridge, so the initial pointer
+        // DOWN is always lost and the first gesture after load is silently
+        // swallowed (observed on the Initializr as scroll/drag doing
+        // nothing).
+        outputCanvas.getStyle().setProperty("pointer-events", "auto");
         peersContainer = (HTMLElement)document.createElement("div");
         peersContainer.setAttribute("id", "cn1-peers-container");
         outputCanvas.getParentNode().insertBefore(peersContainer, outputCanvas);
@@ -1535,15 +1554,13 @@ public class HTML5Implementation extends CodenameOneImplementation {
                         || (evt.getTarget() == textField || evt.getTarget() == textArea);
                 if (ignore) {
                     debugLog("[mouseDown] touchIsDown");
-                    if (pointerState.isTouchDown()) {
-                        pointerState.setMouseDown(false);
-                    }
+                    // Ignored press (touch already down, or the target is a native
+                    // text field): clear mouseDown so the permanent mousemove
+                    // listener's press gate does not dispatch drags for it.
+                    pointerState.setMouseDown(false);
                     completePressInFlight();
                     return;
                 }
-                onMouseMoveHandle = EventUtil.addEventListener(peersContainer, "mousemove", onMouseMove, true);
-                onPointerMoveHandle = EventUtil.addEventListener(peersContainer, "pointermove", onMouseMove, true);
-
                 pointerState.setLastMousePosition(x, y);
                 // ``mouseDown=true`` already set at handler entry — see comment
                 // at top. Don't unset/re-set here; doing so opens the same
@@ -1611,9 +1628,6 @@ public class HTML5Implementation extends CodenameOneImplementation {
                     return;
                 }
                 pointerState.setMouseDown(false);
-
-                EventUtil.removeEventListener(peersContainer, "mousemove", onMouseMoveHandle, true);
-                EventUtil.removeEventListener(peersContainer, "pointermove", onPointerMoveHandle, true);
 
                 pointerState.setLastTouchUpPosition(x, y);
                 installBacksideHooksInUserInteraction();
@@ -1699,17 +1713,13 @@ public class HTML5Implementation extends CodenameOneImplementation {
                 if (touchDecision.shouldCancelMouseTracking()) {
                     debugLog("[touchStart] mouseIsDown");
                     pointerState.setMouseDown(false);
-                    EventUtil.removeEventListener(peersContainer, "mousemove", onMouseMoveHandle, true);
-                    EventUtil.removeEventListener(peersContainer, "pointermove", onPointerMoveHandle, true);
                     pointerState.setTouchDown(false);
                 }
                 pointerState.setTouchDown(true);
                 
                 
                 pointerState.setTouches(x, y);
-                
-                onTouchMoveHandle = EventUtil.addEventListener(peersContainer, "touchmove", onTouchMove, true);
-                
+
                 callSerially(new Runnable() {
 
                     @Override
@@ -1779,7 +1789,6 @@ public class HTML5Implementation extends CodenameOneImplementation {
                 pointerState.setGrabbedDrag(false);
                 
                 TouchEvent me = (TouchEvent)evt;
-                EventUtil.removeEventListener(peersContainer, "touchmove", onTouchMoveHandle, true); 
                 installBacksideHooksInUserInteraction();
                 nativeCallSerially(new Runnable() {
                     @Override
@@ -1810,6 +1819,16 @@ public class HTML5Implementation extends CodenameOneImplementation {
             
             @Override
             public void handleEvent(Event evt) {
+                // touchmove is registered permanently on the canvas (see init) so a
+                // drag's events are never lost to the late-attach race that used to
+                // add it inside the suspending onTouchStart. Only act while a touch
+                // is actually down. Keep this gate FIRST and cheap: the listener is
+                // permanent, so it fires on every touchmove -- debugLog (a native
+                // debugFlag bridge call) must stay BELOW the gate, else it taxes
+                // every move app-wide even when no drag is in progress.
+                if (!pointerState.isTouchDown()) {
+                    return;
+                }
                 debugLog("in TouchMove");
                 TouchEvent me = (TouchEvent)evt;
                 JSArray<MouseEvent> touches = me.getTargetTouches();
@@ -1832,7 +1851,6 @@ public class HTML5Implementation extends CodenameOneImplementation {
                 
                 if (JavaScriptInputCoordinator.shouldCancelTouchMove(pointerState.isMouseDown())) {
                     pointerState.setTouchDown(false);
-                    EventUtil.removeEventListener(peersContainer, "touchmove", onTouchMoveHandle, true);
                     return;
                 }
                 
@@ -1851,6 +1869,18 @@ public class HTML5Implementation extends CodenameOneImplementation {
             
             @Override
             public void handleEvent(Event evt) {
+                // mousemove/pointermove are registered permanently on the canvas
+                // (see init) so a drag's events are never lost to the late-attach
+                // race that used to add them inside the suspending onMouseDown
+                // (which the cooperative scheduler can take a while to complete).
+                // Only act while a pointer is actually pressed. Keep this gate
+                // FIRST and cheap: the listener is permanent AND bound to both
+                // mousemove and pointermove, so it fires (twice) on every mouse
+                // move -- debugLog (a native debugFlag bridge call) must stay BELOW
+                // the gate, else it taxes every hover app-wide.
+                if (!pointerState.isMouseDown()) {
+                    return;
+                }
                 debugLog("In mouseMove");
                 MouseEvent me = (MouseEvent)evt;
                 final int x = getClientX(me);
@@ -1862,8 +1892,6 @@ public class HTML5Implementation extends CodenameOneImplementation {
 
                 if (JavaScriptInputCoordinator.shouldCancelMouseMove(pointerState.isTouchDown())) {
                     pointerState.setMouseDown(false);
-                    EventUtil.removeEventListener(peersContainer, "mousemove", onMouseMoveHandle, true);
-                    EventUtil.removeEventListener(peersContainer, "pointermove", onPointerMoveHandle, true);
                     return;
                 }
                 
@@ -2042,15 +2070,35 @@ public class HTML5Implementation extends CodenameOneImplementation {
                 }
 
             };
+        // Bind pointer/touch/wheel input to the CANVAS, not ``peersContainer``.
+        // The canvas is the top, full-screen render surface; ``peersContainer``
+        // is a full-screen overlay deliberately parked BEHIND it (style.css
+        // ``#cn1-peers-container { z-index: -1000 }``) so native peers can show
+        // through transparent regions of the canvas (see ``hitTest`` /
+        // ``copyEventsToNativePeers``). A listener on the buried peers container
+        // never receives a click that lands on the canvas, so binding input
+        // there froze ALL pointer input on desktop. The canvas is the element
+        // the browser actually delivers these events to.
         JavaScriptEventWiring.registerPeerPointerEvents(new JavaScriptEventWiring.ElementRegistrar() {
             @Override
             public void add(String eventName, Object listener, boolean capture) {
-                peersContainer.addEventListener(eventName, (EventListener) listener, capture);
+                outputCanvas.addEventListener(eventName, (EventListener) listener, capture);
             }
         }, !debugFlag("disableMousedown"), !debugFlag("disableMouseup"), !debugFlag("disableTouchstart"),
                 !debugFlag("disableTouchend"), !debugFlag("disableWheel"), getWheelEventType(),
                 onMouseDown, hitTest, onMouseUp, onTouchStart, onTouchEnd, wheelListener);
-        
+
+        // Register the drag-move listeners PERMANENTLY on the canvas instead of
+        // adding them inside onMouseDown/onTouchStart. ParparVM's cooperative
+        // scheduler can take a while to complete the press handler, so adding the
+        // move listener there lost the early part of a drag -- touch/drag
+        // scrolling barely registered (a full drag scrolled <1%). onMouseMove /
+        // onTouchMove gate on pointerState.isMouseDown()/isTouchDown(), so they
+        // are no-ops outside an active press (e.g. plain hover).
+        onMouseMoveHandle = EventUtil.addEventListener(outputCanvas, "mousemove", onMouseMove, true);
+        onPointerMoveHandle = EventUtil.addEventListener(outputCanvas, "pointermove", onMouseMove, true);
+        onTouchMoveHandle = EventUtil.addEventListener(outputCanvas, "touchmove", onTouchMove, true);
+
         /**
          *  The installbacksidehooks event is an event that can be triggered from native javascript to install
          *  backside hooks.   This may be necessary if the user is interacting with the page outside of the app, or
@@ -2858,6 +2906,16 @@ public class HTML5Implementation extends CodenameOneImplementation {
 
     
     
+    // Host-page URL forwarded into the worker by browser_bridge.js on START.
+    @JSBody(params={}, script="return self.__cn1LocationHref || '';")
+    private static native String mainLocationHref();
+
+    // A part of the host-page URL (search/hash/origin/pathname/protocol/port/
+    // host/hostname) parsed from the forwarded href. Returns null when the href
+    // wasn't forwarded so callers fall back to the worker's own location.
+    @JSBody(params={"part"}, script="try{var h=self.__cn1LocationHref; if(!h){return null;} var u=new URL(h); var v=u[part]; return (v==null)?'':(''+v);}catch(e){return null;}")
+    private static native String mainLocationPart(String part);
+
     @Override
     public String getProperty(String key, String defaultValue) {
         Window win = (Window)Window.current();
@@ -2869,32 +2927,46 @@ public class HTML5Implementation extends CodenameOneImplementation {
             // need to do anything.
             return "true";
         }
+        // The app runs in a Web Worker; ``Window.current().getLocation()`` there
+        // is the WORKER's location (the worker script URL), NOT the host page.
+        // Query params like ?sample= / ?code= / ?css= (share + deep links) live
+        // on the host page URL, which the bridge forwards to the worker on START
+        // (see browser_bridge.js / worker.js __cn1LocationHref). Prefer that.
         if ("browser.window.location.href".equals(key)) {
-            return ((WindowLocation)Window.current().getLocation()).getHref();
+            String h = mainLocationHref();
+            return (h != null && h.length() > 0) ? h : ((WindowLocation)Window.current().getLocation()).getHref();
         }
         if ("browser.window.location.search".equals(key)) {
-            return Window.current().getLocation().getSearch();
+            String v = mainLocationPart("search");
+            return v != null ? v : Window.current().getLocation().getSearch();
         }
         if ("browser.window.location.host".equals(key)) {
-            return Window.current().getLocation().getHost();
+            String v = mainLocationPart("host");
+            return v != null ? v : Window.current().getLocation().getHost();
         }
         if ("browser.window.location.hash".equals(key)) {
-            return Window.current().getLocation().getHash();
+            String v = mainLocationPart("hash");
+            return v != null ? v : Window.current().getLocation().getHash();
         }
         if ("browser.window.location.origin".equals(key)) {
-            return ((WindowLocation)Window.current().getLocation()).getOrigin();
+            String v = mainLocationPart("origin");
+            return v != null ? v : ((WindowLocation)Window.current().getLocation()).getOrigin();
         }
         if ("browser.window.location.pathname".equals(key)) {
-            return ((WindowLocation)Window.current().getLocation()).getPathname();
+            String v = mainLocationPart("pathname");
+            return v != null ? v : ((WindowLocation)Window.current().getLocation()).getPathname();
         }
         if ("browser.window.location.protocol".equals(key)) {
-            return Window.current().getLocation().getProtocol();
+            String v = mainLocationPart("protocol");
+            return v != null ? v : Window.current().getLocation().getProtocol();
         }
         if ("browser.window.location.port".equals(key)) {
-            return Window.current().getLocation().getPort();
+            String v = mainLocationPart("port");
+            return v != null ? v : Window.current().getLocation().getPort();
         }
         if ("browser.window.location.hostname".equals(key)) {
-            return ((WindowLocation)Window.current().getLocation()).getHostname();
+            String v = mainLocationPart("hostname");
+            return v != null ? v : ((WindowLocation)Window.current().getLocation()).getHostname();
         }
         if ("browser.timezone".equals(key)) {
             String tz = detectTimezone();
@@ -2983,7 +3055,13 @@ public class HTML5Implementation extends CodenameOneImplementation {
             }
             Hashtable tp = r.getTheme(r.getThemeResourceNames()[0]);
 
-            tp.put("StatusBar.padding", "0,0,0,0");
+            // The browser has no OS status bar / notch, so the app must not
+            // reserve a status-bar strip at the top of the Form the way iOS
+            // does. The iOS-modern theme sets paintsTitleBarBool=true to
+            // reserve that safe-area space on real devices; force it off on the
+            // JS port so the web layout starts flush at the top (otherwise the
+            // undefined StatusBar UIID would also paint an opaque strip there).
+            tp.put("@paintsTitleBarBool", "false");
 
             UIManager.getInstance().setThemeProps(tp);
             return;
@@ -3363,6 +3441,19 @@ public class HTML5Implementation extends CodenameOneImplementation {
         
     }
     
+    @Override
+    public boolean isSoundPoolSupported() {
+        return true;
+    }
+
+    @Override
+    public com.codename1.media.SoundPoolPeer createSoundPool(int maxStreams) {
+        // A WebAudio backed pool gives true low latency, per voice volume/pan/rate;
+        // if WebAudio is unavailable this returns null and SoundPool uses the
+        // cross platform MediaManager fallback.
+        return WebAudioSoundPool.tryCreate(this, maxStreams);
+    }
+
     @Override
     public Media createMedia(String uri, boolean isVideo, final Runnable onCompletion) throws IOException {
         return createMedia(uri, isVideo, null, onCompletion);
@@ -5107,6 +5198,43 @@ public class HTML5Implementation extends CodenameOneImplementation {
         return new HTML5Peer((HTMLElement)nativeComponent);
     }
 
+    private final java.util.Map<PeerComponent, HTML5GLSurface> glSurfaces =
+            new IdentityHashMap<PeerComponent, HTML5GLSurface>();
+
+    private final com.codename1.impl.gpu.GpuImplementation gpuImpl =
+            new com.codename1.impl.gpu.GpuImplementation() {
+        @Override
+        public PeerComponent createPeer(com.codename1.gpu.RenderView view) {
+            HTML5GLSurface surface = HTML5GLSurface.create(view);
+            if (surface == null) {
+                return null;
+            }
+            glSurfaces.put(surface, surface);
+            return surface;
+        }
+
+        @Override
+        public void setContinuous(PeerComponent peer, boolean continuous) {
+            HTML5GLSurface surface = glSurfaces.get(peer);
+            if (surface != null) {
+                surface.setContinuous(continuous);
+            }
+        }
+
+        @Override
+        public void requestRender(PeerComponent peer) {
+            HTML5GLSurface surface = glSurfaces.get(peer);
+            if (surface != null) {
+                surface.requestRender();
+            }
+        }
+    };
+
+    @Override
+    public com.codename1.impl.gpu.GpuImplementation getGpuImplementation() {
+        return gpuImpl;
+    }
+
     @Override
     public com.codename1.impl.CameraImpl createCameraImpl() {
         return new HTML5CameraImpl();
@@ -5509,8 +5637,14 @@ public class HTML5Implementation extends CodenameOneImplementation {
             return false;
         }
         try {
-            Blob blob = BlobUtil.createBlob(bytes, "application/octet-stream");
-            registerSaveBlobHandler(fileName, blob);
+            // Deliver as a base64 ``data:`` URL rather than a worker-side Blob.
+            // A worker Blob does not survive the worker->main host-bridge
+            // serialization (toHostTransferArg has no Blob case), so
+            // __cn1_register_save_blob__ never reaches the host. A plain string
+            // data: URL marshals cleanly through invokeHostNative.
+            String dataUrl = "data:application/octet-stream;base64,"
+                    + com.codename1.util.Base64.encodeNoNewline(bytes);
+            registerSaveBlobHandlerDataUrl(fileName, dataUrl);
         } catch (Throwable t) {
             return false;
         }
@@ -7506,7 +7640,10 @@ public class HTML5Implementation extends CodenameOneImplementation {
         return LocalForage.getInstance().openInputStream(wrapped);
     }
     
-    @JSBody(params={"o", "type"}, script="return (o instanceof window[type]);")
+    // Runs in a Web Worker where `window` is a partial shim without built-in
+    // constructors (Blob/Uint8Array); `window[type]` was undefined and the
+    // instanceof threw. Resolve off the real worker global and guard it.
+    @JSBody(params={"o", "type"}, script="var t=(typeof globalThis!=='undefined'?globalThis:self)[type]; return (typeof t==='function')?(o instanceof t):false;")
     private static native boolean instanceOf(JSObject o, String type);
     
     
@@ -7532,7 +7669,19 @@ public class HTML5Implementation extends CodenameOneImplementation {
         } else if (instanceOf(obj, "Uint8Array")) {
             return BlobUtil.createBlob((Uint8Array)obj, "application/octet-stream");
         } else {
-            throw new IOException("File at "+file+" is not a blob");
+            // Files written via openOutputStream are stored in LocalForage's
+            // serialized byte form (e.g. a "b:<base64>" string), not as a live
+            // Blob/Uint8Array. Recover the bytes through the input-stream path
+            // (the same one openFileInputStream uses) and wrap them so e.g.
+            // Image.createImage(capturedPhotoPath) works.
+            InputStream in = null;
+            try {
+                in = openFileInputStream(file);
+                byte[] data = com.codename1.io.Util.readInputStream(in);
+                return BlobUtil.createBlob(data, "application/octet-stream");
+            } finally {
+                com.codename1.io.Util.cleanup(in);
+            }
         }
     }
 
@@ -8122,9 +8271,23 @@ public class HTML5Implementation extends CodenameOneImplementation {
     public void setBrowserPageInHierarchy(PeerComponent browserPeer, String url) throws IOException {
         if (url.length() > 0 && url.charAt(0) != '/') {
             url = "/" + url;
-                   
+
         }
-        setBrowserURL(browserPeer, "assets/cn1html"+url);
+        // Build an ABSOLUTE iframe URL rather than the relative "assets/cn1html/..".
+        // A relative iframe src is resolved by the browser against the host
+        // document's base URL at the moment it is set; the Playground mutates its
+        // own location (share links, history.pushState), so a relative src
+        // intermittently resolved against the wrong base and the editor iframe
+        // 404'd ("Nothing matches the given URI"). Anchoring it to origin +
+        // current directory makes the load deterministic.
+        String pathName = window.getLocation().getPathname();
+        String dirPath = pathName == null ? "" : pathName;
+        int lastSlash = dirPath.lastIndexOf("/");
+        if (lastSlash >= 0) {
+            dirPath = dirPath.substring(0, lastSlash);
+        }
+        String absolute = ((WindowLocation) window.getLocation()).getOrigin() + dirPath + "/assets/cn1html" + url;
+        setBrowserURL(browserPeer, absolute);
     }
 
     
@@ -9500,20 +9663,19 @@ public class HTML5Implementation extends CodenameOneImplementation {
                 requestFullScreen_(new RequestFullScreenCallback() {
                     @Override
                     public void onComplete(final boolean result) {
-                        new Thread(new Runnable() {
-                           public void run() {
-                               res[0] = result;
-                                complete[0] = true;
-                                synchronized(complete) {
-                                    try {
-                                        complete.notifyAll();
-                                    } catch (Throwable t) {
+                        // Notify directly -- the callback already runs on its own
+                        // thread/green-thread, and spawning a java.lang.Thread here
+                        // never executes on the single-threaded HTML5 worker, which
+                        // would leave the invokeAndBlock below waiting forever.
+                        synchronized(complete) {
+                            res[0] = result;
+                            complete[0] = true;
+                            try {
+                                complete.notifyAll();
+                            } catch (Throwable t) {
 
-                                    }
-                                }
-                           }
-                        }).start();
-
+                            }
+                        }
                     }
                 });
             }
@@ -9550,21 +9712,19 @@ public class HTML5Implementation extends CodenameOneImplementation {
         exitFullscreen_(new RequestFullScreenCallback() {
             @Override
             public void onComplete(final boolean result) {
-                new Thread(new Runnable() {
-                    public void run() {
-                        res[0] = result;
-                         complete[0] = true;
-                         synchronized(complete) {
-                             try {
-                                 complete.notifyAll();
-                             } catch (Throwable t) {
+                // Notify directly -- a java.lang.Thread never executes on the
+                // single-threaded HTML5 worker (see requestFullScreen()).
+                synchronized(complete) {
+                    res[0] = result;
+                    complete[0] = true;
+                    try {
+                        complete.notifyAll();
+                    } catch (Throwable t) {
 
-                             }
-                         }
                     }
-                 }).start();
+                }
             }
-            
+
         });
         CN.invokeAndBlock(new Runnable() {
             public void run() {
@@ -9678,13 +9838,36 @@ public class HTML5Implementation extends CodenameOneImplementation {
         return isNavigatorShareSupported_();
     }
 
-    @JSBody(params={"url"}, script="navigator.share({text:'', url:url})")
+    // navigator.share is Window-only, so on the worker-based port these scripts
+    // run where it does not exist. Fire-and-forget the share to the main thread
+    // (__cn1_native_share__ in browser_bridge.js) using the same host-call
+    // message shape the renderer uses for void surface ops. On the legacy
+    // main-thread (TeaVM) runtime navigator.share is present and used directly.
+    // __cn1Share(text, url) is the shared JS helper prepended to each script.
+    private static final String SHARE_POST_HELPER =
+        "function __cn1Share(t, u){"
+        // Worker args arrive as Java String objects; convert to native JS strings
+        // (toNativeString is a no-op on real strings, so this is safe on TeaVM).
+      + "  var hasJ = (typeof jvm !== 'undefined' && jvm && typeof jvm.toNativeString === 'function');"
+      + "  var ts = hasJ ? jvm.toNativeString(t) : t; var us = hasJ ? jvm.toNativeString(u) : u;"
+      + "  ts = (ts == null || ts === 'null') ? '' : String(ts); us = (us == null || us === 'null') ? '' : String(us);"
+      + "  try { if (typeof navigator !== 'undefined' && navigator.share) { navigator.share({text: ts, url: us}); return; } } catch (e) {}"
+      + "  try {"
+      + "    var m = { type: 'host-call', symbol: '__cn1_native_share__', args: [{ text: ts, url: us, __cn1_no_response: true }], id: 0 };"
+      + "    if (typeof self !== 'undefined') {"
+      + "      if (typeof self.emitVmMessage === 'function') { self.emitVmMessage(m); }"
+      + "      else if (typeof self.postMessage === 'function') { self.postMessage(m); }"
+      + "    }"
+      + "  } catch (e) {}"
+      + "}";
+
+    @JSBody(params={"url"}, script=SHARE_POST_HELPER + " __cn1Share('', url);")
     private native static void shareURL_(String url);
-    
-    @JSBody(params={"text"}, script="navigator.share({text:text, url:''})")
+
+    @JSBody(params={"text"}, script=SHARE_POST_HELPER + " __cn1Share(text, '');")
     private native static void shareText_(String text);
-    
-    @JSBody(params={"text", "link"}, script="navigator.share({text:text, url:link})")
+
+    @JSBody(params={"text", "link"}, script=SHARE_POST_HELPER + " __cn1Share(text, link);")
     private native static void shareTextAndLink_(String text, String link);
     
     @Override
@@ -9722,8 +9905,153 @@ public class HTML5Implementation extends CodenameOneImplementation {
             super.share(text, image, mimeType, sourceRect);
         }
     }
-    
-    
+
+    /// Printing works by loading the document into a hidden iframe and
+    /// invoking the browser print dialog, so it is always available.
+    @Override
+    public boolean isPrintingSupported() {
+        return true;
+    }
+
+    /// Print a document by loading it into a hidden iframe as a blob
+    /// object URL and invoking the browser print dialog on the iframe's
+    /// content window.
+    ///
+    /// Browsers don't reliably expose whether the user printed or
+    /// dismissed the dialog: where the iframe fires `afterprint` the
+    /// result is reported as completed when the dialog closes, otherwise
+    /// completed is reported on a best-effort basis shortly after
+    /// `print()` is invoked. Cancellation is therefore reported as
+    /// completed on this port.
+    ///
+    /// PDF documents print through the browser's built-in PDF viewer and
+    /// behavior varies between browsers; Firefox may print a blank or
+    /// placeholder page for PDF iframes.
+    ///
+    /// #### Parameters
+    ///
+    /// - `filePath`: path of the document in file system storage
+    ///
+    /// - `mimeType`: the document type, e.g. `application/pdf`, `image/png`
+    ///
+    /// - `listener`: callback for the print outcome. May be null.
+    @Override
+    public void print(final String filePath, final String mimeType, final PrintResultListener listener) {
+        final boolean[] fired = new boolean[1];
+        // callSerially rather than new Thread(): a java.lang.Thread never executes
+        // on the single-threaded HTML5 worker, so the work below (and the listener)
+        // would never run. callSerially keeps print() non-blocking on every port.
+        Display.getInstance().callSerially(new Runnable() {
+            public void run() {
+                String b64;
+                try {
+                    // Read the document bytes through the file system input stream,
+                    // which recovers binary data even when LocalForage round-trips
+                    // it as an array-like (the host<->worker bridge drops the
+                    // Uint8Array type). The bytes are base64'd and handed to the
+                    // main thread, which builds the Blob + object URL + print
+                    // iframe there -- a worker-created blob: URL would be invalid
+                    // in the main-thread iframe.
+                    InputStream in = FileSystemStorage.getInstance().openInputStream(filePath);
+                    byte[] data;
+                    try {
+                        data = Util.readInputStream(in);
+                    } finally {
+                        Util.cleanup(in);
+                    }
+                    if (data == null || data.length == 0) {
+                        firePrintResult(listener, PrintResult.failed("Document is empty or could not be read"), fired);
+                        return;
+                    }
+                    b64 = Base64.encodeNoNewline(data);
+                } catch (Throwable ex) {
+                    Log.e(ex);
+                    firePrintResult(listener, PrintResult.failed(ex.getMessage()), fired);
+                    return;
+                }
+                final String type = (mimeType == null || mimeType.length() == 0) ? "application/octet-stream" : mimeType;
+                printData_(b64, type, new PrintFrameCallback() {
+                    public void onResult(final boolean completed, final String error) {
+                        // onResult is dispatched on the EDT (the port routes it
+                        // there), so report the result directly.
+                        if (completed) {
+                            firePrintResult(listener, PrintResult.completed(), fired);
+                        } else {
+                            firePrintResult(listener, PrintResult.failed(error), fired);
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    /// Reports a print result exactly once. The native print script fires
+    /// its callback at most once, but the load/afterprint/fallback paths
+    /// plus the Java-side error paths share this guard so the listener
+    /// can never be invoked twice.
+    private static void firePrintResult(PrintResultListener listener, PrintResult result, boolean[] fired) {
+        synchronized (fired) {
+            if (fired[0]) {
+                return;
+            }
+            fired[0] = true;
+        }
+        if (listener != null) {
+            listener.onResult(result);
+        }
+    }
+
+    @JSFunctor
+    private static interface PrintFrameCallback extends JSObject {
+        public void onResult(boolean completed, String error);
+    }
+
+    // Loads the object URL into a hidden iframe, prints it and reports the
+    // outcome through the callback. The iframe and the object URL are kept
+    // alive for 60 seconds (or until afterprint) because print dialogs read
+    // the frame content lazily.
+    @JSBody(params = {"b64", "mimeType", "callback"}, script =
+            "var done = false;\n"
+            + "var cleaned = false;\n"
+            + "var iframe = null;\n"
+            + "var url = null;\n"
+            + "var urlApi = (typeof URL !== 'undefined' && URL) ? URL : ((typeof window !== 'undefined' && window.webkitURL) ? window.webkitURL : null);\n"
+            + "var finish = function(ok, msg) { if (done) return; done = true; callback(ok, msg); };\n"
+            + "var cleanup = function() {\n"
+            + "    if (cleaned) return; cleaned = true;\n"
+            + "    try { if (urlApi && url) urlApi.revokeObjectURL(url); } catch (e) {}\n"
+            + "    try { if (iframe && iframe.parentNode) iframe.parentNode.removeChild(iframe); } catch (e) {}\n"
+            + "};\n"
+            + "if (typeof document === 'undefined' || !document.body) { finish(false, 'Printing requires a browser document context'); return; }\n"
+            + "try {\n"
+            + "    var bin = atob(b64); var u8 = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) { u8[i] = bin.charCodeAt(i); }\n"
+            + "    var blob = new Blob([u8], { type: mimeType });\n"
+            + "    url = urlApi ? urlApi.createObjectURL(blob) : null;\n"
+            + "    if (!url) { finish(false, 'Object URLs are not supported in this browser'); return; }\n"
+            + "} catch (e) { finish(false, 'Failed to decode document for printing: ' + e); return; }\n"
+            + "iframe = document.createElement('iframe');\n"
+            + "iframe.style.cssText = 'position:fixed;visibility:hidden;right:0;bottom:0;width:0;height:0;border:0';\n"
+            + "iframe.onload = function() {\n"
+            + "    try {\n"
+            + "        var win = iframe.contentWindow;\n"
+            + "        try { win.addEventListener('afterprint', function() { finish(true, null); setTimeout(cleanup, 0); }); } catch (e) {}\n"
+            + "        win.focus();\n"
+            + "        win.print();\n"
+            + "        setTimeout(function() { finish(true, null); }, 1000);\n"
+            + "    } catch (e) {\n"
+            + "        finish(false, '' + e);\n"
+            + "        cleanup();\n"
+            + "    }\n"
+            + "};\n"
+            + "iframe.onerror = function() { finish(false, 'Failed to load document for printing'); cleanup(); };\n"
+            + "iframe.src = url;\n"
+            + "document.body.appendChild(iframe);\n"
+            // onload/afterprint don't fire reliably for an image blob in a hidden
+            // iframe; resolve as completed after a short grace period regardless.
+            + "setTimeout(function() { finish(true, null); }, 3000);\n"
+            + "setTimeout(cleanup, 60000);")
+    private native static void printData_(String b64, String mimeType, PrintFrameCallback callback);
+
     private static interface CancelableEvent extends Event {
         @JSProperty
         public boolean isDefaultPrevented();
@@ -9892,7 +10220,7 @@ public class HTML5Implementation extends CodenameOneImplementation {
         
     }
 
-    @JSBody(params={"name"}, script="return document.execCommand(name)")
+    @JSBody(params={"name"}, script="return (typeof document !== 'undefined' && document.execCommand) ? document.execCommand(name) : false")
     private native static boolean execCommand(String name);
     
     
@@ -9904,9 +10232,28 @@ public class HTML5Implementation extends CodenameOneImplementation {
         }
         
     }
-    @JSBody(params={"command"}, script="if (!document.queryCommandEnabled) return true; return document.queryCommandEnabled(command);")
+    @JSBody(params={"command"}, script="if (typeof document === 'undefined' || !document.queryCommandEnabled) return false; return document.queryCommandEnabled(command);")
     private native static boolean queryCommandEnabled(String command);
-    
+
+    // Writes text to the system clipboard. On the worker-based JavaScript port
+    // this method is overridden by a port.js binding that hands the write to the
+    // main thread (the worker has no document/execCommand and no
+    // navigator.clipboard), so the @JSBody below is only ever used by the legacy
+    // main-thread (TeaVM) runtime, where document.execCommand is available.
+    @JSBody(params={"text"}, script=
+        "try {" +
+        "  var ta = document.createElement('textarea');" +
+        "  ta.setAttribute('readonly', '');" +
+        "  ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.left = '0'; ta.style.opacity = '0';" +
+        "  document.body.appendChild(ta);" +
+        "  ta.value = text;" +
+        "  var ok = false;" +
+        "  try { ta.focus(); ta.select(); ok = !!document.execCommand('copy'); } catch (e) { ok = false; }" +
+        "  document.body.removeChild(ta);" +
+        "  return ok;" +
+        "} catch (e) { return false; }")
+    private native static boolean nativeBrowserCopyToClipboard(String text);
+
     @Override
     public void copyToClipboard(Object obj) {
         final ClipboardCopyRequest request = (obj instanceof ClipboardCopyRequest) ? (ClipboardCopyRequest)obj : new ClipboardCopyRequest(obj);
@@ -9916,6 +10263,13 @@ public class HTML5Implementation extends CodenameOneImplementation {
             return;
         }
         String selectedText = (String)obj;
+        // Preferred path: let the main thread perform the copy via the modern
+        // async clipboard API (or an execCommand fallback). This is the only
+        // path that works on the worker-based port; the textarea/execCommand
+        // dance below runs in the worker where document is unavailable.
+        if (nativeBrowserCopyToClipboard(selectedText)) {
+            return;
+        }
         HTMLDocument doc = Window.current().getDocument();
         HTMLTextAreaElement textArea = (HTMLTextAreaElement)doc.createElement("textarea");
         textArea.setAttribute("readonly", "");

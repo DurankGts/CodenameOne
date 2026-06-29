@@ -338,7 +338,35 @@ public class IOSImplementation extends CodenameOneImplementation {
     public boolean isDesktop() {
         return nativeInstance.isRunningOnMac();
     }
-    
+
+    @Override
+    public boolean isWatch() {
+        return nativeInstance.isRunningOnWatch();
+    }
+
+    @Override
+    public boolean isTV() {
+        return nativeInstance.isRunningOnTV();
+    }
+
+    private IOSCarBridge carBridge;
+
+    @Override
+    public com.codename1.car.spi.CarBridge getCarBridge() {
+        // Only meaningful in builds that linked the CarPlay natives (CN1_USE_CARPLAY, flipped by the
+        // builder when the app references com.codename1.car). The native scene delegate creates the
+        // bridge lazily on connect via IOSCarPlayCallbacks; expose it here for the framework.
+        if (carBridge == null) {
+            carBridge = IOSCarPlayCallbacks.getBridge(nativeInstance);
+        }
+        return carBridge;
+    }
+
+    @Override
+    public boolean isCarConnected() {
+        return nativeInstance.isCarPlayConnected();
+    }
+
     @Override
     public void addCookie(Cookie c) {
         if(isUseNativeCookieStore()) {
@@ -3759,6 +3787,7 @@ public class IOSImplementation extends CodenameOneImplementation {
     private IOSBiometrics biometrics;
     private IOSSecureStorage secureStorage;
     private IOSNfc nfc;
+    private IOSDeviceIntegrity deviceIntegrity;
 
     @Override
     public com.codename1.security.Biometrics getBiometrics() {
@@ -3766,6 +3795,19 @@ public class IOSImplementation extends CodenameOneImplementation {
             biometrics = new IOSBiometrics(nativeInstance);
         }
         return biometrics;
+    }
+
+    @Override
+    public boolean isAttestationSupported() {
+        return nativeInstance.isAppAttestSupported();
+    }
+
+    @Override
+    public com.codename1.util.AsyncResource<String> requestIntegrityToken(String nonce) {
+        if (deviceIntegrity == null) {
+            deviceIntegrity = new IOSDeviceIntegrity(nativeInstance);
+        }
+        return deviceIntegrity.requestToken(nonce);
     }
 
     @Override
@@ -4736,7 +4778,95 @@ public class IOSImplementation extends CodenameOneImplementation {
     public Media createMedia(InputStream stream, String mimeType, Runnable onCompletion) throws IOException {
         return new IOSMedia(stream, mimeType, onCompletion);
     }
-        
+
+    @Override
+    public boolean isSoundPoolSupported() {
+        return true;
+    }
+
+    @Override
+    public com.codename1.media.SoundPoolPeer createSoundPool(int maxStreams) {
+        return new IOSSoundPool(maxStreams);
+    }
+
+    /// Native low latency sound pool peer backed by CN1SoundPool.m (an AVAudioPlayer
+    /// ring per sound). Handles (pool, sound) are native pointers carried as longs.
+    class IOSSoundPool implements com.codename1.media.SoundPoolPeer {
+        private final long pool;
+        private final int ringSize;
+
+        IOSSoundPool(int maxStreams) {
+            this.pool = nativeInstance.nativeCreateSoundPool(maxStreams);
+            this.ringSize = Math.min(maxStreams, 4);
+        }
+
+        public Object loadSound(InputStream data, String mimeType) throws IOException {
+            byte[] bytes = com.codename1.io.Util.readInputStream(data);
+            com.codename1.io.Util.cleanup(data);
+            return Long.valueOf(nativeInstance.nativeLoadSound(pool, bytes, ringSize));
+        }
+
+        public Object loadSound(String uri) throws IOException {
+            InputStream in = getResourceAsStream(getClass(), uri);
+            if (in == null) {
+                throw new IOException("sound not found: " + uri);
+            }
+            return loadSound(in, null);
+        }
+
+        private long sound(Object s) {
+            return ((Long) s).longValue();
+        }
+
+        public int play(Object s, float volume, float pan, float rate, int loop) {
+            return nativeInstance.nativePlaySound(pool, sound(s), volume, pan, rate, loop);
+        }
+
+        public void setVolume(int voiceId, float volume) {
+            nativeInstance.nativeSetSoundVolume(pool, voiceId, volume);
+        }
+
+        public void setRate(int voiceId, float rate) {
+            nativeInstance.nativeSetSoundRate(pool, voiceId, rate);
+        }
+
+        public void setPan(int voiceId, float pan) {
+            nativeInstance.nativeSetSoundPan(pool, voiceId, pan);
+        }
+
+        public void pauseVoice(int voiceId) {
+            nativeInstance.nativePauseSound(pool, voiceId);
+        }
+
+        public void resumeVoice(int voiceId) {
+            nativeInstance.nativeResumeSound(pool, voiceId);
+        }
+
+        public void stopVoice(int voiceId) {
+            nativeInstance.nativeStopSound(pool, voiceId);
+        }
+
+        public void stopAll() {
+            nativeInstance.nativeStopAllSounds(pool);
+        }
+
+        public void autoPause() {
+            nativeInstance.nativeAutoPauseSoundPool(pool);
+        }
+
+        public void autoResume() {
+            nativeInstance.nativeAutoResumeSoundPool(pool);
+        }
+
+        public void unloadSound(Object s) {
+            nativeInstance.nativeUnloadSound(pool, sound(s));
+        }
+
+        public void release() {
+            nativeInstance.nativeReleaseSoundPool(pool);
+        }
+    }
+
     private static long createNativeMutableImage(int w, int h, int color) {
         return nativeInstance.createNativeMutableImage(w, h, color);
     }
@@ -7462,6 +7592,9 @@ public class IOSImplementation extends CodenameOneImplementation {
         if("DeviceName".equals(key)) {
             return nativeInstance.getDeviceName();
         }
+        if("DeviceHardwareModel".equals(key)) {
+            return nativeInstance.getDeviceHardwareModel();
+        }
         if(key.equalsIgnoreCase("UDID")) {
             return nativeInstance.getUDID();
         }
@@ -7928,6 +8061,19 @@ public class IOSImplementation extends CodenameOneImplementation {
         if (BrowserComponent.BROWSER_PROPERTY_FOLLOW_TARGET_BLANK.equals(key)) {
             nativeInstance.setBrowserFollowTargetBlank(get(browserPeer), Boolean.TRUE.equals(value));
         }
+        if (BrowserComponent.BROWSER_PROPERTY_INTERFACE_STYLE.equals(key)) {
+            // Maps to UIUserInterfaceStyle: 0 = unspecified/auto, 1 = light, 2 = dark.
+            int style = 0;
+            if (value != null) {
+                String v = value.toString();
+                if ("light".equalsIgnoreCase(v)) {
+                    style = 1;
+                } else if ("dark".equalsIgnoreCase(v)) {
+                    style = 2;
+                }
+            }
+            nativeInstance.setBrowserInterfaceStyle(get(browserPeer), style);
+        }
     }
 
     /**
@@ -8019,6 +8165,57 @@ public class IOSImplementation extends CodenameOneImplementation {
     @Override
     public PeerComponent createNativePeer(Object nativeComponent) {
         return new NativeIPhoneView(nativeComponent);
+    }
+
+    // Live Metal 3D surfaces keyed by their hosting peer, mirroring the
+    // IdentityHashMap pattern the JavaSE port uses for its GL surfaces.
+    private final java.util.Map<PeerComponent, IOSGLSurface> glSurfaces =
+            new java.util.IdentityHashMap<PeerComponent, IOSGLSurface>();
+
+    // The portable 3D API is implemented on the Metal pipeline only, so the
+    // backend is exposed (getGpuImplementation returns non-null) only while
+    // Metal rendering is active.
+    private final com.codename1.impl.gpu.GpuImplementation gpuImpl =
+            new com.codename1.impl.gpu.GpuImplementation() {
+        @Override
+        public PeerComponent createPeer(com.codename1.gpu.RenderView view) {
+            long contextPeer = nativeInstance.gl3dCreateContext();
+            if (contextPeer == 0) {
+                return null;
+            }
+            long viewPeer = nativeInstance.gl3dGetViewPeer(contextPeer);
+            if (viewPeer == 0) {
+                nativeInstance.gl3dDestroyContext(contextPeer);
+                return null;
+            }
+            IOSGLSurface surface = new IOSGLSurface(view, contextPeer);
+            PeerComponent peer = createNativePeer(new long[] { viewPeer });
+            if (peer != null) {
+                glSurfaces.put(peer, surface);
+            }
+            return peer;
+        }
+
+        @Override
+        public void setContinuous(PeerComponent peer, boolean continuous) {
+            IOSGLSurface surface = glSurfaces.get(peer);
+            if (surface != null) {
+                surface.setContinuous(continuous);
+            }
+        }
+
+        @Override
+        public void requestRender(PeerComponent peer) {
+            IOSGLSurface surface = glSurfaces.get(peer);
+            if (surface != null) {
+                surface.requestRender();
+            }
+        }
+    };
+
+    @Override
+    public com.codename1.impl.gpu.GpuImplementation getGpuImplementation() {
+        return metalRendering ? gpuImpl : null;
     }
 
     class NativeIPhoneView extends PeerComponent {
@@ -9213,6 +9410,32 @@ public class IOSImplementation extends CodenameOneImplementation {
     }
 
     @Override
+    public String getNativeLogSnapshot() {
+        try {
+            return nativeInstance.crashProtectionLogSnapshot();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    @Override
+    public void installNativeCrashHandler() {
+        try {
+            nativeInstance.crashProtectionInstall();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    @Override
+    public String consumePendingNativeCrash() {
+        try {
+            return nativeInstance.crashProtectionConsumePending();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    @Override
     public Simd createSimd() {
         return new IOSSimd();
     }
@@ -9221,6 +9444,12 @@ public class IOSImplementation extends CodenameOneImplementation {
      * @inheritDoc
      */
     public String[] getPlatformOverrides() {
+        if(isWatch()) {
+            return new String[] {"watch", "ios", "applewatch"};
+        }
+        if(isTV()) {
+            return new String[] {"tv", "ios", "appletv"};
+        }
         if(isTablet()) {
             return new String[] {"tablet", "ios", "ipad"};
         } else {
@@ -9870,8 +10099,41 @@ public class IOSImplementation extends CodenameOneImplementation {
         }
         return true;
     }
-    
-    
+
+    @Override
+    public boolean isNativeInAppReviewSupported() {
+        // SKStoreReviewController.requestReview is available since iOS 10.3.
+        String ver = nativeInstance.getOSVersion();
+        int dot = ver.indexOf('.');
+        try {
+            int major = Integer.parseInt(dot < 0 ? ver : ver.substring(0, dot));
+            if (major > 10) {
+                return true;
+            }
+            if (major < 10) {
+                return false;
+            }
+            String rest = dot < 0 ? "" : ver.substring(dot + 1);
+            int dot2 = rest.indexOf('.');
+            int minor = Integer.parseInt(dot2 < 0 ? rest : rest.substring(0, dot2));
+            return minor >= 3;
+        } catch (NumberFormatException err) {
+            // Unknown/odd version string -- assume a modern OS supports it.
+            return true;
+        }
+    }
+
+    @Override
+    public void requestNativeInAppReview(SuccessCallback<Boolean> done) {
+        // StoreKit gives no callback and may silently throttle the prompt, so
+        // we simply report that the request was handed off to the controller.
+        nativeInstance.requestAppStoreReview();
+        if (done != null) {
+            done.onSucess(Boolean.TRUE);
+        }
+    }
+
+
     
     @Override
     public void share(String text, String image, String mimeType, Rectangle sourceRect){
@@ -9938,6 +10200,54 @@ public class IOSImplementation extends CodenameOneImplementation {
                 break;
             default:
                 result = com.codename1.share.ShareResult.failed(errorMessage);
+                break;
+        }
+        listener.onResult(result);
+    }
+
+    @Override
+    public boolean isPrintingSupported() {
+        return nativeInstance.isPrintingAvailable();
+    }
+
+    @Override
+    public void print(String filePath, String mimeType, com.codename1.printing.PrintResultListener listener) {
+        int callbackId = registerPrintCallback(listener);
+        nativeInstance.printDocument(filePath, mimeType, callbackId);
+    }
+
+    // Pending print-result callbacks. Native code invokes
+    // printDocumentCallback(...) once per id.
+    private static final java.util.HashMap<Integer, com.codename1.printing.PrintResultListener> pendingPrintCallbacks = new java.util.HashMap<Integer, com.codename1.printing.PrintResultListener>();
+    private static int nextPrintCallbackId = 1;
+
+    private static synchronized int registerPrintCallback(com.codename1.printing.PrintResultListener l) {
+        int id = nextPrintCallbackId++;
+        pendingPrintCallbacks.put(Integer.valueOf(id), l);
+        return id;
+    }
+
+    /// Invoked from native code with the outcome of a print job. Public so
+    /// the VM-emitted symbol stays stable. `status` matches
+    /// [com.codename1.printing.PrintResult]: 1=COMPLETED, 2=CANCELLED, 3=FAILED.
+    public static void printDocumentCallback(int callbackId, int status, String errorMessage) {
+        com.codename1.printing.PrintResultListener listener;
+        synchronized (IOSImplementation.class) {
+            listener = pendingPrintCallbacks.remove(Integer.valueOf(callbackId));
+        }
+        if (listener == null) {
+            return;
+        }
+        com.codename1.printing.PrintResult result;
+        switch (status) {
+            case 1:
+                result = com.codename1.printing.PrintResult.completed();
+                break;
+            case 2:
+                result = com.codename1.printing.PrintResult.cancelled();
+                break;
+            default:
+                result = com.codename1.printing.PrintResult.failed(errorMessage);
                 break;
         }
         listener.onResult(result);
@@ -10590,6 +10900,41 @@ public class IOSImplementation extends CodenameOneImplementation {
     @Override
     public boolean isReceiveSharedContentSupported() {
         return true;
+    }
+
+    @Override
+    public boolean isWalletExtensionSupported() {
+        return nativeInstance.isWalletExtensionSupported();
+    }
+
+    @Override
+    public void walletExtensionClearPassEntries(boolean remote) {
+        nativeInstance.walletExtensionClearPassEntries(remote);
+    }
+
+    @Override
+    public void walletExtensionAddPassEntry(boolean remote, String identifier, String title,
+            String cardholderName, String accountSuffix, String network, String description, byte[] artPng) {
+        if (identifier == null || identifier.length() == 0 || artPng == null || artPng.length == 0) {
+            return;
+        }
+        nativeInstance.walletExtensionAddPassEntry(remote, identifier, title,
+                cardholderName, accountSuffix, network, description, artPng);
+    }
+
+    @Override
+    public void walletExtensionSetRequiresAuthentication(boolean requiresAuthentication) {
+        nativeInstance.walletExtensionSetRequiresAuthentication(requiresAuthentication);
+    }
+
+    @Override
+    public void walletExtensionSetAuthToken(String token) {
+        nativeInstance.walletExtensionSetAuthToken(token);
+    }
+
+    @Override
+    public void walletExtensionClear() {
+        nativeInstance.walletExtensionClear();
     }
 
     /// Invoked from native (on app activation) with the JSON payload written by the share

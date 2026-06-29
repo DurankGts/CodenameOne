@@ -37,6 +37,23 @@ public abstract class AbstractGraphicsScreenshotTest extends BaseTest {
 
     protected abstract String screenshotName();
 
+    /// Iteration step for the nested-curve sweep the round-rect / arc tests draw
+    /// in {@link #drawContent}. Phone / tablet / desktop draw every line (step 1)
+    /// for a dense gradient of ~bounds.width/2 overlapping curves. At the TV
+    /// gate's 4K resolution that many overlapping anti-aliased edges sample
+    /// slightly differently across the heterogeneous CI runner GPUs, so the TV
+    /// form factor draws the SAME sweep with far fewer, well-separated curves (a
+    /// coarse step). The shape and the round-rect / arc rasterizer coverage are
+    /// preserved and the capture is cross-runner stable -- the graphics analog of
+    /// the watch full-screen variant split in {@link #runTest()}. Subclasses use
+    /// {@code iter += curveStep(bounds)} instead of {@code iter++}.
+    protected int curveStep(Rectangle bounds) {
+        if (CN.isTV()) {
+            return Math.max(1, (int) (bounds.getWidth() / 40));
+        }
+        return 1;
+    }
+
     static abstract class CleanPaintComponent extends Component {
         CleanPaintComponent() {
             setUIID("GraphicsComponent");
@@ -58,62 +75,108 @@ public abstract class AbstractGraphicsScreenshotTest extends BaseTest {
         protected abstract void cleanPaint(Graphics g);
     }
 
+    // The four rendering variants this test compares: direct vs mutable-image
+    // painting, each with anti-aliasing off then on. On phone/tablet/desktop
+    // all four are shown together in a 2x2 grid (one screenshot). On a watch
+    // that grid is unreadably dense, so each variant is shown full-screen as a
+    // separate screenshot (see runTest()).
+    private static final String[] WATCH_VARIANT_SUFFIX = {
+        "direct-aa-off", "direct-aa-on", "image-aa-off", "image-aa-on"
+    };
+
+    private CleanPaintComponent variant(final int idx) {
+        switch (idx) {
+            case 0:
+                return new CleanPaintComponent() {
+                    @Override
+                    public void cleanPaint(Graphics g) {
+                        currentColor = -1;
+                        g.setAntiAliased(false);
+                        g.setAntiAliasedText(false);
+                        g.fillRect(getX(), getY(), getWidth(), getHeight());
+                        drawContent(g, getBounds());
+                    }
+                };
+            case 1:
+                return new CleanPaintComponent() {
+                    @Override
+                    public void cleanPaint(Graphics g) {
+                        currentColor = -1;
+                        g.setAntiAliased(true);
+                        g.setAntiAliasedText(true);
+                        g.fillRect(getX(), getY(), getWidth(), getHeight());
+                        drawContent(g, getBounds());
+                    }
+                };
+            case 2:
+                return new CleanPaintComponent() {
+                    private Image img;
+                    @Override
+                    public void cleanPaint(Graphics g) {
+                        if (img == null || img.getWidth() != getWidth() || img.getHeight() != getHeight()) {
+                            currentColor = -1;
+                            img = Image.createImage(getWidth(), getHeight());
+                            Graphics imgGraphics = img.getGraphics();
+                            imgGraphics.setAntiAliased(false);
+                            imgGraphics.setAntiAliasedText(false);
+                            drawContent(imgGraphics, new Rectangle(0, 0, img.getWidth(), img.getHeight()));
+                        }
+                        g.drawImage(img, getX(), getY());
+                    }
+                };
+            default:
+                return new CleanPaintComponent() {
+                    private Image img;
+                    @Override
+                    public void cleanPaint(Graphics g) {
+                        if (img == null || img.getWidth() != getWidth() || img.getHeight() != getHeight()) {
+                            currentColor = -1;
+                            img = Image.createImage(getWidth(), getHeight());
+                            Graphics imgGraphics = img.getGraphics();
+                            imgGraphics.setAntiAliased(true);
+                            imgGraphics.setAntiAliasedText(true);
+                            drawContent(imgGraphics, new Rectangle(0, 0, img.getWidth(), img.getHeight()));
+                        }
+                        g.drawImage(img, getX(), getY());
+                    }
+                };
+        }
+    }
+
     @Override
     public boolean runTest() {
+        if (CN.isWatch()) {
+            // Watch form factor: four separate full-screen captures instead of a
+            // cramped 2x2 grid. This exercises CN.isWatch() and demonstrates a
+            // form-factor-appropriate test layout.
+            showWatchVariant(0);
+            return true;
+        }
         Form form = createForm(screenshotName(), new GridLayout(2, 2), screenshotName());
         form.setUIID("GraphicsForm");
-        form.add(new CleanPaintComponent() {
-            @Override
-            public void cleanPaint(Graphics g) {
-                currentColor = -1;
-                g.setAntiAliased(false);
-                g.setAntiAliasedText(false);
-                g.fillRect(getX(), getY(), getWidth(), getHeight());
-                drawContent(g, getBounds());
-            }
-        });
-        form.add(new CleanPaintComponent() {
-            @Override
-            public void cleanPaint(Graphics g) {
-                currentColor = -1;
-                g.setAntiAliased(true);
-                g.setAntiAliasedText(true);
-                g.fillRect(getX(), getY(), getWidth(), getHeight());
-                drawContent(g, getBounds());
-            }
-        });
-        form.add(new CleanPaintComponent() {
-            private Image img;
-            @Override
-            public void cleanPaint(Graphics g) {
-                if (img == null || img.getWidth() != getWidth() || img.getHeight() != getHeight()) {
-                    currentColor = -1;
-                    img = Image.createImage(getWidth(), getHeight());
-                    Graphics imgGraphics = img.getGraphics();
-                    imgGraphics.setAntiAliased(false);
-                    imgGraphics.setAntiAliasedText(false);
-                    drawContent(imgGraphics, new Rectangle(0, 0, img.getWidth(), img.getHeight()));
-                }
-                g.drawImage(img, getX(), getY());
-            }
-        });
-        form.add(new CleanPaintComponent() {
-            private Image img;
-            @Override
-            public void cleanPaint(Graphics g) {
-                if (img == null || img.getWidth() != getWidth() || img.getHeight() != getHeight()) {
-                    currentColor = -1;
-                    img = Image.createImage(getWidth(), getHeight());
-                    Graphics imgGraphics = img.getGraphics();
-                    imgGraphics.setAntiAliased(true);
-                    imgGraphics.setAntiAliasedText(true);
-                    drawContent(imgGraphics, new Rectangle(0, 0, img.getWidth(), img.getHeight()));
-                }
-                g.drawImage(img, getX(), getY());
-            }
-        });
-
+        for (int i = 0; i < 4; i++) {
+            form.add(variant(i));
+        }
         form.show();
         return true;
+    }
+
+    private void showWatchVariant(final int idx) {
+        final String name = screenshotName() + "-" + WATCH_VARIANT_SUFFIX[idx];
+        Form form = new Form(name, new BorderLayout()) {
+            @Override
+            protected void onShowCompleted() {
+                registerReadyCallback(this, () -> captureWhenSettled(this, name, () -> {
+                    if (idx + 1 < WATCH_VARIANT_SUFFIX.length) {
+                        showWatchVariant(idx + 1);
+                    } else {
+                        done();
+                    }
+                }));
+            }
+        };
+        form.setUIID("GraphicsForm");
+        form.add(BorderLayout.CENTER, variant(idx));
+        form.show();
     }
 }

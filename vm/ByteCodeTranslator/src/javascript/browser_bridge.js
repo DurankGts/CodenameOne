@@ -164,6 +164,74 @@
     }
   };
 
+  // ---- Native interface dispatch -------------------------------------------------
+  // Codename One NativeInterface calls arrive here (on the MAIN thread) from the
+  // worker via the generated <Iface>Impl -> NativeInterfaceBridge.call* host-hooks.
+  // We look up the developer's JS implementation in cn1_native_interfaces (the
+  // registry the stub self-registers into, populated on the main thread by the
+  // <script>-loaded stub) and invoke it with the trailing callback, returning a
+  // Promise so the worker resumes with the result once callback.complete fires.
+  function cn1InvokeNativeInterface(iface, method, args) {
+    var registry = global.cn1_native_interfaces
+            || (global.window && global.window.cn1_native_interfaces);
+    var impl = registry ? registry[iface] : null;
+    if (!impl) {
+      return Promise.reject(new Error('No native interface implementation registered for ' + iface));
+    }
+    var fn = impl[method];
+    if (typeof fn !== 'function') {
+      return Promise.reject(new Error('Native interface ' + iface + ' has no implementation for ' + method));
+    }
+    var callArgs = [];
+    if (args != null) {
+      for (var i = 0; i < args.length; i++) {
+        callArgs.push(args[i]);
+      }
+    }
+    return new Promise(function(resolve, reject) {
+      var settled = false;
+      var callback = {
+        complete: function(value) {
+          if (settled) return;
+          settled = true;
+          if (value === undefined) {
+            value = null;
+          }
+          // A returned host object (e.g. a DOM element backing a PeerComponent)
+          // is not structured-cloneable; hand the worker a host-ref handle it can
+          // use as a JSO receiver. Primitives, strings and plain arrays
+          // (String[]/primitive[]) pass through untouched for worker-side coercion.
+          if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+            value = hostResult(value);
+          }
+          resolve(value);
+        },
+        error: function(err) {
+          if (settled) return;
+          settled = true;
+          reject(err instanceof Error ? err : new Error(err == null ? 'native interface error' : String(err)));
+        }
+      };
+      callArgs.push(callback);
+      try {
+        fn.apply(impl, callArgs);
+      } catch (e) {
+        if (!settled) {
+          settled = true;
+          reject(e);
+        }
+      }
+    });
+  }
+
+  // Single host hook for every NativeInterfaceBridge.call* native. The worker-side
+  // bindNative wrappers (parparvm_runtime.js) funnel here with (iface, method, args)
+  // and coerce the resolved value to the declared Java return type, so dispatch is
+  // uniform on this side.
+  hostBridge.register('__cn1_native_interface_call__', function(iface, method, args) {
+    return cn1InvokeNativeInterface(iface, method, args);
+  });
+
   var hostRefNextId = 1;
   var hostRefById = {};
   var hostRefByObject = (typeof WeakMap === 'function') ? new WeakMap() : null;
@@ -475,6 +543,27 @@
     if ('altKey'   in evt) out.altKey   = !!evt.altKey;
     if ('metaKey'  in evt) out.metaKey  = !!evt.metaKey;
     if ('repeat'   in evt) out.repeat   = !!evt.repeat;
+    // MessageEvent fields (window.postMessage / BrowserComponent.onMessage).
+    // Without these the worker-side MessageEvent.getDataAsString() returns null
+    // and the source-identity check (getEventSource(e) == iframe.contentWindow)
+    // always fails, so iframe->app messages are silently dropped. ``source`` is
+    // stored as a host-ref so it dedupes to the SAME worker wrapper as
+    // iframe.getContentWindow() (storeHostRef keys by object identity), making
+    // the identity check pass.
+    if ('data' in evt) {
+      var d = evt.data;
+      if (d != null && typeof d === 'object' && typeof storeHostRef === 'function') {
+        out.data = storeHostRef(d);
+      } else {
+        out.data = d;
+        // getDataAsString() resolves to the ``dataAsString`` getter on the
+        // worker side, so expose the string form under that name too.
+        out.dataAsString = d == null ? null : String(d);
+      }
+    }
+    if ('origin' in evt) out.origin = evt.origin == null ? '' : String(evt.origin);
+    if ('lastEventId' in evt) out.lastEventId = evt.lastEventId == null ? '' : String(evt.lastEventId);
+    if (evt.source && typeof storeHostRef === 'function') out.source = storeHostRef(evt.source);
     // preventDefault / stopPropagation are fire-and-forget from the worker
     // side (we eagerly call them on the main-thread event just in case).
     // touches arrays are serialised shallow — most user code reads the
@@ -736,6 +825,19 @@
         receiver[args[0] | 0] = args[1];
         value = null;
       } else {
+        // WebGL bulk-data calls receive their payload as a plain JS number
+        // array (the only way a Java primitive array survives the worker->main
+        // bridge intact -- a worker-built typed array arrives here as an empty
+        // object). Re-wrap it in the typed array WebGL requires before the call.
+        // ELEMENT_ARRAY_BUFFER == 0x8893 takes Uint16Array; everything else
+        // (vertex data) takes Float32Array.
+        if (member === 'bufferData' && Array.isArray(args[1])) {
+          args[1] = (args[0] === 0x8893) ? new Uint16Array(args[1]) : new Float32Array(args[1]);
+        } else if (member === 'uniformMatrix4fv' && Array.isArray(args[2])) {
+          args[2] = new Float32Array(args[2]);
+        } else if (member === 'texImage2D' && Array.isArray(args[args.length - 1])) {
+          args[args.length - 1] = new Uint8Array(args[args.length - 1]);
+        }
         var fn = receiver[member];
         if (typeof fn === 'function') {
           value = fn.apply(receiver, args);
@@ -1248,6 +1350,15 @@
     if (!doc) {
       return null;
     }
+    // Tell an embedding page (e.g. the website's Playground wrapper) that the
+    // app is fully up, so its own overlay loader can fade out exactly when ours
+    // does -- avoiding the visible "switch" from the host loader to this splash.
+    try {
+      var w = (global.window || global);
+      if (w.parent && w.parent !== w && typeof w.parent.postMessage === 'function') {
+        w.parent.postMessage({ type: 'cn1-app-ready' }, '*');
+      }
+    } catch (_pmErr) { /* cross-origin parent -- ignore */ }
     var splash = doc.getElementById('cn1-splash');
     if (!splash) {
       return null;
@@ -1328,22 +1439,39 @@
     var payload = request || {};
     var dataUrl = String(payload.dataUrl == null ? '' : payload.dataUrl);
     var fileName = String(payload.fileName == null ? 'download' : payload.fileName);
+    if (global.console && typeof global.console.log === 'function') {
+      try { global.console.log('CN1INIT:save-blob:register-dataurl fileName=' + fileName + ' len=' + dataUrl.length); } catch (_le) {}
+    }
     if (!dataUrl) {
       __cn1PendingSaveBlobHandler = null;
       return null;
     }
-    __cn1PendingSaveBlobHandler = function() {
-      var doc = (global.window || global).document || global.document;
-      if (!doc) {
-        return;
-      }
-      var a = doc.createElement('a');
-      a.href = dataUrl;
-      a.download = fileName;
-      doc.body.appendChild(a);
-      a.click();
-      doc.body.removeChild(a);
+    var makeHandler = function() {
+      return function() {
+        var doc = (global.window || global).document || global.document;
+        if (!doc) {
+          return;
+        }
+        var a = doc.createElement('a');
+        a.href = dataUrl;
+        a.download = fileName;
+        doc.body.appendChild(a);
+        a.click();
+        doc.body.removeChild(a);
+      };
     };
+    // Fire immediately -- same rationale as __cn1_register_save_blob__: the
+    // Generate flow is a clear user-intent path, so most browsers allow the
+    // programmatic a.click() even though the original click was seconds ago
+    // while the cooperative scheduler built the zip. Backside-hook timing
+    // becomes irrelevant. Also stash for the backside-hook fire path in case
+    // the immediate click was blocked by user-gesture policy.
+    try { makeHandler()(); } catch (e) {
+      if (global.console && typeof global.console.warn === 'function') {
+        try { global.console.warn('PARPAR:save-blob-dataurl-immediate-failed:' + (e && e.message ? e.message : String(e))); } catch (_le) {}
+      }
+    }
+    __cn1PendingSaveBlobHandler = makeHandler();
     return null;
   });
 
@@ -1441,6 +1569,410 @@
     return hostResult(event);
   });
 
+  // Copy text to the system clipboard ON THE MAIN THREAD. The worker that runs
+  // the translated Java cannot reach the clipboard itself: document/execCommand
+  // do not exist in a Web Worker and navigator.clipboard is a Window-only API.
+  // The Java copyToClipboard() therefore routes the actual write here, where it
+  // still runs inside the transient user-activation window carried by the
+  // forwarded click that triggered it. Returns 1 on success, 0 on failure so the
+  // worker can fall back to its permission-prompt path.
+  function execCommandClipboardFallback(text) {
+    var doc = global.document || (global.window && global.window.document);
+    if (!doc || !doc.body) {
+      return false;
+    }
+    var textArea = doc.createElement('textarea');
+    textArea.setAttribute('readonly', '');
+    textArea.style.position = 'fixed';
+    textArea.style.top = '-1000px';
+    textArea.style.left = '0';
+    textArea.style.opacity = '0';
+    doc.body.appendChild(textArea);
+    textArea.value = text;
+    var ok = false;
+    try {
+      textArea.focus();
+      textArea.select();
+      ok = !!doc.execCommand('copy');
+    } catch (err) {
+      ok = false;
+    }
+    doc.body.removeChild(textArea);
+    return ok;
+  }
+
+  hostBridge.register('__cn1_copy_to_clipboard__', function(request) {
+    var text = (request && request.text != null) ? String(request.text) : '';
+    var nav = global.navigator || (global.window && global.window.navigator);
+    try {
+      if (nav && nav.clipboard && typeof nav.clipboard.writeText === 'function') {
+        return nav.clipboard.writeText(text).then(function() {
+          return 1;
+        }, function() {
+          return execCommandClipboardFallback(text) ? 1 : 0;
+        });
+      }
+    } catch (err) {
+      // navigator.clipboard can throw synchronously in insecure contexts.
+    }
+    return execCommandClipboardFallback(text) ? 1 : 0;
+  });
+
+  // Web Share API (navigator.share / navigator.canShare) is Window-only and so
+  // is unreachable from the worker that runs the translated Java. Both the
+  // capability check and the share invocation are routed here to the main
+  // thread, where navigator.share lives and the forwarded click's user
+  // activation is still valid. Mirrors the clipboard handlers above.
+  hostBridge.register('__cn1_native_share_supported__', function() {
+    var nav = global.navigator || (global.window && global.window.navigator);
+    var loc = (global.window || global).location;
+    var secure = !!(loc && (loc.protocol === 'https:'
+      || loc.hostname === 'localhost' || loc.hostname === '127.0.0.1'));
+    return (nav && typeof nav.share === 'function' && secure) ? 1 : 0;
+  });
+
+  hostBridge.register('__cn1_native_share__', function(request) {
+    var nav = global.navigator || (global.window && global.window.navigator);
+    if (!nav || typeof nav.share !== 'function') {
+      return 0;
+    }
+    var data = {};
+    if (request && request.text != null && String(request.text).length) {
+      data.text = String(request.text);
+    }
+    if (request && request.url != null && String(request.url).length) {
+      data.url = String(request.url);
+    }
+    try {
+      // Resolves 0 on user-cancel/abort -- a rejection here is not an error.
+      return nav.share(data).then(function() {
+        return 1;
+      }, function() {
+        return 0;
+      });
+    } catch (err) {
+      return 0;
+    }
+  });
+
+  // The build version is published as the data-cn1-app-version attribute on the
+  // host page's <html> element, which the worker can't read (no document). Used
+  // for cache-busting resource URLs; returns null when absent.
+  hostBridge.register('__cn1_build_version__', function() {
+    var doc = global.document || (global.window && global.window.document);
+    if (!doc || !doc.documentElement) {
+      return null;
+    }
+    return doc.documentElement.getAttribute('data-cn1-app-version');
+  });
+
+  // Create a DOM element on the MAIN thread and return its host-ref. The worker
+  // cannot create DOM nodes (no document, and jQuery isn't loaded there), so the
+  // jQuery/`createElement`-based @JSBody helpers (showButton_, FileChooser's
+  // file inputs + buttons) route here. ``spec`` = {tag, attrs, text, appendToBody};
+  // ``clickCallback`` (optional, a separate top-level arg so mapHostArgs
+  // materialises it into a worker-callback proxy) is wired as a click listener.
+  // text is set via textContent, never innerHTML -- no markup injection from
+  // user-controlled labels.
+  hostBridge.register('__cn1_create_dom_element__', function(spec, clickCallback) {
+    var doc = global.document || (global.window && global.window.document);
+    if (!doc || typeof doc.createElement !== 'function') {
+      return null;
+    }
+    spec = spec || {};
+    var el = doc.createElement(String(spec.tag || 'div'));
+    if (spec.attrs) {
+      for (var k in spec.attrs) {
+        if (Object.prototype.hasOwnProperty.call(spec.attrs, k)) {
+          el.setAttribute(k, String(spec.attrs[k]));
+        }
+      }
+    }
+    if (spec.text != null) {
+      el.textContent = String(spec.text);
+    }
+    // hostBridge.invoke passes args raw (no mapHostArgs), so a worker-side
+    // EventListener arrives as a {__cn1WorkerCallback} marker -- materialise it
+    // into a proxy that posts the click back to the worker.
+    var cb = clickCallback;
+    if (cb && typeof cb === 'object' && typeof cb.__cn1WorkerCallback === 'number') {
+      cb = makeWorkerCallback(cb.__cn1WorkerCallback);
+    }
+    if (typeof cb === 'function') {
+      el.addEventListener('click', cb);
+    }
+    if (spec.appendToBody && doc.body) {
+      doc.body.appendChild(el);
+    }
+    // hostResult stores the element as a host-ref and returns a cloneable
+    // {__cn1HostRef} marker -- returning the raw element makes postHostCallback's
+    // structured-clone postMessage throw DataCloneError.
+    return hostResult(el);
+  });
+
+  // Fullscreen lives on the main-thread document. The worker routes the
+  // capability/state queries and the enter/exit requests here; enter/exit
+  // resolve to 1/0 once the browser's requestFullscreen()/exitFullscreen()
+  // promise settles, and the worker invokes the Java callback with that result.
+  function fullscreenDoc() {
+    return global.document || (global.window && global.window.document);
+  }
+  hostBridge.register('__cn1_fullscreen_supported__', function() {
+    var doc = fullscreenDoc();
+    return (doc && doc.body && typeof doc.body.requestFullscreen === 'function') ? 1 : 0;
+  });
+  hostBridge.register('__cn1_is_fullscreen__', function() {
+    var doc = fullscreenDoc();
+    return (doc && doc.fullscreenElement) ? 1 : 0;
+  });
+  hostBridge.register('__cn1_request_fullscreen__', function() {
+    var doc = fullscreenDoc();
+    if (!doc || !doc.body || typeof doc.body.requestFullscreen !== 'function') {
+      return 0;
+    }
+    try {
+      var p = doc.body.requestFullscreen();
+      if (p && typeof p.then === 'function') {
+        return p.then(function() { return 1; }, function() { return 0; });
+      }
+      return 1;
+    } catch (err) {
+      return 0;
+    }
+  });
+  // Print: build the Blob + object URL on the MAIN thread from the base64
+  // document bytes the worker sent (a worker-created blob: URL is invalid in a
+  // main-thread iframe, and document/iframe don't exist in the worker), load it
+  // into a hidden iframe and invoke the browser print dialog. Resolves {ok,
+  // error} once afterprint fires or the 1s fallback elapses; the worker then
+  // invokes the Java PrintFrameCallback with the outcome.
+  // FileChooser: read the file the user picked in the <input type=file>. The
+  // input host-ref is resolved here; the worker only ever sees the bytes.
+  hostBridge.register('__cn1_input_file_count__', function(request) {
+    var el = resolveHostRef(request && request.el);
+    return (el && el.files) ? el.files.length : 0;
+  });
+
+  hostBridge.register('__cn1_read_input_file__', function(request) {
+    var el = resolveHostRef(request && request.el);
+    var index = (request && request.index) | 0;
+    var f = (el && el.files) ? el.files[index] : null;
+    if (!f) {
+      return null;
+    }
+    return new Promise(function(resolve) {
+      try {
+        var fr = new FileReader();
+        fr.onload = function() {
+          var res = String(fr.result || '');
+          var comma = res.indexOf(',');
+          var b64 = comma >= 0 ? res.substring(comma + 1) : res;
+          resolve((f.name || '') + '\n' + b64);
+        };
+        fr.onerror = function() { resolve(null); };
+        fr.readAsDataURL(f);
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  });
+
+  // Live camera (com.codename1.camera.Camera). The whole getUserMedia/<video>/
+  // capture-<canvas> session runs here on the main thread; the worker only holds
+  // the opaque <video> host-ref.
+  hostBridge.register('__cn1_camera_supported__', function() {
+    return (typeof navigator !== 'undefined' && navigator.mediaDevices
+      && navigator.mediaDevices.getUserMedia) ? 1 : 0;
+  });
+
+  hostBridge.register('__cn1_camera_last_error__', function() {
+    return global.__cn1_camera_error || '';
+  });
+
+  hostBridge.register('__cn1_camera_open__', function(request) {
+    var facing = (request && request.facing) ? String(request.facing) : 'environment';
+    var audio = !!(request && request.audio);
+    var doc = global.document || (global.window && global.window.document);
+    if (!doc || typeof navigator === 'undefined' || !navigator.mediaDevices
+        || !navigator.mediaDevices.getUserMedia) {
+      global.__cn1_camera_error = 'NotSupportedError';
+      return null;
+    }
+    return navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: audio })
+      .then(function(stream) {
+        var v = doc.createElement('video');
+        v.autoplay = true;
+        v.muted = true;
+        v.setAttribute('muted', '');
+        v.setAttribute('playsinline', '');
+        v.setAttribute('autoplay', '');
+        v.srcObject = stream;
+        try { var p = v.play(); if (p && p.catch) { p.catch(function() {}); } } catch (e) {}
+        global.__cn1_camera_error = '';
+        return hostResult(v);
+      })
+      .catch(function(e) {
+        global.__cn1_camera_error = (e && e.name) ? e.name : ('' + e);
+        return null;
+      });
+  });
+
+  hostBridge.register('__cn1_camera_grab__', function(request) {
+    var v = resolveHostRef(request && request.video);
+    if (!v) { return null; }
+    var w = (request && request.w) | 0;
+    var h = (request && request.h) | 0;
+    if (w <= 0) { w = v.videoWidth || 640; }
+    if (h <= 0) { h = v.videoHeight || 480; }
+    var quality = (request && typeof request.quality === 'number') ? request.quality : 0.9;
+    var doc = global.document || (global.window && global.window.document);
+    if (!doc) { return null; }
+    try {
+      var c = doc.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      var ctx = c.getContext('2d');
+      ctx.drawImage(v, 0, 0, w, h);
+      var dataUrl = c.toDataURL('image/jpeg', quality);
+      var comma = dataUrl.indexOf(',');
+      var b64 = comma >= 0 ? dataUrl.substring(comma + 1) : dataUrl;
+      return w + ',' + h + ',' + b64;
+    } catch (e) {
+      return null;
+    }
+  });
+
+  hostBridge.register('__cn1_camera_close__', function(request) {
+    var v = resolveHostRef(request && request.video);
+    if (!v) { return 0; }
+    try {
+      if (v.srcObject) {
+        var t = v.srcObject.getTracks();
+        for (var i = 0; i < t.length; i++) { t[i].stop(); }
+      }
+    } catch (e) {}
+    try { v.pause(); } catch (e) {}
+    try { if (v.parentNode) { v.parentNode.removeChild(v); } } catch (e) {}
+    try { v.srcObject = null; } catch (e) {}
+    return 1;
+  });
+
+  hostBridge.register('__cn1_print_data__', function(request) {
+    var b64 = (request && request.b64 != null) ? String(request.b64) : '';
+    var mimeType = (request && request.mimeType != null) ? String(request.mimeType) : 'application/octet-stream';
+    var doc = global.document || (global.window && global.window.document);
+    if (!doc || !doc.body) {
+      return { ok: 0, error: 'Printing requires a browser document context' };
+    }
+    var isImage = mimeType.indexOf('image/') === 0;
+    var urlApi = (typeof URL !== 'undefined' && URL) ? URL
+      : ((global.window && global.window.webkitURL) ? global.window.webkitURL : null);
+    var url = null;
+    if (!isImage) {
+      // PDF and other binary formats the browser can render natively go through
+      // an object URL loaded directly into the iframe.
+      try {
+        var bin = atob(b64);
+        var u8 = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) { u8[i] = bin.charCodeAt(i); }
+        var blob = new Blob([u8], { type: mimeType });
+        url = urlApi ? urlApi.createObjectURL(blob) : null;
+      } catch (err) {
+        return { ok: 0, error: 'Failed to decode document for printing: ' + err };
+      }
+      if (!url) {
+        return { ok: 0, error: 'Object URLs are not supported in this browser' };
+      }
+    }
+    return new Promise(function(resolve) {
+      var done = false, cleaned = false, iframe = null;
+      var finish = function(ok, msg) {
+        if (done) { return; }
+        done = true;
+        resolve({ ok: ok ? 1 : 0, error: msg == null ? null : String(msg) });
+      };
+      var cleanup = function() {
+        if (cleaned) { return; }
+        cleaned = true;
+        try { if (urlApi && url) { urlApi.revokeObjectURL(url); } } catch (e) {}
+        try { if (iframe && iframe.parentNode) { iframe.parentNode.removeChild(iframe); } } catch (e) {}
+      };
+      iframe = doc.createElement('iframe');
+      // Off-screen but laid out and rendered. A zero-size or visibility:hidden
+      // iframe prints blank in several browsers (the "white page" symptom).
+      iframe.style.cssText = 'position:fixed;left:-100000px;top:0;width:794px;height:1123px;border:0;background:#fff';
+      iframe.onload = function() {
+        try {
+          var win = iframe.contentWindow;
+          try { win.addEventListener('afterprint', function() { finish(1, null); setTimeout(cleanup, 0); }); } catch (e) {}
+          var doPrint = function() {
+            try { win.focus(); win.print(); }
+            catch (e) { finish(0, '' + e); cleanup(); return; }
+            setTimeout(function() { finish(1, null); }, 1000);
+          };
+          if (isImage) {
+            // Wait for the (data-URL) image to decode/paint before printing,
+            // otherwise the print captures an empty page.
+            var idoc = null;
+            try { idoc = iframe.contentDocument || win.document; } catch (e) {}
+            var img = (idoc && idoc.images && idoc.images.length) ? idoc.images[0] : null;
+            if (img && !(img.complete && img.naturalWidth > 0)) {
+              var tries = 0;
+              var waitImg = function() {
+                if ((img.complete && img.naturalWidth > 0) || tries++ > 100) { doPrint(); }
+                else { setTimeout(waitImg, 20); }
+              };
+              waitImg();
+              return;
+            }
+          }
+          doPrint();
+        } catch (e) {
+          finish(0, '' + e);
+          cleanup();
+        }
+      };
+      iframe.onerror = function() { finish(0, 'Failed to load document for printing'); cleanup(); };
+      if (isImage) {
+        // Printing a raw image blob as the iframe src yields a tiny centred
+        // thumbnail on a white page in most browsers. Wrap it in a page-filling
+        // <img> so the printout actually shows the image.
+        var dataUrl = 'data:' + mimeType + ';base64,' + b64;
+        var html = '<!DOCTYPE html><html><head><meta charset="utf-8">'
+          + '<style>@page{margin:0}html,body{margin:0;padding:0;background:#fff}'
+          + 'img{display:block;width:100%;height:auto}</style></head>'
+          + '<body><img src="' + dataUrl + '"></body></html>';
+        try { iframe.srcdoc = html; }
+        catch (e) { iframe.src = 'data:text/html;charset=utf-8,' + encodeURIComponent(html); }
+      } else {
+        iframe.src = url;
+      }
+      doc.body.appendChild(iframe);
+      // afterprint doesn't fire reliably for an off-screen iframe, which would
+      // leave the promise -- and the caller's listener -- hanging. Resolve as
+      // completed after a grace period regardless; the print dialog still
+      // triggers from onload when it fires.
+      setTimeout(function() { finish(1, null); }, 3000);
+      setTimeout(cleanup, 60000);
+    });
+  });
+
+  hostBridge.register('__cn1_exit_fullscreen__', function() {
+    var doc = fullscreenDoc();
+    if (!doc || typeof doc.exitFullscreen !== 'function') {
+      return 0;
+    }
+    try {
+      var p = doc.exitFullscreen();
+      if (p && typeof p.then === 'function') {
+        return p.then(function() { return 1; }, function() { return 0; });
+      }
+      return 1;
+    } catch (err) {
+      return 0;
+    }
+  });
+
   function afterPaint(frames) {
     return new Promise(function(resolve) {
       var win = global.window || global;
@@ -1466,6 +1998,10 @@
             return;
           }
           advanced = true;
+          var idx = pendingFrameTicks.indexOf(tick);
+          if (idx >= 0) {
+            pendingFrameTicks.splice(idx, 1);
+          }
           remaining--;
           if (remaining <= 0) {
             resolve();
@@ -1473,12 +2009,25 @@
           }
           step();
         }
+        // Hidden/headless pages throttle BOTH rAF (stops entirely) and the
+        // setTimeout fallback (intensive wake-up batching), so register the
+        // tick for the external __cn1NudgeVm driver too -- a CDP-driven
+        // nudge resolves pending frame waits within its interval instead of
+        // stalling each settle for seconds.
+        pendingFrameTicks.push(tick);
         raf(tick);
         setTimeout(tick, 32);
       }
       step();
     });
   }
+  var pendingFrameTicks = [];
+  global.__cn1FlushFrameTicks = function() {
+    var ticks = pendingFrameTicks.splice(0, pendingFrameTicks.length);
+    for (var i = 0; i < ticks.length; i++) {
+      try { ticks[i](); } catch (_e) { /* tick is self-guarding */ }
+    }
+  };
 
   function shortSignatureFromImageData(img) {
     if (!img || !img.data || !img.data.length) {
@@ -1718,7 +2267,76 @@
     return meta;
   }
 
+  // 3D RenderView peers render to their own WebGL canvas overlaid on the output
+  // canvas; they are DOM overlays, so the output canvas the screenshot scores and
+  // encodes does not contain them. Before each capture, draw every such canvas
+  // (marked data-cn1gl3d, created with preserveDrawingBuffer so its frame is
+  // readable) onto the main output canvas IN PLACE at its on-screen position.
+  // Doing it before candidate scoring means the output canvas scores as non-empty
+  // and the encoded snapshot includes the 3D content. No-op when there are no GL
+  // peers; failures are swallowed so a normal capture is never affected. (The
+  // output canvas is repainted on the next frame, so this only affects capture.)
+  function cn1CompositeGLPeersOntoOutput() {
+    try {
+      var doc = global.document;
+      if (!doc || typeof doc.querySelectorAll !== 'function') {
+        return;
+      }
+      var gls = doc.querySelectorAll('canvas[data-cn1gl3d]');
+      if (!gls || !gls.length) {
+        return;
+      }
+      var base = global.__cn1LastPaintCanvas || global.__cn1LastDrawCanvas || null;
+      if (!base && typeof doc.querySelector === 'function') {
+        base = doc.querySelector('canvas:not([data-cn1gl3d])');
+      }
+      if (!base || typeof base.getContext !== 'function') {
+        return;
+      }
+      var ctx = base.getContext('2d');
+      if (!ctx) {
+        return;
+      }
+      var baseRect = (typeof base.getBoundingClientRect === 'function') ? base.getBoundingClientRect() : null;
+      var sx = (baseRect && baseRect.width) ? (base.width / baseRect.width) : 1;
+      var sy = (baseRect && baseRect.height) ? (base.height / baseRect.height) : 1;
+      for (var i = 0; i < gls.length; i++) {
+        var g = gls[i];
+        if (!g || !(g.width | 0) || !(g.height | 0)) {
+          continue;
+        }
+        // Only composite canvases rendered for this capture cycle. A peer left in
+        // the DOM by a torn-down form is not re-rendered, so it lacks the fresh
+        // flag and must not bleed its stale frame (e.g. the 3D animation showing
+        // up in a later DesktopMode capture). Consume the flag after drawing.
+        if (!g.hasAttribute || !g.hasAttribute('data-cn1gl3d-fresh')) {
+          continue;
+        }
+        g.removeAttribute('data-cn1gl3d-fresh');
+        var dx = 0;
+        var dy = 0;
+        var dw = g.width;
+        var dh = g.height;
+        if (baseRect && typeof g.getBoundingClientRect === 'function') {
+          var gr = g.getBoundingClientRect();
+          dx = (gr.left - baseRect.left) * sx;
+          dy = (gr.top - baseRect.top) * sy;
+          dw = gr.width * sx;
+          dh = gr.height * sy;
+        }
+        try {
+          ctx.drawImage(g, dx, dy, dw, dh);
+        } catch (_drawErr) {
+          // Skip an unreadable GL canvas rather than fail the whole capture.
+        }
+      }
+    } catch (_compositeErr) {
+      // Never let GL compositing break a normal screenshot.
+    }
+  }
+
   function pickBestCanvasSnapshot(includeDataUrl, previousSignature) {
+    cn1CompositeGLPeersOntoOutput();
     function pushCanvas(list, seen, canvas, source) {
       if (!canvas || !isCanvasLike(canvas)) {
         return;
@@ -2140,20 +2758,39 @@
             && typeof document !== 'undefined'
             && document.fonts
             && typeof document.fonts.add === 'function') {
-          var descriptor = "url('" + cssStringEscape(fontUrl) + "') format('"
-            + cssStringEscape(fontFormat) + "')";
-          var ff = new FontFace(fontName, descriptor);
-          ff.load().then(function(loaded) {
-            try { document.fonts.add(loaded); } catch (_err) {}
-            resolve({ loaded: true, path: 'FontFace' });
-          }, function(err) {
-            if (typeof console !== 'undefined' && typeof console.warn === 'function') {
-              console.warn('PARPAR:DIAG:HOST:loadTrueTypeFont:FontFace:fail:fontName=' + fontName
-                + ':url=' + fontUrl
-                + ':error=' + String(err && err.message ? err.message : err));
+          // App-resource fonts (theme .ttf files) land at the bundle ROOT
+          // (the translator copies app resources top-level), while the
+          // port's own webapp fonts live under assets/. Try assets/ first
+          // (the historical layout), then fall back to the bare basename so
+          // root-level app fonts don't 404 (observed: Initializr's
+          // Inter-*.ttf 404ing under assets/ and the UI falling back to
+          // system fonts).
+          var candidates = [fontUrl];
+          if (fontUrl.indexOf('assets/') === 0) {
+            candidates.push(fontUrl.substring('assets/'.length));
+          }
+          var tryLoad = function(idx) {
+            if (idx >= candidates.length) {
+              resolve({ loaded: false, path: 'FontFace', error: 'all candidate paths failed' });
+              return;
             }
-            resolve({ loaded: false, path: 'FontFace', error: String(err && err.message ? err.message : err) });
-          });
+            var candidate = candidates[idx];
+            var descriptor = "url('" + cssStringEscape(candidate) + "') format('"
+              + cssStringEscape(fontFormat) + "')";
+            var ff = new FontFace(fontName, descriptor);
+            ff.load().then(function(loaded) {
+              try { document.fonts.add(loaded); } catch (_err) {}
+              resolve({ loaded: true, path: 'FontFace' });
+            }, function(err) {
+              if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+                console.warn('PARPAR:DIAG:HOST:loadTrueTypeFont:FontFace:fail:fontName=' + fontName
+                  + ':url=' + candidate
+                  + ':error=' + String(err && err.message ? err.message : err));
+              }
+              tryLoad(idx + 1);
+            });
+          };
+          tryLoad(0);
           return;
         }
         if (typeof document !== 'undefined' && document.head) {
@@ -2556,6 +3193,25 @@
     }
     var worker = new Worker(workerUrl);
     global.__parparWorker = worker;
+    // External liveness nudge. Hidden/headless Chromium throttles BOTH the
+    // page's and the worker's timers (intensive wake-up throttling batches
+    // re-armed chains to ~1/min), which starves the VM scheduler's
+    // sleep/wait wakeups -- observed as every green thread parked 12-60s
+    // past its deadline while the worker idles. postMessage delivery is
+    // never throttled, and a 'timer-wake' makes the worker drain(), which
+    // opportunistically fires any due timed wakeups. Test harnesses (or
+    // embedders that detect background stalls) call this from an
+    // un-throttled context, e.g. CDP Runtime.evaluate.
+    global.__cn1NudgeVm = function() {
+      try {
+        worker.postMessage({ type: 'timer-wake' });
+      } catch (e) { /* worker torn down */ }
+      try {
+        if (typeof global.__cn1FlushFrameTicks === 'function') {
+          global.__cn1FlushFrameTicks();
+        }
+      } catch (e) { /* frame ticks are self-guarding */ }
+    };
     worker.onmessage = function(event) {
       handleVmMessage(event.data, worker);
     };
@@ -2569,6 +3225,92 @@
   }
 
   var appStarter = null;
+
+  // Peer interactivity: the app renders to #codenameone-canvas which sits ON TOP
+  // (z-index 0) of native peer components (BrowserComponent iframes, GL/video
+  // surfaces) parked behind it at z-index -1000 and shown through transparent
+  // ("punched") regions of the canvas. With the canvas at pointer-events:auto it
+  // captures EVERY pointer event, so peers (e.g. the Playground's Monaco editor)
+  // never receive clicks/keys -- they look live but can't be interacted with.
+  // Fix on the main thread (no per-move worker round-trip): on pointer move,
+  // flip the canvas to pointer-events:none whenever a real peer element is under
+  // the cursor, so the browser delivers the event straight to the peer; restore
+  // auto over CN1-painted content so the canvas keeps receiving app input. The
+  // window-level capture listener still fires while the canvas is "none" (the
+  // event lands on a sibling, not inside an iframe), so it re-evaluates as the
+  // cursor leaves the peer. Apps with no peers never see an iframe under the
+  // cursor, so the canvas stays auto and behaviour is unchanged.
+  //
+  // CRITICAL: a peer's box can be under the cursor while the canvas paints OPAQUE
+  // UI on top of it -- e.g. the Playground's "Samples" sheet slides over the
+  // editor iframe. The iframe still occupies that region (it's only hidden behind
+  // the canvas), so a box-only test would wrongly route the panel's clicks to the
+  // hidden editor. The canvas only lets a peer through where it is genuinely
+  // TRANSPARENT (an actual punched hole), so we additionally require the canvas
+  // pixel under the cursor to be (near-)transparent before yielding to the peer.
+  function installPeerPointerToggle() {
+    var alphaCtx = null;
+    function canvasAlphaAt(canvas, x, y) {
+      // Returns the canvas' painted alpha (0-255) at client point (x,y), or -1 if
+      // it cannot be read. Maps CSS coords -> backing-store pixels (devicePixelRatio).
+      try {
+        var rect = canvas.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) { return -1; }
+        var px = Math.round((x - rect.left) * (canvas.width / rect.width));
+        var py = Math.round((y - rect.top) * (canvas.height / rect.height));
+        if (px < 0 || py < 0 || px >= canvas.width || py >= canvas.height) { return -1; }
+        if (!alphaCtx) {
+          alphaCtx = canvas.getContext('2d', { willReadFrequently: true })
+                  || canvas.getContext('2d');
+        }
+        if (!alphaCtx || typeof alphaCtx.getImageData !== 'function') { return -1; }
+        return alphaCtx.getImageData(px, py, 1, 1).data[3];
+      } catch (e) { return -1; }
+    }
+    function pointerOverPeer(x, y) {
+      var canvas = document.getElementById('codenameone-canvas');
+      if (!canvas) { return null; }
+      if (typeof document.elementsFromPoint !== 'function') { return null; }
+      var els = document.elementsFromPoint(x, y);
+      var peerUnder = false;
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (el === canvas) { continue; }
+        if (el === document.body || el === document.documentElement) { break; }
+        if (el.tagName === 'IFRAME') { peerUnder = true; break; }
+        // A peer element nested inside the peers container (but not the empty
+        // full-screen container itself).
+        if (el.closest) {
+          var pc = el.closest('#cn1-peers-container');
+          if (pc && pc !== el) { peerUnder = true; break; }
+        }
+      }
+      if (!peerUnder) { return false; }
+      // A peer box is under the cursor -- only yield to it where the canvas is an
+      // actual transparent hole. If the canvas paints opaque content here (a sheet
+      // or panel over the peer), keep the click on the canvas. When the alpha can't
+      // be read we fall back to box-only behaviour (yield to the peer).
+      var alpha = canvasAlphaAt(canvas, x, y);
+      if (alpha < 0) { return true; }
+      return alpha < 16;
+    }
+    function evaluate(e) {
+      var canvas = document.getElementById('codenameone-canvas');
+      if (!canvas) { return; }
+      var over = pointerOverPeer(e.clientX, e.clientY);
+      if (over === null) { return; }
+      var want = over ? 'none' : 'auto';
+      if (canvas.style.pointerEvents !== want) {
+        canvas.style.pointerEvents = want;
+      }
+    }
+    window.addEventListener('pointermove', evaluate, true);
+    window.addEventListener('mousemove', evaluate, true);
+    // Also evaluate on pointerdown so a press immediately following a move
+    // (or a synthesized tap) routes to the right layer before dispatch settles.
+    window.addEventListener('pointerdown', evaluate, true);
+  }
+  try { installPeerPointerToggle(); } catch (e) { /* non-fatal */ }
 
   global.startParparVmApp = function() {
     log('startParparVmApp');
@@ -2606,6 +3348,10 @@
     worker.postMessage({
       type: 'start',
       locationSearch: (global.location && global.location.search) ? String(global.location.search) : '',
+      // Full host-page URL so the worker's getProperty("browser.window.location.*")
+      // reflects the PAGE (deep links / ?sample= / ?code= share links) rather than
+      // the worker script's own URL. See HTML5Implementation.mainLocationHref.
+      locationHref: (global.location && global.location.href) ? String(global.location.href) : '',
       devicePixelRatio: dpr
     });
   };

@@ -22,6 +22,7 @@
  */
 package com.codename1.builders;
 
+import com.codename1.util.IOSWalletExtensionBuilder;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -58,6 +59,17 @@ public class IPhoneBuilder extends Executor {
     // that is an implementation detail -- never surfaced in hint names.
     private final MacNativeBuilder macNativeBuilder = new MacNativeBuilder(this);
 
+    // watchNative.* delegate: adds an Apple Watch (watchOS) target rendered via
+    // the Core Graphics backend. Like macNativeBuilder this is inert unless the
+    // watchNative.enabled hint is set, keeping the iOS build unchanged.
+    private final WatchNativeBuilder watchNativeBuilder = new WatchNativeBuilder(this);
+
+    // tvNative.* delegate: adds an Apple TV (tvOS) target. tvOS is handled like
+    // the Mac Catalyst slice (Metal + GL stub headers + GL-only sources excluded)
+    // but as a separate appletvos target. Inert unless tvNative.enabled (or
+    // codename1.tvMain) is set, keeping the iOS build unchanged.
+    private final TvNativeBuilder tvNativeBuilder = new TvNativeBuilder(this);
+
     private boolean enableGalleryMultiselect;
     private boolean usePhotoKitForMultigallery;
     private boolean enableWKWebView, disableUIWebView;
@@ -86,6 +98,7 @@ public class IPhoneBuilder extends Executor {
     private Map<String, String> localizedIcons = new LinkedHashMap<String, String>();
 
     private boolean detectJailbreak;
+    private boolean appAttest;
 
     private boolean runPods=false;
     private boolean runSpm=false;
@@ -93,11 +106,18 @@ public class IPhoneBuilder extends Executor {
     private String buildVersion;
     private boolean usesLocalNotifications;
     private boolean usesPurchaseAPI;
+    private boolean usesAppReview;
+    private boolean usesCodeEditor;
+    private boolean usesWalletApi;
     private boolean usesCryptoAPI;
     private boolean usesCryptoGcm;
     private boolean usesBiometrics;
     private boolean usesNfc;
     private boolean usesCn1Camera;
+    // Set when the app references com.codename1.car.* (Apple CarPlay support). Gates the
+    // CN1_USE_CARPLAY native define, CarPlay.framework linkage, the carplay entitlement and the
+    // CarPlay scene in the Info.plist scene manifest. Apps that never touch the API see no change.
+    private boolean usesCar;
     private boolean usesOidc;
     private boolean usesAppleSignIn;
     private boolean usesWebauthn;
@@ -130,6 +150,15 @@ public class IPhoneBuilder extends Executor {
     
     public void cleanup() {
         super.cleanup();
+    }
+
+    /// Records a boolean CarPlay entitlement (e.g. com.apple.developer.carplay-audio) unless the
+    /// project already set it explicitly, mirroring how the App Attest / Apple Sign-In entitlements
+    /// are injected. The downstream entitlements generator emits these as &lt;true/&gt;.
+    private void putCarPlayEntitlement(BuildRequest request, String key) {
+        if (request.getArg("ios.entitlements." + key, null) == null) {
+            request.putArgument("ios.entitlements." + key, "true");
+        }
     }
 
     private static String maxVersionString(String commaDelimitedVersions) {
@@ -291,7 +320,16 @@ public class IPhoneBuilder extends Executor {
     public boolean build(File sourceZip, BuildRequest request) throws BuildException {
         Stopwatch stopwatch = new Stopwatch();
         addMinDeploymentTarget(DEFAULT_MIN_DEPLOYMENT_VERSION);
+        if (request.getArg("ios.deployment_target", null) == null) {
+            // No explicit deployment target. Default to iOS 14 so the
+            // UILaunchScreen-based launch screen injected for UIScene builds
+            // satisfies App Store validation: apps supporting iPad
+            // multitasking must provide a launch storyboard, or UILaunchScreen
+            // when MinimumOSVersion is 14 or higher.
+            addMinDeploymentTarget("14.0");
+        }
         detectJailbreak = request.getArg("ios.detectJailbreak", "false").equals("true");
+        appAttest = request.getArg("ios.appAttest", "false").equals("true");
         defaultEnvironment.put("LANG", "en_US.UTF-8");
         tmpFile = tmpDir = getBuildDirectory();
         useMetal = "true".equals(request.getArg("ios.metal", "true"));
@@ -310,6 +348,28 @@ public class IPhoneBuilder extends Executor {
             // Mac requires the iPad device family. iphone-only is incompatible.
             macNativeBuilder.validateProjectType(request);
             // Ruby + xcodeproj gem is unconditionally required for the Mac slice.
+            ensureXcodeprojInstalled();
+        }
+
+        // watchNative: parse + prep. The watch app is a separate target (not a
+        // slice), built from the shared sources for arm64_32 and rendered via
+        // Core Graphics, so no iOS-side renderer knobs change here -- we only
+        // need the xcodeproj gem to add and wire the target post-generate.
+        watchNativeBuilder.parseHints(request);
+        if (watchNativeBuilder.isEnabled()) {
+            ensureXcodeprojInstalled();
+        }
+
+        // tvNative: parse + prep. The tvOS app is a SEPARATE appletvos target
+        // (like the watch target, not a Catalyst-style slice of the iOS app), so
+        // we must NOT touch the iOS app's renderer here -- forcing useMetal=true
+        // would override an explicit ios.metal=false and make the GL screenshot
+        // job actually render with Metal. tvOS itself has no OpenGL ES and runs
+        // on Metal via the project's default ios.metal=true; the tvOS target's
+        // own Xcode settings are written by tvNativeBuilder.applyXcodeSettings.
+        // We only need the xcodeproj gem to add and wire the target.
+        tvNativeBuilder.parseHints(request);
+        if (tvNativeBuilder.isEnabled()) {
             ensureXcodeprojInstalled();
         }
 
@@ -390,6 +450,20 @@ public class IPhoneBuilder extends Executor {
         if (usePodsForGoogleAds) {
             iosPods += (((iosPods.length() > 0) ? ",":"") + "Firebase/Core,Firebase/AdMob");
             addMinDeploymentTarget("7.0");
+        }
+
+        // Firebase Analytics (com.codename1.analytics.FirebaseAnalyticsProvider
+        // delegates to a generated FirebaseAnalyticsProvider.Bridge). Enabled
+        // with the build hint ios.firebaseAnalytics=true; requires a
+        // GoogleService-Info.plist in the project resources. Adds the
+        // Firebase/Analytics pod (skipped if Firebase/Core was already pulled
+        // in by AdMob, which carries Analytics transitively).
+        boolean useFirebaseAnalytics = "true".equals(request.getArg("ios.firebaseAnalytics", "false"));
+        if (useFirebaseAnalytics && !iosPods.contains("Firebase/")) {
+            String fbAnalyticsVersion = request.getArg("ios.firebaseAnalyticsVersion", "");
+            iosPods += (((iosPods.length() > 0) ? ",":"") + "Firebase/Analytics"
+                    + (fbAnalyticsVersion.length() > 0 ? " " + fbAnalyticsVersion : ""));
+            addMinDeploymentTarget("10.0");
         }
         if (enableGalleryMultiselect && photoLibraryUsage) {
             addMinDeploymentTarget("8.0");
@@ -705,6 +779,24 @@ public class IPhoneBuilder extends Executor {
                     if (!usesPurchaseAPI && cls.indexOf("com/codename1/payment") == 0) {
                         usesPurchaseAPI = true;
                     }
+                    // App review API (SKStoreReviewController). Gated on actual
+                    // usage so StoreKit.framework + the CN1_USE_APPREVIEW native
+                    // bridge are only linked when the app references the API.
+                    if (!usesAppReview && cls.indexOf("com/codename1/appreview") == 0) {
+                        usesAppReview = true;
+                    }
+                    // CodeEditor optionally upgrades its built-in highlighter to the
+                    // bundled CodeMirror web assets. Gated on actual usage (CN1_USE_CODEMIRROR)
+                    // so apps that never embed a code editor pay nothing.
+                    if (!usesCodeEditor && cls.indexOf("com/codename1/ui/CodeEditor") == 0) {
+                        usesCodeEditor = true;
+                    }
+                    // Wallet issuer-provisioning natives are only compiled in when
+                    // the app actually references the API (or enables the extension
+                    // via the ios.wallet.extension hint) - see CN1_INCLUDE_WALLET.
+                    if (!usesWalletApi && cls.indexOf("com/codename1/payment/Wallet") == 0) {
+                        usesWalletApi = true;
+                    }
                     if (cls.indexOf("com/codename1/security/") == 0) {
                         // com.codename1.security contains two distinct API
                         // families that toggle different bits of the iOS
@@ -736,6 +828,12 @@ public class IPhoneBuilder extends Executor {
                     // AVFoundation-based CN1Camera natives.
                     if (!usesCn1Camera && cls.indexOf("com/codename1/camera/") == 0) {
                         usesCn1Camera = true;
+                    }
+                    // Apple CarPlay (com.codename1.car.*). Gated on actual usage so the
+                    // CarPlay scene/entitlement/framework are only added for apps that
+                    // build an in-car experience.
+                    if (!usesCar && cls.indexOf("com/codename1/car/") == 0) {
+                        usesCar = true;
                     }
                     // OidcClient + SystemBrowser rely on
                     // ASWebAuthenticationSession (AuthenticationServices.framework,
@@ -781,6 +879,14 @@ public class IPhoneBuilder extends Executor {
                             && (method.indexOf("connect") > -1
                                 || method.indexOf("disconnect") > -1)) {
                         usesWifiHotspotConfig = true;
+                    }
+                    // Apps that call the low-level CN/Display review entry point
+                    // directly (without the com.codename1.appreview facade) still
+                    // need StoreKit + the native bridge.
+                    if (!usesAppReview
+                            && (cls.equals("com/codename1/ui/CN") || cls.equals("com/codename1/ui/Display"))
+                            && method.indexOf("equestNativeInAppReview") > -1) {
+                        usesAppReview = true;
                     }
                 }
             });
@@ -1201,6 +1307,11 @@ public class IPhoneBuilder extends Executor {
                 replaceInFile(CodenameOne_GLViewController, "//#define LOW_MEM_CAMERA", "#define LOW_MEM_CAMERA");
             }
 
+            if (request.getArg("ios.launchPlaceholder", "true").equals("false")) {
+                File glViewControllerM = new File(buildinRes, "CodenameOne_GLViewController.m");
+                replaceInFile(glViewControllerM, "//#define CN1_DISABLE_LAUNCH_PLACEHOLDER", "#define CN1_DISABLE_LAUNCH_PLACEHOLDER");
+            }
+
             if (request.getArg("ios.enableStatusBar7", "true").equals("false")) {
                 File CodenameOne_GLViewController = new File(buildinRes, "CodenameOne_GLViewController.m");
                 replaceInFile(CodenameOne_GLViewController, "int statusbarHeight = 20;", "int statusbarHeight = 0;");
@@ -1231,6 +1342,27 @@ public class IPhoneBuilder extends Executor {
         
         File stubSource = new File(tmpFile, "stub");
         stubSource.mkdirs();
+        // Native map provider injection (no-op unless maps.provider=apple):
+        // writes the MapKit provider's Java into the stub source (compiled by
+        // javac + translated by ParparVM) and its Objective-C into the native
+        // sources, returning the startup snippet that registers it. Keeps the
+        // core framework free of any map SDK.
+        String integrateMaps = MapsProviderInjector.injectIos(this, request, stubSource, buildinRes);
+        if (integrateMaps.length() > 0) {
+            StringBuilder libs = new StringBuilder(request.getArg("ios.add_libs", ""));
+            String[] fw = MapsProviderInjector.iosFrameworks(request);
+            for (int fwi = 0; fwi < fw.length; fwi++) {
+                if (libs.length() > 0) {
+                    libs.append(';');
+                }
+                libs.append(fw[fwi]);
+            }
+            request.putArgument("ios.add_libs", libs.toString());
+            if (request.getArg("ios.NSLocationWhenInUseUsageDescription", null) == null) {
+                request.putArgument("ios.NSLocationWhenInUseUsageDescription",
+                        "Shows your location on the map.");
+            }
+        }
         try {
             generateUnitTestFiles(request, stubSource);
         } catch (Exception ex) {
@@ -1256,6 +1388,123 @@ public class IPhoneBuilder extends Executor {
                 "com/codename1/generated/svg/SVGRegistry.class");
         if (svgRegistryClassFile.isFile()) {
             svgRegistryInstall = "            com.codename1.generated.svg.SVGRegistry.installGlobal();\n";
+        }
+
+        // Firebase Analytics bridge (ios.firebaseAnalytics=true): generate a
+        // FirebaseAnalyticsProvider.Bridge whose methods are native and link to
+        // the generated .m below, then register it in the Stub before init().
+        // FIRAnalytics is invoked dynamically (NSClassFromString / performSelector)
+        // so the .m compiles even without the Firebase pod; when the pod is absent
+        // isSupported() returns false and FirebaseAnalyticsProvider is a no-op.
+        String firebaseRegisterInstall = "";
+        if (useFirebaseAnalytics) {
+            String fbPkg = request.getPackageName();
+            String fbBridgeJava = "package " + fbPkg + ";\n\n"
+                    + "import com.codename1.analytics.FirebaseAnalyticsProvider;\n\n"
+                    + "/** Generated by the Codename One build (ios.firebaseAnalytics=true). */\n"
+                    + "public class FirebaseAnalyticsBridgeImpl implements FirebaseAnalyticsProvider.Bridge {\n"
+                    + "    public native boolean isSupported();\n"
+                    + "    public native void logEvent(String name, String paramsJson);\n"
+                    + "    public native void logScreen(String screenName);\n"
+                    + "    public native void setUserId(String id);\n"
+                    + "    public native void setUserProperty(String key, String value);\n"
+                    + "}\n";
+            try (OutputStream fbJavaStream = new FileOutputStream(new File(stubSource, "FirebaseAnalyticsBridgeImpl.java"))) {
+                fbJavaStream.write(fbBridgeJava.getBytes(StandardCharsets.UTF_8));
+            } catch (IOException ex) {
+                throw new RuntimeException("Failed to generate FirebaseAnalyticsBridgeImpl.java", ex);
+            }
+            String pfx = fbPkg.replace('.', '_') + "_FirebaseAnalyticsBridgeImpl";
+            String fbM = "// Generated by the Codename One build (ios.firebaseAnalytics=true).\n"
+                    + "// Native implementation of " + fbPkg + ".FirebaseAnalyticsBridgeImpl.\n"
+                    + "// FIRAnalytics is invoked dynamically so this compiles without the\n"
+                    + "// Firebase pod; isSupported() returns NO when the SDK is absent.\n"
+                    + "#include \"xmlvm.h\"\n"
+                    + "#include \"java_lang_String.h\"\n"
+                    + "#import <Foundation/Foundation.h>\n\n"
+                    + "#pragma clang diagnostic ignored \"-Wundeclared-selector\"\n\n"
+                    + "static Class cn1FirebaseAnalyticsClass(void) {\n"
+                    + "    return NSClassFromString(@\"FIRAnalytics\");\n"
+                    + "}\n\n"
+                    + "JAVA_BOOLEAN " + pfx + "_isSupported__(CN1_THREAD_STATE_MULTI_ARG JAVA_OBJECT instanceObject) {\n"
+                    + "    return cn1FirebaseAnalyticsClass() != nil ? JAVA_TRUE : JAVA_FALSE;\n"
+                    + "}\n\n"
+                    + "void " + pfx + "_logEvent___java_lang_String_java_lang_String(CN1_THREAD_STATE_MULTI_ARG JAVA_OBJECT instanceObject, JAVA_OBJECT name, JAVA_OBJECT paramsJson) {\n"
+                    + "    POOL_BEGIN();\n"
+                    + "    Class fir = cn1FirebaseAnalyticsClass();\n"
+                    + "    if (fir != nil) {\n"
+                    + "        NSString* n = toNSString(CN1_THREAD_STATE_PASS_ARG name);\n"
+                    + "        NSString* pj = toNSString(CN1_THREAD_STATE_PASS_ARG paramsJson);\n"
+                    + "        NSDictionary* params = nil;\n"
+                    + "        if (pj != nil && pj.length > 0) {\n"
+                    + "            NSData* data = [pj dataUsingEncoding:NSUTF8StringEncoding];\n"
+                    + "            id parsed = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];\n"
+                    + "            if ([parsed isKindOfClass:[NSDictionary class]]) { params = (NSDictionary*) parsed; }\n"
+                    + "        }\n"
+                    + "        SEL sel = @selector(logEventWithName:parameters:);\n"
+                    + "        if ([fir respondsToSelector:sel]) {\n"
+                    + "#pragma clang diagnostic push\n"
+                    + "#pragma clang diagnostic ignored \"-Warc-performSelector-leaks\"\n"
+                    + "            [fir performSelector:sel withObject:n withObject:params];\n"
+                    + "#pragma clang diagnostic pop\n"
+                    + "        }\n"
+                    + "    }\n"
+                    + "    POOL_END();\n"
+                    + "}\n\n"
+                    + "void " + pfx + "_logScreen___java_lang_String(CN1_THREAD_STATE_MULTI_ARG JAVA_OBJECT instanceObject, JAVA_OBJECT screenName) {\n"
+                    + "    POOL_BEGIN();\n"
+                    + "    Class fir = cn1FirebaseAnalyticsClass();\n"
+                    + "    if (fir != nil) {\n"
+                    + "        NSString* n = toNSString(CN1_THREAD_STATE_PASS_ARG screenName);\n"
+                    + "        NSDictionary* params = n != nil ? @{ @\"screen_name\": n } : @{};\n"
+                    + "        SEL sel = @selector(logEventWithName:parameters:);\n"
+                    + "        if ([fir respondsToSelector:sel]) {\n"
+                    + "#pragma clang diagnostic push\n"
+                    + "#pragma clang diagnostic ignored \"-Warc-performSelector-leaks\"\n"
+                    + "            [fir performSelector:sel withObject:@\"screen_view\" withObject:params];\n"
+                    + "#pragma clang diagnostic pop\n"
+                    + "        }\n"
+                    + "    }\n"
+                    + "    POOL_END();\n"
+                    + "}\n\n"
+                    + "void " + pfx + "_setUserId___java_lang_String(CN1_THREAD_STATE_MULTI_ARG JAVA_OBJECT instanceObject, JAVA_OBJECT idStr) {\n"
+                    + "    POOL_BEGIN();\n"
+                    + "    Class fir = cn1FirebaseAnalyticsClass();\n"
+                    + "    if (fir != nil) {\n"
+                    + "        NSString* v = toNSString(CN1_THREAD_STATE_PASS_ARG idStr);\n"
+                    + "        SEL sel = @selector(setUserID:);\n"
+                    + "        if ([fir respondsToSelector:sel]) {\n"
+                    + "#pragma clang diagnostic push\n"
+                    + "#pragma clang diagnostic ignored \"-Warc-performSelector-leaks\"\n"
+                    + "            [fir performSelector:sel withObject:v];\n"
+                    + "#pragma clang diagnostic pop\n"
+                    + "        }\n"
+                    + "    }\n"
+                    + "    POOL_END();\n"
+                    + "}\n\n"
+                    + "void " + pfx + "_setUserProperty___java_lang_String_java_lang_String(CN1_THREAD_STATE_MULTI_ARG JAVA_OBJECT instanceObject, JAVA_OBJECT key, JAVA_OBJECT value) {\n"
+                    + "    POOL_BEGIN();\n"
+                    + "    Class fir = cn1FirebaseAnalyticsClass();\n"
+                    + "    if (fir != nil) {\n"
+                    + "        NSString* k = toNSString(CN1_THREAD_STATE_PASS_ARG key);\n"
+                    + "        NSString* v = toNSString(CN1_THREAD_STATE_PASS_ARG value);\n"
+                    + "        SEL sel = @selector(setUserPropertyString:forName:);\n"
+                    + "        if ([fir respondsToSelector:sel]) {\n"
+                    + "#pragma clang diagnostic push\n"
+                    + "#pragma clang diagnostic ignored \"-Warc-performSelector-leaks\"\n"
+                    + "            [fir performSelector:sel withObject:v withObject:k];\n"
+                    + "#pragma clang diagnostic pop\n"
+                    + "        }\n"
+                    + "    }\n"
+                    + "    POOL_END();\n"
+                    + "}\n";
+            try (OutputStream fbMStream = new FileOutputStream(new File(buildinRes, "cn1_firebase_analytics_bridge.m"))) {
+                fbMStream.write(fbM.getBytes(StandardCharsets.UTF_8));
+            } catch (IOException ex) {
+                throw new RuntimeException("Failed to generate cn1_firebase_analytics_bridge.m", ex);
+            }
+            firebaseRegisterInstall = "            com.codename1.analytics.FirebaseAnalyticsProvider.registerBridge(new "
+                    + fbPkg + ".FirebaseAnalyticsBridgeImpl());\n";
         }
 
         String didEnterBackground =  "        stopped = true;\n"
@@ -1299,9 +1548,11 @@ public class IPhoneBuilder extends Executor {
                     + integrateOidcBrowser
                     + integrateAppleSignIn
                     + integrateWebauthn
+                    + integrateMaps
 
                     + "        if(!initialized) {\n"
                     + "            initialized = true;\n"
+                    + firebaseRegisterInstall
                     + svgRegistryInstall
                     + "            i.init(this);\n"
                     + createStartInvocation(request, "i")
@@ -1660,6 +1911,17 @@ public class IPhoneBuilder extends Executor {
             }
         }
 
+        // The Wallet issuer-provisioning natives in IOSNative.m stay dormant
+        // (#else stubs) unless the app needs them: unused wallet-looking code
+        // in the binary can trigger questions during Apple review.
+        if (usesWalletApi || "true".equals(request.getArg("ios.wallet.extension", "false"))) {
+            try {
+                replaceInFile(new File(buildinRes, "IOSNative.m"), "//#define CN1_INCLUDE_WALLET", "#define CN1_INCLUDE_WALLET");
+            } catch (IOException ex) {
+                throw new BuildException("Failed to update Objective-C source files to activate the wallet flag", ex);
+            }
+        }
+
         if(!(request.getPushCertificate() != null || includePush)) {
             try {
                 // special workaround for issue Apple is having with push notification missing from
@@ -1710,6 +1972,23 @@ public class IPhoneBuilder extends Executor {
             File jailbreakH = new File(buildinRes, "CN1JailbreakDetector.h");
             if (jailbreakH.exists() && detectJailbreak) {
                 replaceInFile(jailbreakH, "//#define CN1_DETECT_JAILBREAK", "#define CN1_DETECT_JAILBREAK");
+            }
+
+            // ios.appAttest compiles the DeviceCheck-backed App Attest native code
+            // (gated by CN1_USE_APP_ATTEST so non-attest builds neither import nor
+            // link DeviceCheck) and links DeviceCheck.framework + injects the
+            // appattest-environment entitlement below.
+            if (appAttest) {
+                replaceInFile(new File(buildinRes, "IOSNative.m"), "//#define CN1_USE_APP_ATTEST", "#define CN1_USE_APP_ATTEST");
+            }
+
+            // com.codename1.car usage compiles the CarPlay native code (gated by CN1_USE_CARPLAY so
+            // non-car builds neither import nor link CarPlay.framework) and links the framework +
+            // injects the carplay entitlement and CarPlay scene below. The define lives in the shared
+            // CodenameOne_GLViewController.h so it is visible to every CarPlay translation unit
+            // (IOSNative.m and CodenameOne_CarPlaySceneDelegate.m), mirroring CN1_INCLUDE_NFC.
+            if (usesCar) {
+                replaceInFile(new File(buildinRes, "CodenameOne_GLViewController.h"), "//#define CN1_USE_CARPLAY", "#define CN1_USE_CARPLAY");
             }
 
             String glAppDelegeateBody = request.getArg("ios.glAppDelegateBody", null);
@@ -1782,6 +2061,16 @@ public class IPhoneBuilder extends Executor {
             if (usesPurchaseAPI) {
                 File CodenameOne_GLViewController_h = new File(buildinRes, "CodenameOne_GLViewController.h");
                 replaceInFile(CodenameOne_GLViewController_h, "//#define CN1_USE_STOREKIT", "#define CN1_USE_STOREKIT");
+
+            }
+            if (usesAppReview) {
+                File CodenameOne_GLViewController_h = new File(buildinRes, "CodenameOne_GLViewController.h");
+                replaceInFile(CodenameOne_GLViewController_h, "//#define CN1_USE_APPREVIEW", "#define CN1_USE_APPREVIEW");
+
+            }
+            if (usesCodeEditor) {
+                File CodenameOne_GLViewController_h = new File(buildinRes, "CodenameOne_GLViewController.h");
+                replaceInFile(CodenameOne_GLViewController_h, "//#define CN1_USE_CODEMIRROR", "#define CN1_USE_CODEMIRROR");
 
             }
         } catch (Exception ex) {
@@ -1869,6 +2158,17 @@ public class IPhoneBuilder extends Executor {
                     addLibs = "LocalAuthentication.framework";
                 } else if (!addLibs.toLowerCase().contains("localauthentication")) {
                     addLibs = addLibs + ";LocalAuthentication.framework";
+                }
+            }
+
+            // DeviceCheck.framework backs App Attest (com.codename1.security.
+            // DeviceIntegrity.requestIntegrityToken on iOS). Only linked when the
+            // ios.appAttest build hint enabled the CN1_USE_APP_ATTEST native code.
+            if (appAttest) {
+                if (addLibs == null || addLibs.length() == 0) {
+                    addLibs = "DeviceCheck.framework";
+                } else if (!addLibs.toLowerCase().contains("devicecheck")) {
+                    addLibs = addLibs + ";DeviceCheck.framework";
                 }
             }
 
@@ -1989,6 +2289,42 @@ public class IPhoneBuilder extends Executor {
                 }
             }
 
+            // CarPlay: link CarPlay.framework (+ MediaPlayer for the now-playing template) and
+            // inject the per-category carplay entitlement. The CarPlay entitlements are granted by
+            // Apple per app category, so we only inject the ones the project opts into via the
+            // ios.carplay.<category> build hints; the binary references CarPlay symbols (gated by
+            // CN1_USE_CARPLAY) which is why the framework is linked here in lockstep with the scan.
+            if (usesCar) {
+                String carPlayLibs = "CarPlay.framework;MediaPlayer.framework";
+                if (addLibs == null || addLibs.length() == 0) {
+                    addLibs = carPlayLibs;
+                } else if (!addLibs.toLowerCase().contains("carplay.framework")) {
+                    addLibs = addLibs + ";" + carPlayLibs;
+                }
+                // ios.carplay.audio / .messaging / .navigation / .poi -> the matching Apple CarPlay
+                // entitlement. Default to the audio entitlement when no category is specified so a
+                // basic browse/now-playing app works out of the box.
+                boolean audio = request.getArg("ios.carplay.audio", "false").equals("true");
+                boolean messaging = request.getArg("ios.carplay.messaging", "false").equals("true");
+                boolean navigation = request.getArg("ios.carplay.navigation", "false").equals("true");
+                boolean poi = request.getArg("ios.carplay.poi", "false").equals("true");
+                if (!audio && !messaging && !navigation && !poi) {
+                    audio = true;
+                }
+                if (audio) {
+                    putCarPlayEntitlement(request, "com.apple.developer.carplay-audio");
+                }
+                if (messaging) {
+                    putCarPlayEntitlement(request, "com.apple.developer.carplay-communication");
+                }
+                if (navigation) {
+                    putCarPlayEntitlement(request, "com.apple.developer.carplay-maps");
+                }
+                if (poi) {
+                    putCarPlayEntitlement(request, "com.apple.developer.carplay-driving-task");
+                }
+            }
+
             // Sign in with Apple requires the
             // com.apple.developer.applesignin entitlement; Apple rejects
             // builds whose binary references ASAuthorizationAppleIDProvider
@@ -2001,6 +2337,19 @@ public class IPhoneBuilder extends Executor {
                             "ios.entitlements.com.apple.developer.applesignin",
                             "Default");
                 }
+            }
+
+            // App Attest requires the appattest-environment entitlement; defaults
+            // to development for debug builds, production otherwise. Override with
+            // ios.appAttest.environment.
+            if (appAttest && request.getArg(
+                    "ios.entitlements.com.apple.developer.devicecheck.appattest-environment",
+                    null) == null) {
+                String appAttestEnv = request.getArg("ios.appAttest.environment",
+                        request.getArg("ios.buildType", "debug").equals("debug") ? "development" : "production");
+                request.putArgument(
+                        "ios.entitlements.com.apple.developer.devicecheck.appattest-environment",
+                        appAttestEnv);
             }
 
             // Time-sensitive / critical notification entitlements. These require a
@@ -2215,6 +2564,15 @@ public class IPhoneBuilder extends Executor {
                 if (usesPurchaseAPI) {
                     addLibs += ";StoreKit.framework";
                 }
+                // App review (SKStoreReviewController) also lives in StoreKit;
+                // link it when detected unless the purchase API already did.
+                if (usesAppReview && (addLibs == null || addLibs.toLowerCase().indexOf("storekit.framework") < 0)) {
+                    if (addLibs == null || addLibs.length() == 0) {
+                        addLibs = "StoreKit.framework";
+                    } else {
+                        addLibs += ";StoreKit.framework";
+                    }
+                }
             } catch (Exception ex) {
                 throw new BuildException("Failed to process build hints", ex);
             }
@@ -2281,6 +2639,16 @@ public class IPhoneBuilder extends Executor {
                 parparCmd.add("-DbundleVersionNumber=" + bundleVersionNumber);
                 if (macNativeBuilder.isEnabled()) {
                     parparCmd.add(macNativeBuilder.parparvmOptionalFrameworksArg());
+                } else if (watchNativeBuilder.isEnabled()) {
+                    // Weak-link the watch-incompatible frameworks so the shared
+                    // sources link on both the iOS app target and the watch
+                    // target. (macNative already widens the set when both apply.)
+                    parparCmd.add(watchNativeBuilder.parparvmOptionalFrameworksArg());
+                } else if (tvNativeBuilder.isEnabled()) {
+                    // Weak-link the tvOS-incompatible frameworks (OpenGL ES, GLKit,
+                    // WebKit, MessageUI, AddressBook) so the shared sources link on
+                    // both the iOS app target and the tvOS target.
+                    parparCmd.add(tvNativeBuilder.parparvmOptionalFrameworksArg());
                 }
                 parparCmd.add("-Xmx384m");
                 parparCmd.add("-jar");
@@ -2388,18 +2756,38 @@ public class IPhoneBuilder extends Executor {
                 throw new BuildException("Failed to normalize iOS asset catalogs", ex);
             }
             stopwatch.split("Post-VM Setup");
-            if (runPods) {
+            boolean walletExtensionEnabled = "true".equals(request.getArg("ios.wallet.extension", "false"));
+            if (walletExtensionEnabled) {
+                if (!request.getArg("ios.wallet.appGroup", "").startsWith("group.")
+                        || request.getArg("ios.wallet.issuerEndpoint", "").length() == 0) {
+                    log("The ios.wallet.extension build hint requires both of the following build hints:\n"
+                            + "  ios.wallet.appGroup={App Group id starting with 'group.' shared by the app and the Wallet extensions}\n"
+                            + "  ios.wallet.issuerEndpoint={HTTPS URL of the issuer endpoint that produces the encrypted pass payload}");
+                    return false;
+                }
+                if ("true".equals(request.getArg("ios.wallet.includeUI", "false"))
+                        && request.getArg("ios.wallet.authEndpoint", "").length() == 0) {
+                    log("The ios.wallet.includeUI build hint requires the ios.wallet.authEndpoint={HTTPS URL of the login endpoint} build hint");
+                    return false;
+                }
+            }
+            // Wallet extensions and .ios.appext archives mutate the Xcode project through the
+            // ruby xcodeproj gem even when CocoaPods isn't otherwise needed.
+            boolean needsXcodeProjectMutation = runPods || walletExtensionEnabled || hasAppExtensionArchives(resDir);
+            if (needsXcodeProjectMutation) {
                 try {
                     List<File> podSpecFileList = new ArrayList<File>();
-                    for (File podSpec : podSpecs.listFiles()) {
-                        if (podSpec.getName().startsWith(".")) {
-                            continue;
-                        }
-                        File distDir = new File(tmpFile, "dist");
-                        File targetF = new File(distDir, podSpec.getName());
-                        Files.move(podSpec.toPath(), targetF.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                        podSpecFileList.add(targetF);
+                    if (runPods) {
+                        for (File podSpec : podSpecs.listFiles()) {
+                            if (podSpec.getName().startsWith(".")) {
+                                continue;
+                            }
+                            File distDir = new File(tmpFile, "dist");
+                            File targetF = new File(distDir, podSpec.getName());
+                            Files.move(podSpec.toPath(), targetF.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                            podSpecFileList.add(targetF);
 
+                        }
                     }
 
                     String deploymentTargetStr = "";
@@ -2514,7 +2902,10 @@ public class IPhoneBuilder extends Executor {
 
 
 
-                            sb.append("\nservice_target = xcproj.new_target(:app_extension, '" + extensionName + "', :ios, '10.0')\n"
+                            // Guarded so the post-dependency re-run of fix_xcode_schemes.rb
+                            // doesn't create duplicate extension targets.
+                            sb.append("\nif xcproj.targets.find{|e| e.name=='" + extensionName + "'}.nil?\n"
+                                    + "service_target = xcproj.new_target(:app_extension, '" + extensionName + "', :ios, '10.0')\n"
                                     + "xcproj.targets.find{|e|e.name=='" + request.getMainClass() + "'}.build_configurations.each{|e| \n"
                                     + "  e.build_settings['PROVISIONING_PROFILE']='$(APP_PROVISIONING_PROFILE)'\n"
                                     + "  e.build_settings['CODE_SIGN_ENTITLEMENTS']='$(APP_CODE_SIGN_ENTITLEMENTS)'\n"
@@ -2522,9 +2913,10 @@ public class IPhoneBuilder extends Executor {
                                     //+ "service_target.frameworks_build_phase.add_file_reference(xcproj.files.find{|e|e.path.include? 'UserNotifications.framework'})\n"
                                     + "service_group = xcproj.new_group('" + extensionName + "')\n");
                             appendFilesToXcodeProjGroup(sb, appExtension, "service_group", "service_target", appExtension.getParentFile());
-                            sb.append("xcproj.targets.find{|e|e.name==main_class_name}.add_dependency(service_target)\n"
+                            sb.append("main_app_target = xcproj.targets.find{|e| e.name==main_class_name}\n"
+                                    + "main_app_target.add_dependency(service_target)\n"
                                     + "fileref = xcproj.groups.find{|e| e.display_name=='Products'}.new_file('" + extensionName + ".appex', \"BUILT_PRODUCTS_DIR\")\n"
-                                    + "embed_phase=xcproj.targets.find{|e| e.name=='" + request.getMainClass() + "'}.new_copy_files_build_phase('Embed App Extensions')\n"
+                                    + "embed_phase = main_app_target.copy_files_build_phases.find{|p| p.name=='Embed App Extensions'} || main_app_target.new_copy_files_build_phase('Embed App Extensions')\n"
                                     + "embed_phase.build_action_mask = \"2147483647\"\n"
                                     + "embed_phase.dst_subfolder_spec = \"13\"\n"
                                     + "embed_phase.run_only_for_deployment_postprocessing=\"0\"\n"
@@ -2534,6 +2926,7 @@ public class IPhoneBuilder extends Executor {
                                 sb.append("  e.build_settings['" + buildSettingKey + "'] = \"" + buildSettingsMap.get(buildSettingKey) + "\"\n");
                             }
                             sb.append("}\n");
+                            sb.append("end\n");
 
 
 
@@ -2541,6 +2934,10 @@ public class IPhoneBuilder extends Executor {
                         if (appExtensions.length > 0) {
                             sb.append("xcproj.save(project_file)\n");
                         }
+                    }
+
+                    if (walletExtensionEnabled) {
+                        appendWalletExtensionTargets(appExtensionsBuilder, request, new File(tmpFile, "dist"));
                     }
 
                     String installLocalizedStrings = "";
@@ -2672,10 +3069,11 @@ public class IPhoneBuilder extends Executor {
                     exec(hooksDir, "chmod", "0755", fixSchemesFile.getAbsolutePath());
                     exec(hooksDir, "echo", fixSchemesFile.getAbsolutePath());
                     if (!exec(hooksDir, fixSchemesFile.getAbsolutePath())) {
-                        log("Failed to fix xcode project schemes.  Make sure you have Cocoapods installed. ");
+                        log("Failed to fix xcode project schemes.  Make sure you have the xcodeproj ruby gem installed (gem install xcodeproj; it is also bundled with Cocoapods). ");
                         return false;
                     }
 
+                    if (runPods) {
                     if (!exec(new File(tmpFile, "dist"), podTimeout, pod, "init")) {
                         log("Failed to run "+pod+" init.  Make sure you have Cocoapods installed.");
                         return false;
@@ -2795,8 +3193,9 @@ public class IPhoneBuilder extends Executor {
                             }
                         }
                     }
+                    } // end if (runPods)
                 } catch (Exception ex) {
-                    throw new BuildException("Failed to generate PodFile", ex);
+                    throw new BuildException("Failed to update the generated Xcode project", ex);
                 }
                 stopwatch.split("CocoaPods");
             }
@@ -2910,6 +3309,20 @@ public class IPhoneBuilder extends Executor {
                     macNativeBuilder.writeStubHeaders(appSrcDir);
                     macNativeBuilder.applyXcodeSettings(request, tmpFile, buildVersion);
                     macNativeBuilder.writeExportOptions(request, new File(tmpFile, "dist"));
+                }
+
+                if (watchNativeBuilder.isEnabled()) {
+                    File appSrcDir = new File(tmpFile, "dist/" + request.getMainClass() + "-src");
+                    watchNativeBuilder.writeWatchInfoPlist(request, appSrcDir);
+                    watchNativeBuilder.writeWatchEntry(request, appSrcDir);
+                    watchNativeBuilder.writeStubHeaders(appSrcDir);
+                    watchNativeBuilder.applyXcodeSettings(request, tmpFile, buildVersion);
+                }
+
+                if (tvNativeBuilder.isEnabled()) {
+                    File appSrcDir = new File(tmpFile, "dist/" + request.getMainClass() + "-src");
+                    tvNativeBuilder.writeTvInfoPlist(request, appSrcDir, resDir);
+                    tvNativeBuilder.applyXcodeSettings(request, tmpFile, buildVersion);
                 }
 
             } catch (Exception ex) {
@@ -3055,7 +3468,8 @@ public class IPhoneBuilder extends Executor {
                 sb.append("fileref = ").append(serviceGroupVarName).append(".new_file(").append("'").append(f.getAbsolutePath().substring(basePathLen)).append("')\n");
                 if (f.getName().endsWith(".m") || f.getName().endsWith(".swift")) {
                     sb.append(serviceTargetVarName).append(".add_file_references([fileref])\n");
-                } else if (!f.getName().endsWith("Info.plist") && !f.getName().endsWith(".entitlements")){
+                } else if (!f.getName().endsWith("Info.plist") && !f.getName().endsWith(".entitlements")
+                        && !f.getName().endsWith(".h") && !f.getName().endsWith(".mobileprovision")){
                     sb.append(serviceTargetVarName).append(".add_resources([fileref])\n");
                 }
             } else {
@@ -3291,6 +3705,105 @@ public class IPhoneBuilder extends Executor {
         }
     }
 
+    private boolean hasAppExtensionArchives(File sourceDirectory) {
+        File[] children = sourceDirectory == null ? null : sourceDirectory.listFiles();
+        if (children == null) {
+            return false;
+        }
+        for (File f : children) {
+            if (f.getName().endsWith(".ios.appext")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static final String[][] WALLET_INJECTION_HINTS = {
+        {"ios.wallet.nonuiImportsInject", IOSWalletExtensionBuilder.MARKER_NONUI_IMPORTS},
+        {"ios.wallet.statusInject", IOSWalletExtensionBuilder.MARKER_STATUS},
+        {"ios.wallet.passEntriesInject", IOSWalletExtensionBuilder.MARKER_PASS_ENTRIES},
+        {"ios.wallet.remotePassEntriesInject", IOSWalletExtensionBuilder.MARKER_REMOTE_PASS_ENTRIES},
+        {"ios.wallet.generateRequestInject", IOSWalletExtensionBuilder.MARKER_GENERATE_REQUEST},
+        {"ios.wallet.generateResponseInject", IOSWalletExtensionBuilder.MARKER_GENERATE_RESPONSE},
+        {"ios.wallet.uiImportsInject", IOSWalletExtensionBuilder.MARKER_UI_IMPORTS},
+        {"ios.wallet.uiViewDidLoadInject", IOSWalletExtensionBuilder.MARKER_UI_VIEWDIDLOAD},
+        {"ios.wallet.uiAuthRequestInject", IOSWalletExtensionBuilder.MARKER_UI_AUTH_REQUEST},
+        {"ios.wallet.uiAuthResponseInject", IOSWalletExtensionBuilder.MARKER_UI_AUTH_RESPONSE},
+    };
+
+    /**
+     * Generates the Apple Wallet issuer-provisioning extension folders under dist/
+     * and appends the ruby that wires them into the generated Xcode project as
+     * app_extension targets. Driven by the ios.wallet.* build hints.
+     */
+    private void appendWalletExtensionTargets(StringBuilder sb, BuildRequest request, File distDir) throws IOException {
+        IOSWalletExtensionBuilder walletBuilder = new IOSWalletExtensionBuilder()
+                .setAppGroupId(request.getArg("ios.wallet.appGroup", ""))
+                .setIssuerEndpoint(request.getArg("ios.wallet.issuerEndpoint", ""))
+                .setAuthEndpoint(request.getArg("ios.wallet.authEndpoint", ""))
+                .setNonUIExtensionName(request.getArg("ios.wallet.nonuiExtensionName", "WalletNonUIExtension"))
+                .setUIExtensionName(request.getArg("ios.wallet.uiExtensionName", "WalletUIExtension"));
+        for (String[] hintAndMarker : WALLET_INJECTION_HINTS) {
+            walletBuilder.setInjection(hintAndMarker[1], request.getArg(hintAndMarker[0], null));
+        }
+
+        String nonUIName = walletBuilder.getNonUIExtensionName();
+        IOSWalletExtensionBuilder.writeFileMap(walletBuilder.buildNonUIFileMap(), new File(distDir, nonUIName));
+        appendWalletExtensionRuby(sb, request, nonUIName, distDir, "ios.wallet.nonui.buildSettings.");
+        log("Adding Wallet issuer-provisioning extension target " + nonUIName);
+
+        if ("true".equals(request.getArg("ios.wallet.includeUI", "false"))) {
+            String uiName = walletBuilder.getUIExtensionName();
+            IOSWalletExtensionBuilder.writeFileMap(walletBuilder.buildUIFileMap(), new File(distDir, uiName));
+            appendWalletExtensionRuby(sb, request, uiName, distDir, "ios.wallet.ui.buildSettings.");
+            log("Adding Wallet issuer-provisioning authorization UI extension target " + uiName);
+        }
+        sb.append("xcproj.save(project_file)\n");
+    }
+
+    private void appendWalletExtensionRuby(StringBuilder sb, BuildRequest request, String extensionName, File distDir, String buildSettingsHintPrefix) {
+        Map<String, String> buildSettingsMap = new LinkedHashMap<String, String>();
+        buildSettingsMap.put("PRODUCT_BUNDLE_IDENTIFIER", request.getPackageName() + "." + extensionName);
+        buildSettingsMap.put("PRODUCT_NAME", "$(TARGET_NAME)");
+        buildSettingsMap.put("INFOPLIST_FILE", extensionName + "/Info.plist");
+        buildSettingsMap.put("CODE_SIGN_ENTITLEMENTS", extensionName + "/" + extensionName + ".entitlements");
+        // PKIssuerProvisioningExtensionHandler requires iOS 14; the extension target
+        // keeps its own deployment target even when the app targets lower.
+        buildSettingsMap.put("IPHONEOS_DEPLOYMENT_TARGET", "14.0");
+        buildSettingsMap.put("TARGETED_DEVICE_FAMILY", "1,2");
+        buildSettingsMap.put("LD_RUNPATH_SEARCH_PATHS", "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks");
+        buildSettingsMap.put("SKIP_INSTALL", "YES");
+        buildSettingsMap.put("CLANG_ENABLE_OBJC_ARC", "YES");
+        buildSettingsMap.put("CLANG_ENABLE_MODULES", "YES");
+        for (String key : request.getArgs()) {
+            if (key.startsWith(buildSettingsHintPrefix)) {
+                buildSettingsMap.put(key.substring(buildSettingsHintPrefix.length()), request.getArg(key, ""));
+            }
+        }
+        // The whole fragment is guarded so re-running the script (the build
+        // re-executes fix_xcode_schemes.rb after dependency integration)
+        // doesn't create duplicate targets.
+        sb.append("\nif xcproj.targets.find{|e| e.name=='" + extensionName + "'}.nil?\n"
+                + "service_target = xcproj.new_target(:app_extension, '" + extensionName + "', :ios, '14.0')\n"
+                + "service_target.add_system_framework('PassKit')\n"
+                + "service_group = xcproj.new_group('" + extensionName + "')\n");
+        appendFilesToXcodeProjGroup(sb, new File(distDir, extensionName), "service_group", "service_target", distDir);
+        sb.append("main_app_target = xcproj.targets.find{|e| e.name==main_class_name}\n"
+                + "main_app_target.add_dependency(service_target)\n"
+                + "fileref = xcproj.groups.find{|e| e.display_name=='Products'}.new_file('" + extensionName + ".appex', \"BUILT_PRODUCTS_DIR\")\n"
+                + "embed_phase = main_app_target.copy_files_build_phases.find{|p| p.name=='Embed App Extensions'} || main_app_target.new_copy_files_build_phase('Embed App Extensions')\n"
+                + "embed_phase.build_action_mask = \"2147483647\"\n"
+                + "embed_phase.dst_subfolder_spec = \"13\"\n"
+                + "embed_phase.run_only_for_deployment_postprocessing=\"0\"\n"
+                + "embed_phase.add_file_reference(fileref)\n"
+                + "service_target.build_configurations.each{|e| \n");
+        for (String buildSettingKey : buildSettingsMap.keySet()) {
+            sb.append("  e.build_settings['" + buildSettingKey + "'] = \"" + buildSettingsMap.get(buildSettingKey) + "\"\n");
+        }
+        sb.append("}\n");
+        sb.append("end\n");
+    }
+
     private File[] extractAppExtensions(File sourceDirectory, File targetDirectory) throws IOException {
         if (sourceDirectory == null || !sourceDirectory.isDirectory()) {
             throw new IllegalArgumentException("extractAppExtensions sourceDirectory must be an existing directory but received "+sourceDirectory);
@@ -3445,8 +3958,17 @@ public class IPhoneBuilder extends Executor {
             "true")) {
             multitasking = false;
         }
-        
-        
+        if (multitasking && useMetal && getDeploymentTargetInt(request) < 14) {
+            // An explicit ios.deployment_target below 14 cannot satisfy the
+            // App Store launch screen rule for iPad multitasking apps via the
+            // UILaunchScreen key (it only counts when MinimumOSVersion is 14
+            // or higher), so opt out of multitasking instead of producing a
+            // bundle that fails upload validation.
+            log("ios.deployment_target is below 14; implicitly disabling iPad multitasking (UIRequiresFullScreen) so the launch screen passes App Store validation. Set ios.deployment_target=14.0 or higher to keep multitasking support.");
+            multitasking = false;
+        }
+
+
         if (!multitasking || xcodeVersion < 9) {
             if (inject.indexOf("UIRequiresFullScreen") < 0) {
                 // Temporary workaround to disable iPad multitasking support.
@@ -3456,18 +3978,55 @@ public class IPhoneBuilder extends Executor {
             }
         }
         if (!"true".equals(request.getArg("ios.generateSplashScreens", "false"))) {
-            if (!inject.contains("UILaunchStoryboardName")) {
+            if ("true".equalsIgnoreCase(request.getArg("ios.uiscene", "true"))) {
+                // SplashBoard never renders the launch storyboard for scene-based
+                // CN1 apps -- the system animates from a black frame instead
+                // (issue #5210). The iOS 14+ UILaunchScreen generated launch
+                // screen does work under UIScene: system background color
+                // (light/dark aware) with the launch icon centered, matching the
+                // native launch placeholder the app shows until the first EDT
+                // frame. UILaunchStoryboardName must be OMITTED here: when both
+                // keys are present iOS prefers the storyboard, which is exactly
+                // the broken path (verified on the iOS 26 simulator with a cold
+                // SplashBoard cache). The ios.launchStoryboardName hint is
+                // therefore only honored with ios.uiscene=false; injecting
+                // either key via ios.plistInject overrides this default.
+                // UIImageName points at the loose Launch.Foreground.png in the
+                // bundle root (guaranteed by generateLaunchScreen); SplashBoard
+                // resolves it there but fails to render the same image from an
+                // actool compiled imageset, so do NOT move it into
+                // Images.xcassets.
+                if (!inject.contains("UILaunchScreen") && !inject.contains("UILaunchStoryboardName")) {
+                    inject += "\n<key>UILaunchScreen</key>\n"
+                            + "<dict>\n"
+                            + "    <key>UIImageName</key>\n"
+                            + "    <string>Launch.Foreground</string>\n"
+                            + "</dict>";
+                }
+            } else if (!inject.contains("UILaunchStoryboardName")) {
                 inject += "\n<key>UILaunchStoryboardName</key><string>"+request.getArg("ios.launchStoryboardName", "LaunchScreen")+"</string>";
             }
         }
-        if ("true".equalsIgnoreCase(request.getArg("ios.uiscene", "true")) && !inject.contains("UIApplicationSceneManifest")) {
-            inject += "\n<key>UIApplicationSceneManifest</key>\n"
-                    + "<dict>\n"
-                    + "    <key>UIApplicationSupportsMultipleScenes</key>\n"
-                    + "    <false/>\n"
-                    + "    <key>UISceneConfigurations</key>\n"
-                    + "    <dict>\n"
-                    + "        <key>UIWindowSceneSessionRoleApplication</key>\n"
+        boolean useUISceneManifest = "true".equalsIgnoreCase(request.getArg("ios.uiscene", "true"));
+        // CarPlay requires the UIScene lifecycle and a dedicated
+        // CPTemplateApplicationSceneSessionRoleApplication scene wired to
+        // CodenameOne_CarPlaySceneDelegate. Emit the manifest when either UIScene is on or the app
+        // uses CarPlay; include the phone window role only under UIScene, and the CarPlay role only
+        // when the app references com.codename1.car.
+        if ((useUISceneManifest || usesCar) && !inject.contains("UIApplicationSceneManifest")) {
+            String carPlayScene = usesCar
+                    ? "        <key>CPTemplateApplicationSceneSessionRoleApplication</key>\n"
+                    + "        <array>\n"
+                    + "            <dict>\n"
+                    + "                <key>UISceneConfigurationName</key>\n"
+                    + "                <string>CarPlay Configuration</string>\n"
+                    + "                <key>UISceneDelegateClassName</key>\n"
+                    + "                <string>CodenameOne_CarPlaySceneDelegate</string>\n"
+                    + "            </dict>\n"
+                    + "        </array>\n"
+                    : "";
+            String windowScene = useUISceneManifest
+                    ? "        <key>UIWindowSceneSessionRoleApplication</key>\n"
                     + "        <array>\n"
                     + "            <dict>\n"
                     + "                <key>UISceneConfigurationName</key>\n"
@@ -3476,6 +4035,19 @@ public class IPhoneBuilder extends Executor {
                     + "                <string>CodenameOne_GLSceneDelegate</string>\n"
                     + "            </dict>\n"
                     + "        </array>\n"
+                    : "";
+            inject += "\n<key>UIApplicationSceneManifest</key>\n"
+                    + "<dict>\n"
+                    + "    <key>UIApplicationSupportsMultipleScenes</key>\n"
+                    // Keep single-scene (false): the CarPlay scene is a distinct scene ROLE
+                    // (CPTemplateApplicationSceneSessionRoleApplication), not a second window of the
+                    // app role, so it does not need multiple-scene support. Setting this true changed
+                    // Mac Catalyst windowing and crashed the screenshot suite (26 GB / signal loop).
+                    + "    <false/>\n"
+                    + "    <key>UISceneConfigurations</key>\n"
+                    + "    <dict>\n"
+                    + windowScene
+                    + carPlayScene
                     + "    </dict>\n"
                     + "</dict>";
         }
@@ -3622,6 +4194,14 @@ public class IPhoneBuilder extends Executor {
         String shareAppGroup = request.getArg("ios.shareAppGroup", null);
         if (shareAppGroup != null && shareAppGroup.trim().length() > 0 && !inject.contains("CN1ShareAppGroup")) {
             inject += "\n<key>CN1ShareAppGroup</key><string>" + shareAppGroup.trim() + "</string>";
+        }
+
+        // Wallet issuer-provisioning: com.codename1.payment.WalletExtension reads this App Group
+        // suite to publish pass entries for the generated Wallet extensions. See ios.wallet.* hints.
+        String walletAppGroup = request.getArg("ios.wallet.appGroup", null);
+        if ("true".equals(request.getArg("ios.wallet.extension", "false"))
+                && walletAppGroup != null && walletAppGroup.trim().length() > 0 && !inject.contains("CN1WalletAppGroup")) {
+            inject += "\n<key>CN1WalletAppGroup</key><string>" + walletAppGroup.trim() + "</string>";
         }
 
         BufferedReader infoReader = new BufferedReader(new InputStreamReader(
@@ -3976,15 +4556,27 @@ public class IPhoneBuilder extends Executor {
                 + "                NSString *cn1PrefLang = [cn1PrefLangs objectAtIndex:0];\n"
                 + "                NSArray *cn1LangParts = [cn1PrefLang componentsSeparatedByCharactersInSet:\n"
                 + "                    [NSCharacterSet characterSetWithCharactersInString:@\"-_\"]];\n"
-                + "                if (cn1LangParts.count >= 2) {\n"
+                + "                NSString *cn1Lang = [[cn1LangParts objectAtIndex:0] lowercaseString];\n"
+                + "                // The device region (Settings > General > Region) takes precedence\n"
+                + "                // over the region embedded in the language variant (e.g. en-GB), so\n"
+                + "                // a UAE-region user with English (UK) still gets cn1_icon_en_AE.\n"
+                + "                NSString *cn1DeviceRegion = [[NSLocale currentLocale] objectForKey:NSLocaleCountryCode];\n"
+                + "                if (cn1DeviceRegion.length == 2) {\n"
                 + "                    NSString *cn1Key = [NSString stringWithFormat:@\"%@_%@\",\n"
-                + "                        [[cn1LangParts objectAtIndex:0] lowercaseString],\n"
-                + "                        [[cn1LangParts objectAtIndex:1] uppercaseString]];\n"
+                + "                        cn1Lang, [cn1DeviceRegion uppercaseString]];\n"
                 + "                    cn1TargetIcon = [cn1LocalizedIcons objectForKey:cn1Key];\n"
                 + "                }\n"
-                + "                if (cn1TargetIcon == nil && cn1LangParts.count >= 1) {\n"
-                + "                    NSString *cn1Key = [[cn1LangParts objectAtIndex:0] lowercaseString];\n"
-                + "                    cn1TargetIcon = [cn1LocalizedIcons objectForKey:cn1Key];\n"
+                + "                if (cn1TargetIcon == nil && cn1LangParts.count >= 2) {\n"
+                + "                    // lastObject skips script subtags such as the Hans in zh-Hans-CN\n"
+                + "                    NSString *cn1LangRegion = [cn1LangParts lastObject];\n"
+                + "                    if (cn1LangRegion.length == 2) {\n"
+                + "                        NSString *cn1Key = [NSString stringWithFormat:@\"%@_%@\",\n"
+                + "                            cn1Lang, [cn1LangRegion uppercaseString]];\n"
+                + "                        cn1TargetIcon = [cn1LocalizedIcons objectForKey:cn1Key];\n"
+                + "                    }\n"
+                + "                }\n"
+                + "                if (cn1TargetIcon == nil) {\n"
+                + "                    cn1TargetIcon = [cn1LocalizedIcons objectForKey:cn1Lang];\n"
                 + "                }\n"
                 + "            }\n"
                 + "            BOOL cn1NeedsUpdate = (cn1TargetIcon == nil && cn1CurrentIcon != nil)\n"
@@ -4324,6 +4916,7 @@ public class IPhoneBuilder extends Executor {
             if (legacyLaunchImages.exists()) {
                 delTree(legacyLaunchImages);
             }
+
         }
         return true;
     }

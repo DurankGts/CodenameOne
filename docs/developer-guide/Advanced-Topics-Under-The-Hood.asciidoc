@@ -19,6 +19,9 @@ Here is the current list of supported arguments. Build hints change over time, s
 |===
 |Name	|Description
 
+|build.cn1Version
+|Pro/Enterprise only. Pins the cloud build to a specific released Codename One version using the Maven release scheme (for example `7.0.182`), or to `master` to build against the current development head. The build server fetches that version's framework artifacts. Pro accounts can target versions published within the last two months; Enterprise within the last six months. Requesting an older version, a version that was never published, or using this hint without a Pro/Enterprise subscription fails the build with an explanatory error. See <<Versioned builds>>.
+
 |android.debug
 |true/false defaults to true - indicates whether to include the debug version in the build
 
@@ -26,7 +29,7 @@ Here is the current list of supported arguments. Build hints change over time, s
 |true/false defaults to true - indicates whether to include the release version in the build
 
 |android.onDeviceDebug
-|Boolean true/false defaults to false. When `true`, the generated `AndroidManifest.xml` is marked `android:debuggable="true"`, R8/proguard is disabled, and the build is pinned to debug-only (`android.release` is forced off and `android.debug` is forced on) so a stray hint can't ship a release-signed APK that's `debuggable="true"`. Pair with the `cn1:android-on-device-debugging` Maven goal (or the bundled IntelliJ run configs) to install, launch, forward JDWP, and stream logcat through adb. Has no effect on builds that don't carry it — release builds are unaffected. See the link:#_ondevice_debugging_android[On-Device Debugging (Android) chapter] for the full flow.
+|Boolean true/false defaults to false. When `true`, the generated `AndroidManifest.xml` is marked `android:debuggable="true"`, R8/proguard is disabled, and the build is pinned to debug-only (`android.release` is forced off and `android.debug` is forced on) so a stray hint can't ship a release-signed APK that's `debuggable="true"`. Pair with the `cn1:android-on-device-debugging` Maven goal (or the bundled IntelliJ run configs) to install, launch, forward JDWP, and stream logcat through adb. Has no effect on builds that don't carry it — release builds are unaffected. See the <<On-Device Debugging (Android),On-Device Debugging (Android) chapter>> for the full flow.
 
 |android.installLocation
 |Maps to android:installLocation manifest entry defaults to auto. Can also be set to internalOnly or preferExternal.
@@ -48,6 +51,9 @@ Here is the current list of supported arguments. Build hints change over time, s
 
 |android.xintent_filter
 |Allows adding an intent filter to the main android activity
+
+|android.tv
+|true/false (defaults to false). Marks the build as an Android TV / Google TV app. Adds the `LEANBACK_LAUNCHER` intent category to the launcher activity (so the app appears on the TV home screen), declares the `android.software.leanback` feature, makes `android.hardware.touchscreen` optional (so it installs on touchless TVs), and generates a 320×180 launcher banner (`@drawable/tv_banner`) from the app icon. The same APK still installs and runs on phones and tablets, and `CN.isTV()` returns true at runtime on a TV.
 
 
 |android.activity.launchMode
@@ -236,6 +242,24 @@ Only supported for App Store builds. See https://www.codenameone.com/developer-g
 | Injects raw XML into the Info.plist file for desktop builds. For example, `desktop.mac.plistInject=<key>LSApplicationCategoryType</key><string>public.app-category.business</string>`
 +
 Only supported for App Store builds. See https://www.codenameone.com/developer-guide.html#_mac_os_desktop_build_options[macOS Desktop Build Options] for more information.
+
+| windows.arch
+| Native Windows (`windows-device`) target CPU: `x64` (default), `arm64`, or `both`. An x64 binary also runs on Windows-on-ARM via the OS's x64 emulation. See <<Working with the native Windows port>>.
+
+| windows.debug
+| Native Windows target: `true`/`false` (default `false`). When `false` the `.exe` is optimized and stripped (with the `.pdb` in its own file); `true` keeps symbols (a single x64 build) for crash symbolication. Optimizations stay on either way.
+
+| windows.signing.pkcs12 / windows.signing.password / windows.signing.timestampUrl / windows.signing.digest / windows.signing.name / windows.signing.url
+| Native Windows Authenticode signing of the produced `.exe` (via `osslsigncode`). A certificate is taken from `windows.signing.pkcs12` or the build's uploaded certificate; set `windows.signing=false` to skip. Unsigned binaries run but trip SmartScreen / "Unknown publisher."
+
+| linux.arch
+| Native Linux (`linux-device`) target CPU: `x64` (default), `arm64`, or `both`. See <<Working with the native Linux port>>.
+
+| linux.debug
+| Native Linux target: `true`/`false` (default `false`). When `false` the ELF is optimized and stripped (debug info is split into a separate `.debug`); `true` keeps symbols (`RelWithDebInfo`) for crash symbolication. Optimizations stay on either way.
+
+| linux.libc
+| Native Linux target: `glibc` (default) or `musl`. The default compiles against an old glibc so the ELF runs on essentially any mainstream distro; `musl` targets Alpine (where the GTK stack is itself musl-built). A glibc binary and a musl binary aren't interchangeable.
 
 |ios.associatedDomains
 |Comma-delimited list of domains associated with this app. Since 6.0.  Note that each domain should be prefixed by a supported prefix. For example, "applinks:" or "webcredentials:." See https://developer.apple.com/documentation/security/password_autofill/setting_up_an_app_s_associated_domains?language=objc[Apple's documentation on Associated domains] for more information.
@@ -452,7 +476,7 @@ Only supported for App Store builds. See https://www.codenameone.com/developer-g
 |Boolean true/false defaults to false as of 5.0.  Enable legacy generation of splash screen images for use when launching the app. These have been replaced now by the new launch storyboards.
 
 |ios.onDeviceDebug
-|Boolean true/false defaults to false. When `true`, the iOS build links a small JDWP listener thread (`cn1_debugger`) into the binary and the ParparVM translator emits source-line and locals metadata so a desktop proxy can serve the running app to any JDWP-speaking debugger. Has no effect on release builds. See the link:#_ondevice_debugging_ios[On-Device Debugging chapter] for the full flow.
+|Boolean true/false defaults to false. When `true`, the iOS build links a small JDWP listener thread (`cn1_debugger`) into the binary and the ParparVM translator emits source-line and locals metadata so a desktop proxy can serve the running app to any JDWP-speaking debugger. Has no effect on release builds. See the <<On-Device Debugging (iOS),On-Device Debugging (iOS) chapter>> for the full flow.
 
 |ios.onDeviceDebug.proxyHost
 |Hostname or IP address the device-side listener dials to reach the desktop proxy. Default `127.0.0.1` (correct for the native iOS simulator). For a physical device, set this to the developer laptop's LAN IP. Has no effect unless `ios.onDeviceDebug=true`.
@@ -462,6 +486,39 @@ Only supported for App Store builds. See https://www.codenameone.com/developer-g
 
 |ios.onDeviceDebug.waitForAttach
 |Boolean true/false defaults to false. When `true`, the app blocks at startup until the proxy connects and the IDE tells the VM to continue. Useful when the breakpoint to investigate fires during app boot. Has no effect unless `ios.onDeviceDebug=true`.
+
+|ios.wallet.extension
+|Boolean true/false defaults to false. Generates an Apple Wallet issuer provisioning extension (the "From apps on your iPhone" flow in the Wallet app) and embeds it in the build. Requires `ios.wallet.appGroup` and `ios.wallet.issuerEndpoint`. See the <<Apple Wallet Extension,Apple Wallet Extension chapter>>.
+
+|ios.wallet.appGroup
+|App Group id starting with `group.` shared by the app and the generated Wallet extensions. The app publishes pass entries into this group through `com.codename1.payment.WalletExtension` and the group is added to the app and extension entitlements automatically. Required when `ios.wallet.extension=true`.
+
+|ios.wallet.issuerEndpoint
+|HTTPS URL of the issuer backend endpoint that produces the encrypted provisioning payload. The generated extension POSTs Apple's certificates/nonce plus the card identifier and auth token there as JSON. Required when `ios.wallet.extension=true`.
+
+|ios.wallet.includeUI
+|Boolean true/false defaults to false. Also generates the Wallet authorization UI extension - a login form shown inside the Wallet app when the app reports that authentication is required. Requires `ios.wallet.authEndpoint`.
+
+|ios.wallet.authEndpoint
+|HTTPS URL the generated login UI extension POSTs `{"username","password"}` to; the JSON response's `token` is stored in the App Group for the provisioning request. Required when `ios.wallet.includeUI=true`.
+
+|ios.wallet.nonuiExtensionName / ios.wallet.uiExtensionName
+|Names of the generated extension targets, also used as the bundle id suffix (`<package>.<name>`). Default `WalletNonUIExtension` / `WalletUIExtension`. The matching App IDs must be registered with the payment-pass-provisioning entitlement and listed by the card network.
+
+|ios.wallet.nonuiProvisioningProfile / ios.wallet.uiProvisioningProfile
+|Cloud device builds only. File name of the extension's `.mobileprovision` placed under `common/src/main/resources`. The profile must match the app's distribution certificate and carry the `com.apple.developer.payment-pass-provisioning` entitlement; the build keeps it out of the app bundle.
+
+|ios.wallet.nonuiProvisioningURL / ios.wallet.uiProvisioningURL
+|Cloud device builds only. URL fallback for the extension provisioning profile when it isn't bundled in resources, mirroring `ios.notificationServiceExtensionProvisioningURL`.
+
+|ios.wallet.nonui.buildSettings.SETTING / ios.wallet.ui.buildSettings.SETTING
+|Extra Xcode build settings applied to the generated extension targets, for example `ios.wallet.nonui.buildSettings.DEVELOPMENT_TEAM=ABCD123456`. Applied last so they override the generated defaults.
+
+|ios.wallet.nonuiImportsInject, ios.wallet.statusInject, ios.wallet.passEntriesInject, ios.wallet.remotePassEntriesInject, ios.wallet.generateRequestInject, ios.wallet.generateResponseInject, ios.wallet.uiImportsInject, ios.wallet.uiViewDidLoadInject, ios.wallet.uiAuthRequestInject, ios.wallet.uiAuthResponseInject
+|Objective-C code injected at the matching marker comment in the generated Wallet extension sources, for custom behavior at each callback (for example adding fields to the issuer endpoint payload in `generateRequestInject`). See the <<Apple Wallet Extension,Apple Wallet Extension chapter>>.
+
+|ios.appext.NAME.provisioningURL
+|Cloud device builds only. URL of the provisioning profile for a generic app extension dropped into `ios/app_extensions/NAME/`, used when the extension folder doesn't bundle a `.mobileprovision` itself. The profile is installed on the build machine and added to the export options per bundle id.
 
 |codename1.mac.appid
 |Mac Native cloud builds only. The Mac bundle identifier registered in App Store Connect / Apple Developer. Distinct from `codename1.ios.appid` because Apple treats the iOS and Mac App Store records as separate products. Required for cloud Mac builds.
@@ -571,6 +628,24 @@ Only supported for App Store builds. See https://www.codenameone.com/developer-g
 |desktop.mac.cef
 |Whetherto use CEF for media or BrowserComponent instead of JavaFX in Mac desktop builds.  true/false. Default value is `false` (Jan 2021), but this will be changed to `true` in a future version.
 
+|tvNative.enabled
+|true/false (defaults to false). Adds an Apple TV (tvOS) application target to the iOS build. The tvOS app is a separate `appletvos` target built from the same Java/Kotlin sources through ParparVM (UIKit + Metal; tvOS has no OpenGL ES). Enabling it doesn't change the iOS app -- in particular it doesn't override the iOS app's `ios.metal` setting. Also turned on implicitly by `codename1.tvMain`.
+
+|tvNative.mainClass (a.k.a. codename1.tvMain)
+|Fully-qualified tvOS lifecycle entry class. Setting it auto enables the tvOS target. If omitted while `tvNative.enabled=true`, the tvOS app reuses the phone main class.
+
+|tvNative.bundleId
+|Bundle identifier of the tvOS app. Defaults to `<packageName>.tvos`.
+
+|tvNative.minDeploymentTarget
+|`TVOS_DEPLOYMENT_TARGET` for the tvOS target. Defaults to `13.0`.
+
+|tvNative.displayName
+|The tvOS app name shown on Apple TV. Defaults to the app's display name.
+
+|tvNative.teamId
+|Apple Developer Team ID used to sign the tvOS target. Falls back to the iOS team id (`ios.release.teamId` / `ios.teamId` / `ios.debug.teamId`).
+
 |mac.desktop-vm
 |The JVM the should be bundled with Mac desktop build. Mac desktop builds only. Supported values: zuluFx8, zulu11, zuluFx11
 
@@ -617,6 +692,39 @@ Only supported for App Store builds. See https://www.codenameone.com/developer-g
 |Native Windows port only. `true`/`false` (default `true`). Set `false` to force an unsigned build even when a certificate is available.
 
 |===
+
+=== Versioned builds
+
+By default a cloud build always uses the current Codename One release. With a _versioned build_ you can instead pin the build to a specific previously released framework version, so you get reproducible output over time. This helps when stabilizing a release, supporting an older app, or isolating a regression: if an app that built correctly in the past starts failing, rebuilding against the last known good version tells you whether the change came from your code or from the framework and build server.
+
+Set the `build.cn1Version` build hint to the version you want to target. Versions use the standard Maven release scheme published to Maven Central, for example `7.0.182`:
+
+----
+codename1.arg.build.cn1Version=7.0.182
+----
+
+The build server fetches that version's framework artifacts from Maven Central and builds against them. To keep your simulator and local compile classpath aligned with the same release, set the matching `cn1.version` in your project `pom.xml`.
+
+Versioned builds are a Pro and Enterprise feature, and how far back you can target depends on the subscription tier:
+
+[options="header"]
+|===
+|Tier |Versions you can target
+|Pro |Any version released within the last two months
+|Enterprise |Any version released within the last six months
+|===
+
+If you request a version older than your tier's window, a version that was never published, or you aren't on a Pro or Enterprise plan, the build fails with an explanatory message instead of falling back to the current release.
+
+==== Building against master
+
+Set `build.cn1Version` to `master` to build against the current development head (the latest `master` of the Codename One repository) instead of a released version:
+
+----
+codename1.arg.build.cn1Version=master
+----
+
+Every push to `master` publishes a fresh set of framework artifacts and the build server always grabs the latest, so this is the quickest way to verify an unreleased fix or feature end to end on a device. Because `master` tracks active development it can be less stable than a release, so use it for verification rather than for shipping production builds. Building against `master` is available to Pro and Enterprise subscribers.
 
 === Android permissions
 
@@ -768,42 +876,14 @@ Pass `null` to `AndroidNativeUtil.setPermissionPromptCallback()` to restore the 
 
 === On device debugging
 
-Codename One supports debugging applications on devices by using the natively generated project. All paid subscription levels include the ability to check an #Include Source# flag in the settings that returns a native OS project. You can debug that project in the respective native IDE.
+On-device debugging now has two dedicated chapters, one per platform:
 
-In iOS this is strait forward, open the project with Xcode and run it optionally disabling bitcode. Unzip the.bz2 file and open the `.xcworkspace` file if it's available otherwise open the `.xcodeproj` file inside the `dist` directory.
-
-IMPORTANT: The `.xcworkspace` is no longer exclusive to CocoaPods-based builds. Use it whenever it's generated, whether the project uses CocoaPods, Swift Package Manager, or both.
-
-With Android Studio this is sometimes as easy task as it's possible to actually open the Gradle project in Android Studio and run it. For example, due to the fragile nature of the Gradle project this stopped working for some builds and has been "flaky."
-
-==== Android Studio debugging (easy way)
-
-By default you should be able to open the Gradle project in Android Studio and run it. To get this to work open the Android Studio #Setting# and select Gradle *2.11*.
-
-.Gradle settings UI in Android Studio (notice you need Gradle 2.11 and not 2.8 as pictured here)
-image::img/gradle-settings.png[Gradle settings UI in Android Studio,scaledwidth=50%]
-
-If this works for you then you can ignore the section below.
-
-==== Android Studio debugging the hard way
-
-Sometimes the Gradle project might not work or this might fail with a change from Google.
-
-Here are steps that should work for everyone:
-
-. Check the include source flag in the IDE and send a build
-. Download the `sources.zip` result from the build server
-. Launch Android Studio and create a new project
-. Make sure to use the same package and app name as you did in the Codename One project, select to not create an activity
-. Unzip the `sources.zip` file and copy the `main` directory from its `src` directory to the Android Studio projects `src` directory make sure to overwrite files/directories.
-. Copy its `libs` directory on top of the existing libs
-. Copy the source Gradle dependencies content to the destination Gradle file
-. Connect your device and press the Debug button for the IDE
-
-NOTE: You might need to copy more Gradle file meta-data such as multi-dexing etc.
-
-You might not need to repeat the whole thing with every build. For example: it might be practical to copy the `userSources.jar` from the libs directory to get the latest version of your code. You can copy the `src/main` directory to get the latest up-to-date Android port.
-
+* <<On-Device Debugging (iOS)>> covers attaching a standard Java
+  debugger (IntelliJ, jdb, VS Code) to an iOS app running on a device or in the
+  native iOS simulator, as well as debugging the generated Xcode project natively.
+* <<On-Device Debugging (Android)>> covers the equivalent
+  adb/JDWP-based flow for Android devices and emulators, including wireless
+  debugging and debugging the generated Gradle project from Android Studio.
 
 === Native interfaces
 
@@ -915,7 +995,21 @@ For Android native interfaces you can implement the generated `...Impl` class in
 | `ios/src/main/objectivec/com_mycompany_myapp_MyNativeImpl.h` +
 `ios/src/main/objectivec/com_mycompany_myapp_MyNativeImpl.m` +
 `ios/src/main/objectivec/com_mycompany_myapp_MyNativeImpl.swift`
+
+| Native Windows (win32, C)
+| `win/src/main/c/com/mycompany/myapp/MyNativeImplCodenameOne.c`
+
+| Native Linux (C)
+| `linux/src/main/c/com/mycompany/myapp/MyNativeImplCodenameOne.c`
+
+| JavaScript
+| `javascript/src/main/javascript/com_mycompany_myapp_MyNative.js`
 |===
+
+NOTE: The native Windows and native Linux ports compile your app to C (no JVM), so
+their native interface implementations are plain C, generated alongside the others
+by the "Generate Native Sources" tool. The native Mac target reuses the iOS
+Objective-C/Swift implementation, since it rides the same build.
 
 ===== Use the Android main thread (native EDT)
 
@@ -1040,6 +1134,54 @@ Cocoapods are the iOS equivalent of Gradle dependencies.
 CocoaPods allow you to add a native library dependency to iOS far more than Gradle. By default you target iOS 7.0 or newer which is supported by Intercom for older versions of the library. Annoyingly CocoaPods might seem to work but some specific APIs won't work since it fell back to an older version... To solve this you've to explicitly define the build hint `ios.pods.platform=8.0` to force iOS 8 or newer. You might need to force it to even newer versions as some libraries force an iOS 9 least etc.
 
 Including intercom itself required a single build hint: `ios.pods=Intercom` which you can obviously extend by using commas to include many libraries. You can search the https://cocoapods.org/[CocoaPods website] for supported 3rd party libraries which includes everything you would expect. One important advantage when working with CocoaPods is the faster build time as the upload to the Codename One website is smaller and the bandwidth you've to CocoaPods is faster. Another advantage is the ability to keep up with the latest developments from the library providers.
+
+==== C (native Windows and native Linux)
+
+The native Windows (win32) and native Linux ports have no JVM: the "clean" ParparVM
+target compiles your whole app to C and then to a native binary. A native interface
+on these ports is therefore implemented in plain *C* rather than C#/Objective-C/Java.
+The "Generate Native Sources" tool emits one C file per interface:
+
+* `win/src/main/c/com/mycompany/myapp/MyNativeImplCodenameOne.c` (native Windows)
+* `linux/src/main/c/com/mycompany/myapp/MyNativeImplCodenameOne.c` (native Linux)
+
+The two files are identical, so a native interface written once works on both ports;
+only the directory differs. (The native Mac target reuses the iOS Objective-C/Swift
+implementation, because it rides the iOS build.)
+
+The translator emits one C function per interface method. Unlike the Objective-C
+stub, the function name is the fully qualified, mangled C symbol the translated app
+links against, so *don't rename the functions or change their signatures*; just fill
+in the bodies. Each function takes the thread state as its first argument and
+`JAVA_*` typed parameters. For example, the interface:
+
+[source,java]
+----
+public interface MyNative extends NativeInterface {
+    String hello(String name);
+}
+----
+
+This generates the C stub below (returning `JAVA_NULL` until you implement it):
+
+[source,c]
+----
+#include "cn1_globals.h"
+
+JAVA_OBJECT com_mycompany_myapp_MyNativeImplCodenameOne_hello___java_lang_String_R_java_lang_String(CODENAME_ONE_THREAD_STATE, JAVA_OBJECT param1) {
+    return JAVA_NULL;
+}
+----
+
+Type mapping: the primitives (`int`, `long`, `boolean`, `byte`, `short`, `char`,
+`float`, `double`) become their `JAVA_INT`/`JAVA_LONG`/`JAVA_BOOLEAN` equivalents;
+`String`, arrays and other objects become `JAVA_OBJECT`; a `void` method returns
+`JAVA_VOID` and omits the `_R_` suffix in its name; and a
+`com.codename1.ui.PeerComponent` is passed and returned as a `JAVA_LONG` native peer
+handle. Use the core helpers declared in `cn1_globals.h` (for example
+`newStringFromCString` / `stringToUTF8`) to convert between C and Java values. As
+with the other ports, you can drop additional `.c`/`.h` sources and prebuilt
+libraries into the same `src/main/c` directory and they're compiled into the binary.
 
 ==== JavaScript
 

@@ -494,8 +494,18 @@ case "$HOST_ARCH" in
   *) BUILD_ARCH="arm64" ;;
 esac
 
-DERIVED_DATA_DIR="$SCREENSHOT_TMP_DIR/derived"
-rm -rf "$DERIVED_DATA_DIR"
+# A shared/stable derived-data dir can be supplied via CN1_IOS_DERIVED_DATA so the compiled
+# app + core are reused by a later step in the same job (e.g. the native test build) and across
+# re-runs, instead of compiling the whole translated core from scratch every time. Unset = a
+# fresh per-run dir (previous behavior), leaving other pipelines unchanged.
+if [ -n "${CN1_IOS_DERIVED_DATA:-}" ]; then
+  DERIVED_DATA_DIR="$CN1_IOS_DERIVED_DATA"
+  mkdir -p "$DERIVED_DATA_DIR"
+  ri_log "Reusing shared derived data at $DERIVED_DATA_DIR (incremental build)"
+else
+  DERIVED_DATA_DIR="$SCREENSHOT_TMP_DIR/derived"
+  rm -rf "$DERIVED_DATA_DIR"
+fi
 BUILD_LOG="$ARTIFACTS_DIR/xcodebuild-build.log"
 
 ri_log "Building simulator app with xcodebuild"
@@ -518,6 +528,14 @@ if [ "$USE_GENERIC_BUILD_DESTINATION" = "true" ]; then
     "EXCLUDED_ARCHS=armv7 armv7s"
   )
 fi
+# Optimize the translated C (Xcode's Debug config defaults to -O0). With -O0 the
+# scalar baseline is unvectorized, so the SIMD benchmark overstates the speedup;
+# -O2 lets the compiler auto-vectorize scalar, making the SIMD-vs-scalar
+# comparison honest and apples-to-apples with the Windows /O2 build. Override with
+# CN1_TEST_OPT_LEVEL (0/1/2/3/s) to compare.
+CN1_TEST_OPT_LEVEL="${CN1_TEST_OPT_LEVEL:-2}"
+XCODE_BUILD_CMD+=("GCC_OPTIMIZATION_LEVEL=$CN1_TEST_OPT_LEVEL")
+ri_log "Building translated C at -O$CN1_TEST_OPT_LEVEL (GCC_OPTIMIZATION_LEVEL)"
 XCODE_BUILD_CMD+=(build)
 if ! "${XCODE_BUILD_CMD[@]}" | tee "$BUILD_LOG"; then
   ri_log "STAGE:XCODE_BUILD_FAILED -> See $BUILD_LOG"
@@ -698,6 +716,11 @@ APP_PROCESS_NAME="${WRAPPER_NAME%.app}"
       exit 11
     fi
     INSTALL_END=$(date +%s)
+    # Pre-grant location and pin a fixed coordinate so native maps (Apple
+    # MapKit) render real tiles in CI instead of stalling on a location
+    # permission prompt.
+    xcrun simctl privacy "$SIM_DEVICE_ID" grant location "$BUNDLE_IDENTIFIER" >/dev/null 2>&1 || true
+    xcrun simctl location "$SIM_DEVICE_ID" set 41.0,13.0 >/dev/null 2>&1 || true
 
     LAUNCH_START=$(date +%s)
     if ! launch_simulator_app "$SIM_DEVICE_ID"; then
@@ -711,6 +734,10 @@ APP_PROCESS_NAME="${WRAPPER_NAME%.app}"
       exit 11
     fi
     INSTALL_END=$(date +%s)
+    # Pre-grant location and pin a coordinate (see note above) so native maps
+    # render real tiles in CI rather than blocking on the location prompt.
+    xcrun simctl privacy booted grant location "$BUNDLE_IDENTIFIER" >/dev/null 2>&1 || true
+    xcrun simctl location booted set 41.0,13.0 >/dev/null 2>&1 || true
 
     LAUNCH_START=$(date +%s)
     if ! launch_simulator_app booted; then
@@ -721,6 +748,39 @@ APP_PROCESS_NAME="${WRAPPER_NAME%.app}"
   fi
   echo "App Install : $(( (INSTALL_END - INSTALL_START) * 1000 )) ms" >> "$ARTIFACTS_DIR/ios-test-stats.txt"
   echo "App Launch : $(( (LAUNCH_END - LAUNCH_START) * 1000 )) ms" >> "$ARTIFACTS_DIR/ios-test-stats.txt"
+
+# Timestamp marker so crash reports written during this run can be picked
+# out of ~/Library/Logs/DiagnosticReports afterwards (find -newer). The
+# simulator app is a host process, so its crash reports land on the host.
+LAUNCH_MARKER="$ARTIFACTS_DIR/.launch-marker"
+touch "$LAUNCH_MARKER"
+APP_EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP_BUNDLE_PATH/Info.plist" 2>/dev/null || true)"
+
+# When the suite times out the app is usually not idle: ParparVM's
+# SignalHandler (CodenameOne_GLAppDelegate.m) converts SIGSEGV into a Java
+# NPE and returns, so a thread that faulted outside a Java try frame
+# re-executes the faulting instruction forever ("We had a signal 11" spam
+# in the device log). The simulator app is a plain host process, so a
+# `sample` taken at timeout contains the exact faulting stack (and, for
+# genuine deadlocks, every thread's wait state).
+capture_hang_diagnostics() {
+  local pid spam
+  if [ -n "$APP_EXECUTABLE_NAME" ]; then
+    pid="$(pgrep -x "$APP_EXECUTABLE_NAME" 2>/dev/null | head -n 1 || true)"
+  else
+    pid=""
+  fi
+  if [ -n "$pid" ]; then
+    ri_log "Sampling hung app (pid=$pid) -> app-hang-sample.txt"
+    sample "$pid" 5 -file "$ARTIFACTS_DIR/app-hang-sample.txt" >/dev/null 2>&1 || true
+  else
+    ri_log "No live ${APP_EXECUTABLE_NAME:-<unknown>} process found to sample"
+  fi
+  spam="$(grep -c 'We had a signal' "$TEST_LOG" 2>/dev/null || echo 0)"
+  if [ "${spam:-0}" -gt 0 ]; then
+    ri_log "Signal-handler loop detected: ${spam} 'We had a signal' lines in device log (a crashed thread is spinning in ParparVM's SignalHandler; see app-hang-sample.txt for the faulting stack)"
+  fi
+}
 
 END_MARKER="CN1SS:SUITE:FINISHED"
 # Per-suite budget (seconds). The 300 -> 600 bump from earlier landed
@@ -742,6 +802,7 @@ while true; do
   NOW="$(date +%s)"
   if [ $(( NOW - START_TIME )) -ge $TIMEOUT_SECONDS ]; then
     ri_log "STAGE:TIMEOUT -> DeviceRunner did not emit completion marker within ${TIMEOUT_SECONDS}s"
+    capture_hang_diagnostics
     break
   fi
   sleep 5
@@ -760,6 +821,17 @@ xcrun simctl spawn "$SIM_DEVICE_ID" \
   log show --style syslog --last 30m \
   --predicate '(composedMessage CONTAINS "CN1SS") OR (eventMessage CONTAINS "CN1SS")' \
   > "$FALLBACK_LOG" 2>/dev/null || true
+
+# Collect any crash reports the OS wrote for the app during this run
+# (simulator app crashes report to the host's DiagnosticReports).
+CRASH_REPORT_DIR="$HOME/Library/Logs/DiagnosticReports"
+if [ -d "$CRASH_REPORT_DIR" ] && [ -n "$APP_EXECUTABLE_NAME" ]; then
+  while IFS= read -r crash_file; do
+    [ -n "$crash_file" ] || continue
+    ri_log "Collected crash report: $(basename "$crash_file")"
+    cp -f "$crash_file" "$ARTIFACTS_DIR/" 2>/dev/null || true
+  done < <(find "$CRASH_REPORT_DIR" -maxdepth 1 -name "${APP_EXECUTABLE_NAME}*" -newer "$LAUNCH_MARKER" 2>/dev/null)
+fi
 
 BASE64_STATS_FILE="$ARTIFACTS_DIR/base64-performance-stats.txt"
 extract_base64_stats "$BASE64_STATS_FILE" "$TEST_LOG" "$FALLBACK_LOG"
