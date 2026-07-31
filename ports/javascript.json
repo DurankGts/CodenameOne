@@ -1,48 +1,48 @@
 {
   "commit": "2a210d81823a747715a2187fb605108513d9fd0a",
-  "generated_at": "2026-07-30T05:04:22Z",
+  "generated_at": "2026-07-31T05:33:15Z",
   "performance": {
     "benchmark_version": 1,
     "benchmarks": {
       "arrayRandom": {
         "checksum": "-2288487891715278",
-        "duration_ns": 1051500000
+        "duration_ns": 1580600000
       },
       "arraySequential": {
         "checksum": "0",
-        "duration_ns": 764199999
+        "duration_ns": 966400000
       },
       "hashMapChurn": {
         "checksum": "49941",
-        "duration_ns": 9568100001
+        "duration_ns": 14211800000
       },
       "intArithmetic": {
         "checksum": "1313580095284",
-        "duration_ns": 504400001
+        "duration_ns": 706800000
       },
       "longArithmetic": {
         "checksum": "6887886960473257608",
-        "duration_ns": 2660000000
+        "duration_ns": 3873100000
       },
       "mathTranscendental": {
         "checksum": "4729652805076374709",
-        "duration_ns": 348300000
+        "duration_ns": 556900000
       },
       "objectAllocation": {
         "checksum": "2999790376128",
-        "duration_ns": 1908200000
+        "duration_ns": 3094700000
       },
       "quicksort": {
         "checksum": "786886890168670967",
-        "duration_ns": 496900000
+        "duration_ns": 562300000
       },
       "recursion": {
         "checksum": "33385282",
-        "duration_ns": 852000000
+        "duration_ns": 1024300000
       },
       "stringBuilding": {
         "checksum": "-609121604069",
-        "duration_ns": 798300000
+        "duration_ns": 1064500000
       }
     },
     "method": "minimum of five measured runs after three in-process warm-ups",
@@ -51,7 +51,7 @@
     "suite_checksum": 0
   },
   "port": "javascript",
-  "run_url": "https://github.com/DurankGts/CodenameOne/actions/runs/30514210819",
+  "run_url": "https://github.com/DurankGts/CodenameOne/actions/runs/30605557235",
   "schema_version": 1,
   "suite_finished": true,
   "summary": {
