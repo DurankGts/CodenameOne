@@ -1,63 +1,64 @@
 {
-  "commit": "2a210d81823a747715a2187fb605108513d9fd0a",
-  "generated_at": "2026-08-03T05:37:03Z",
+  "commit": "453ed07615c07c26e229eb82b1a8418c44843ee9",
+  "generated_at": "2026-08-03T21:49:57Z",
   "performance": {
     "benchmark_version": 1,
     "benchmarks": {
       "arrayRandom": {
         "checksum": "-2288487891715278",
-        "duration_ns": 1481200001
+        "duration_ns": 1060900001
       },
       "arraySequential": {
         "checksum": "0",
-        "duration_ns": 970100001
+        "duration_ns": 900800000
       },
       "hashMapChurn": {
         "checksum": "49941",
-        "duration_ns": 13288500000
+        "duration_ns": 10160500000
       },
       "intArithmetic": {
         "checksum": "1313580095284",
-        "duration_ns": 670300000
+        "duration_ns": 516500000
       },
       "longArithmetic": {
         "checksum": "6887886960473257608",
-        "duration_ns": 3684400001
+        "duration_ns": 2777000000
       },
       "mathTranscendental": {
         "checksum": "4729652805076374709",
-        "duration_ns": 557000000
+        "duration_ns": 357800000
       },
       "objectAllocation": {
         "checksum": "2999790376128",
-        "duration_ns": 2997400000
+        "duration_ns": 2021699999
       },
       "quicksort": {
         "checksum": "786886890168670967",
-        "duration_ns": 564800000
+        "duration_ns": 513600001
       },
       "recursion": {
         "checksum": "33385282",
-        "duration_ns": 1023400000
+        "duration_ns": 878500000
       },
       "stringBuilding": {
         "checksum": "-609121604069",
-        "duration_ns": 1035500000
+        "duration_ns": 847399999
       }
     },
     "method": "minimum of five measured runs after three in-process warm-ups",
     "missing": [],
+    "skipped": {},
     "status": "complete",
     "suite_checksum": 0
   },
   "port": "javascript",
-  "run_url": "https://github.com/DurankGts/CodenameOne/actions/runs/30786063049",
+  "run_url": "https://github.com/DurankGts/CodenameOne/actions/runs/30853946145",
   "schema_version": 1,
   "suite_finished": true,
   "summary": {
     "fail": 0,
     "not-run": 0,
-    "pass": 166,
+    "pass": 170,
     "skip": 0
   },
   "tests": {
@@ -119,6 +120,10 @@
     },
     "BytecodeTranslatorRegressionTest": {
       "feature": "bytecode-runtime",
+      "status": "pass"
+    },
+    "CalendarApiTest": {
+      "feature": "calendar-integration",
       "status": "pass"
     },
     "CallDetectionAPITest": {
@@ -385,6 +390,10 @@
       "feature": "text-input",
       "status": "pass"
     },
+    "InferenceOnDeviceApiTest": {
+      "feature": "on-device-inference",
+      "status": "pass"
+    },
     "InscribedTriangleGrid": {
       "feature": "graphics-shapes-strokes",
       "status": "pass"
@@ -395,6 +404,10 @@
     },
     "KotlinUiTest": {
       "feature": "application-bootstrap",
+      "status": "pass"
+    },
+    "LanguageOnDeviceApiTest": {
+      "feature": "on-device-language",
       "status": "pass"
     },
     "LargeStrokeDirtyClipTest": {
@@ -723,6 +736,10 @@
     },
     "VideoIORoundTripTest": {
       "feature": "video-round-trip",
+      "status": "pass"
+    },
+    "VisionOnDeviceApiTest": {
+      "feature": "on-device-vision",
       "status": "pass"
     }
   }
