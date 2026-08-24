@@ -1,48 +1,48 @@
 {
   "commit": "9ffbd8c83a7e5279c5c70e76f0c1b26666d8c0ca",
-  "generated_at": "2026-08-23T03:20:18Z",
+  "generated_at": "2026-08-24T03:19:01Z",
   "performance": {
     "benchmark_version": 1,
     "benchmarks": {
       "arrayRandom": {
         "checksum": "-2288487891715278",
-        "duration_ns": 1481800001
+        "duration_ns": 1293099999
       },
       "arraySequential": {
         "checksum": "0",
-        "duration_ns": 923599999
+        "duration_ns": 954100000
       },
       "hashMapChurn": {
         "checksum": "49941",
-        "duration_ns": 14039900001
+        "duration_ns": 11610500000
       },
       "intArithmetic": {
         "checksum": "1313580095284",
-        "duration_ns": 672400000
+        "duration_ns": 682400001
       },
       "longArithmetic": {
         "checksum": "6887886960473257608",
-        "duration_ns": 3701599999
+        "duration_ns": 3345200000
       },
       "mathTranscendental": {
         "checksum": "4729652805076374709",
-        "duration_ns": 556600001
+        "duration_ns": 395000000
       },
       "objectAllocation": {
         "checksum": "2999790376128",
-        "duration_ns": 2767000000
+        "duration_ns": 2329800001
       },
       "quicksort": {
         "checksum": "786886890168670967",
-        "duration_ns": 572900000
+        "duration_ns": 553100000
       },
       "recursion": {
         "checksum": "33385282",
-        "duration_ns": 1047199999
+        "duration_ns": 990500000
       },
       "stringBuilding": {
         "checksum": "-609121604069",
-        "duration_ns": 1094199999
+        "duration_ns": 999700000
       }
     },
     "method": "minimum of five measured runs after three in-process warm-ups",
@@ -52,7 +52,7 @@
     "suite_checksum": 0
   },
   "port": "javascript",
-  "run_url": "https://github.com/DurankGts/CodenameOne/actions/runs/32613598246",
+  "run_url": "https://github.com/DurankGts/CodenameOne/actions/runs/32684091989",
   "schema_version": 1,
   "suite_finished": true,
   "summary": {
