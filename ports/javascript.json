@@ -1,48 +1,48 @@
 {
   "commit": "9ffbd8c83a7e5279c5c70e76f0c1b26666d8c0ca",
-  "generated_at": "2026-08-24T03:19:01Z",
+  "generated_at": "2026-08-25T03:10:42Z",
   "performance": {
     "benchmark_version": 1,
     "benchmarks": {
       "arrayRandom": {
         "checksum": "-2288487891715278",
-        "duration_ns": 1293099999
+        "duration_ns": 1134000000
       },
       "arraySequential": {
         "checksum": "0",
-        "duration_ns": 954100000
+        "duration_ns": 647000000
       },
       "hashMapChurn": {
         "checksum": "49941",
-        "duration_ns": 11610500000
+        "duration_ns": 11732400001
       },
       "intArithmetic": {
         "checksum": "1313580095284",
-        "duration_ns": 682400001
+        "duration_ns": 555600000
       },
       "longArithmetic": {
         "checksum": "6887886960473257608",
-        "duration_ns": 3345200000
+        "duration_ns": 3101599999
       },
       "mathTranscendental": {
         "checksum": "4729652805076374709",
-        "duration_ns": 395000000
+        "duration_ns": 488399999
       },
       "objectAllocation": {
         "checksum": "2999790376128",
-        "duration_ns": 2329800001
+        "duration_ns": 2095000000
       },
       "quicksort": {
         "checksum": "786886890168670967",
-        "duration_ns": 553100000
+        "duration_ns": 470799999
       },
       "recursion": {
         "checksum": "33385282",
-        "duration_ns": 990500000
+        "duration_ns": 854700001
       },
       "stringBuilding": {
         "checksum": "-609121604069",
-        "duration_ns": 999700000
+        "duration_ns": 928300001
       }
     },
     "method": "minimum of five measured runs after three in-process warm-ups",
@@ -52,7 +52,7 @@
     "suite_checksum": 0
   },
   "port": "javascript",
-  "run_url": "https://github.com/DurankGts/CodenameOne/actions/runs/32684091989",
+  "run_url": "https://github.com/DurankGts/CodenameOne/actions/runs/32802178634",
   "schema_version": 1,
   "suite_finished": true,
   "summary": {
